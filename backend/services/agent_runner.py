@@ -7,6 +7,7 @@ from services.context_manager import prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action
 from services.event_bus import EventBus
 from services.mock_runner import run_mock_task
+from services.research_policy import cross_check_status
 from services.task_store import TaskStore
 from tools.tool_executor import compact_tool_result, execute_tool
 
@@ -44,6 +45,27 @@ def _progress_label(action_name: str, description: str) -> str:
     return description or action_name
 
 
+def _latest_user_prompt(history: list[dict[str, str]]) -> str:
+    for message in reversed(history):
+        if message.get("role") == "user":
+            content = str(message.get("content") or "").strip()
+            if content and not content.startswith("Resultado da ferramenta:") and not content.startswith("Controle automatico de pesquisa:"):
+                return content
+    return ""
+
+
+def _format_research_note(status: dict[str, Any]) -> str:
+    required = int(status.get("required_sources") or 0)
+    if required <= 1:
+        return ""
+    source_count = int(status.get("source_count") or 0)
+    divergence = status.get("divergence") if isinstance(status.get("divergence"), dict) else {}
+    if divergence.get("has_divergence"):
+        categories = ", ".join(str(item.get("category")) for item in divergence.get("signals", []) if isinstance(item, dict))
+        return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas. Possivel divergencia detectada em: {categories or 'dados extraidos'}."
+    return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas; nenhuma divergencia automatica evidente foi detectada."
+
+
 def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
     sources = database.list_sources(task_id)[:8]
     if not sources:
@@ -54,10 +76,13 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
         score = source.get("quality_score", 0)
         source_type = source.get("source_type") or "web"
         snippet = str(source.get("snippet") or "").strip()
-        lines.append(f"- [{source_type} {score}/100] {title}: {source.get('url')}" + (f" — {snippet[:220]}" if snippet else ""))
+        excerpt = str(source.get("extracted_text") or "").strip()
+        detail = snippet or excerpt
+        lines.append(f"- [{source_type} {score}/100] {title}: {source.get('url')}" + (f" — {detail[:520]}" if detail else ""))
     source_context = (
         "Fontes ja abertas e salvas nesta conversa. Reutilize antes de pesquisar de novo quando responder ao mesmo tema; "
-        "se precisar de informacao atual, controversa ou insuficiente, busque fontes adicionais.\n"
+        "se precisar de informacao atual, controversa ou insuficiente, busque fontes adicionais. "
+        "Quando browser_google_search retornar from_conversation_cache=true, nao use browser_click_link_by_index; use as evidencias salvas ou navegue direto pela URL se precisar reler.\n"
         + "\n".join(lines)
     )
     return [{"role": "system", "content": source_context}, *history]
@@ -113,6 +138,33 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
             action_name = str(action.get("action", "")).strip()
             if action_name == "finish":
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
+                research_prompt = _latest_user_prompt(history) or description
+                research_status = cross_check_status(research_prompt, database.list_sources(task_id))
+                if not research_status.get("satisfied"):
+                    required = int(research_status.get("required_sources") or 0)
+                    found = int(research_status.get("source_count") or 0)
+                    if required > 0:
+                        await bus.publish(
+                            task_id,
+                            "agent_progress",
+                            {
+                                "label": "Verificando fontes",
+                                "detail": f"Resposta ainda precisa de {required} fonte(s) relevante(s); ha {found}.",
+                            },
+                        )
+                        history.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Controle automatico de pesquisa: nao finalize ainda. "
+                                    f"A pergunta exige pelo menos {required} fonte(s) relevante(s) e ha {found}. "
+                                    "Use fontes ja salvas se forem suficientes para o mesmo assunto; caso contrario, pesquise/abra/extrai outra fonte. "
+                                    "Para preco, versao, documentacao, noticia, dado sensivel ou comparacao, faca verificacao cruzada e marque divergencias na resposta final."
+                                ),
+                            }
+                        )
+                        continue
+                result = result + _format_research_note(research_status)
                 store.update_status(task_id, "done", result=result)
                 await bus.publish(task_id, "assistant_message_done", {"content": result})
                 _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)

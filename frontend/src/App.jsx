@@ -333,7 +333,7 @@ export default function App() {
           <ScreenView events={currentEvents} connectionState={connectionState} />
 
           <SourceList sources={sources} />
-          <FileList files={files} />
+          <FileList files={files} taskId={activeTaskId} hasFiles={files.length > 0} />
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
         </>
       }

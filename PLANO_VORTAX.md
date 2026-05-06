@@ -1,6 +1,6 @@
 # 🌀 Plano Técnico — Vortax (Agente Web Local com Acesso a Este PC)
 
-> **Versão:** 2.3 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
+> **Versão:** 2.6 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
 > **Objetivo:** Desenvolver um site web local, parecido no fluxo com o Manus, para controlar uma IA que opera este PC Linux Mint. A primeira versão roda somente na rede local, sem autenticação e sem hospedagem externa, com chat em tempo real, stream das ações executadas no computador, DeepSeek V4 Flash para texto/planejamento e `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq para análise de imagem.
 
 ---
@@ -1264,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.6 | 06/05/2026 | Terminal do Vertex integrado diretamente no card AgentActivity com barra de progresso, stage pill, arquivo atual, linhas stdout/stderr e toggle collapse; download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download` com botão destacado no FileList; cache de pesquisa por conversa antes de chamar Google novamente; verificação cruzada automática para preço, versão, documentação, notícia, comparação e dados sensíveis |
 | 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created`; shell interativo com follow-up automático (detecção de prompts e mini-loop DeepSeek); progresso estruturado do Vertex CLI com parse de passos internos e evento `vertex_progress` |
 | 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
 | 2.3 | 06/05/2026 | Plano de visão alterado para `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq; Puter/Qwen removido do caminho principal; adicionada arquitetura backend para `VisionTool` multimodal |
@@ -1319,11 +1320,13 @@ sudo systemctl restart vortax-backend
 - [x] Ferramenta `browser_extract_article` para extracao limpa de conteudo principal
 - [x] Registro automatico de fontes abertas/extraias com pontuacao de qualidade
 - [x] Painel de fontes no frontend com tipo e score
+- [x] Cache de pesquisa por conversa antes de chamar novamente o Google
+- [x] Verificacao cruzada automatica para preco, versao, documentacao, noticia, comparacao e dados sensiveis
 - [x] Integração Vertex CLI: agente usa `shell_run` com `vertex` para desenvolver software
 - [x] Documentação do Vertex CLI/Server e seu papel como motor de desenvolvimento
 - [x] ShellTool com `shell_run` no TOOLS_SCHEMA do DeepSeek
-- [ ] Download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download`
-- [ ] Botão de download ZIP no frontend por conversa com todos os arquivos gerados
+- [x] Download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download`
+- [x] Botão de download ZIP no frontend por conversa com todos os arquivos gerados
 
 ### Vertex CLI — Motor de Desenvolvimento de Software
 
@@ -1368,6 +1371,14 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - Isolamento por conversa: projetos criados em `workspace/<task_id>/`
 - Follow-up interativo: detectou pergunta "Qual nome do projeto?" e "Escolha: [a/b]" → DeepSeek respondeu automaticamente
 - Progresso do Vertex: parse correto de "Planejando...", "Criando arquivo src/main.py", "Instalando dependências...", "Tarefa concluída"
+- **Terminal integrado no AgentActivity:** o componente `VertexTerminal` é renderizado inline dentro do card de atividade do agente (`AgentActivity`), substituindo o `ShellOutput` standalone. O terminal mostra:
+  - **Barra de progresso:** 4 pontos (planning → creating → executing → done) com transições visuais.
+  - **Stage pill:** etiqueta colorida indicando o estágio atual (Planejando, Criando arquivo, Instalando, etc.).
+  - **Arquivo atual:** nome do arquivo sendo criado/editado pelo Vertex.
+  - **Linhas do terminal:** saída stdout/stderr em fonte monoespaçada com scroll automático.
+  - **Toggle collapse:** botão para expandir/recolher o terminal.
+  - **Contador de linhas:** mostra quantas linhas de output foram geradas.
+  - Integrado com `useVertexTerminal` hook que computa progresso, linhas e estado de execução a partir dos eventos WebSocket.
 
 ### BrowserTool + Planner JSON
 
@@ -1423,6 +1434,11 @@ Implementado:
 - `browser_extract_article` extrai conteudo principal limpo da pagina, removendo menus, rodapes, scripts, iframes, formularios e blocos laterais.
 - `tool_executor` registra automaticamente uma fonte quando `browser_extract_article` ou `browser_extract_text` retorna uma URL real.
 - `services/source_quality.py` classifica fontes como `official`, `news`, `video`, `forum`, `marketplace` ou `web`, e gera score de 0 a 100.
+- `services/research_policy.py` centraliza a politica de pesquisa: identifica pedidos sensiveis/atuais, calcula fontes minimas, encontra fontes relevantes ja salvas na conversa e detecta divergencias simples em valores, versoes, datas e numeros.
+- Antes de executar `browser_google_search`, `tool_executor` consulta as fontes da conversa. Se a consulta nao pede informacao atual e o cache tem fontes relevantes suficientes, retorna `from_conversation_cache=true` com os trechos salvos e evita nova busca no Google.
+- O cache nao e usado quando o usuario pede algo atual/recente/hoje ou quando a quantidade de fontes salvas nao atende a politica minima do pedido.
+- `agent_runner` valida `finish`: perguntas simples de pesquisa precisam de ao menos 1 fonte relevante; preco, versao, documentacao, noticia, comparacao, disponibilidade e dados sensiveis precisam de ao menos 2. Se faltar fonte, o runner impede a finalizacao e instrui o planner a buscar/abrir/extrair outra fonte.
+- Quando a politica encontra possivel divergencia automatica entre fontes, a resposta final recebe nota de verificacao cruzada marcando a divergencia; quando nao encontra, registra que nenhuma divergencia evidente foi detectada.
 - O planner foi orientado a preferir `browser_extract_article`, citar URLs visitadas e diferenciar conteudo confirmado em fonte aberta de sugestoes vindas apenas dos resultados de busca.
 - O frontend mostra painel `Fontes` com titulo, tipo, score e link externo.
 - A exclusao de chat apaga as fontes em cascata junto com eventos e screenshots.
@@ -1473,3 +1489,5 @@ Não reaproveitado agora:
 | 06/05/2026 | Contexto por conversa e compactação automática | `backend/services/context_manager.py`, `backend/database.py`, `backend/services/agent_runner.py`, `frontend/src/components/ContextIndicator.jsx` | `npm run build`, `python3 -m py_compile` e testes backend de contexto/histórico |
 | 06/05/2026 | Streaming stdout/stderr, output-dir por chat e auto-listagem de arquivos | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; testes de shell com e sem EventBus; eventos `shell_stdout`, `shell_stderr` e `files_created` publicados e persistidos; frontend mostra terminal inline |
 | 06/05/2026 | Shell interativo com follow-up DeepSeek + progresso estruturado do Vertex | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/index.css` | `npm run build` OK; 10 padrões de progresso Vertex testados; 14 padrões de prompt interativo testados; follow-up automático funcional com stdin write; frontend mostra barra de progresso com estágio e arquivo |
+| 06/05/2026 | Cache de pesquisa e verificacao cruzada | `backend/services/research_policy.py`, `backend/tools/tool_executor.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/tests/test_research_policy.py`, `backend/tests/test_tool_executor_research_cache.py`, `README.md`, `PLANO_VORTAX.md` | `python -m unittest discover -s tests` OK; busca reutiliza fontes salvas por conversa e respostas sensiveis exigem fontes suficientes antes de finalizar |
+| 06/05/2026 | Terminal Vertex integrado no AgentActivity + Download ZIP | `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css`, `backend/api/tasks.py` | `npm run build` OK; VertexTerminal inline no card de atividade com barra de progresso, stage pill, linhas stdout/stderr; ZIP endpoint com streaming de bytes em memoria; botao de download no FileList com destaque visual |

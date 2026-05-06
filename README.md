@@ -55,6 +55,8 @@ Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e
 - **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
 - **Stream em tempo real** — WebSocket com eventos de ação, screenshots e resultados
 - **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
+- **Cache de pesquisa por conversa** — antes de chamar o Google, o executor reutiliza fontes boas já salvas para a mesma consulta
+- **Verificação cruzada automática** — preço, versão, documentação, notícia, comparação e dados sensíveis exigem múltiplas fontes e marcação de divergências
 - **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
 - **Painel de atividade** — timeline lateral com resumo das ações do agente
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado

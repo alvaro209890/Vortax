@@ -2,6 +2,7 @@ from typing import Any, Awaitable, Callable
 
 from database import database
 from services.event_bus import EventBus
+from services.research_policy import cached_search_result
 from services.safe_diagnostics import sanitize_payload
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
@@ -126,6 +127,23 @@ async def execute_tool(
         return error
 
     try:
+        if tool_name == "browser_google_search":
+            query = str((params or {}).get("query") or "").strip()
+            cached = cached_search_result(query, database.list_sources(task_id)) if query else None
+            if cached:
+                await bus.publish(
+                    task_id,
+                    "agent_progress",
+                    {
+                        "label": "Reutilizando fontes da conversa",
+                        "detail": "Busca ignorada porque ja ha fontes boas salvas para esta consulta.",
+                        "tool": tool_name,
+                    },
+                )
+                compact = compact_tool_result(cached)
+                await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+                return {"success": True, "data": cached}
+
         # shell_run recebe o bus para streaming de stdout
         if tool_name == "shell_run":
             result = await tool(**(params or {}), task_id=task_id, bus=bus)

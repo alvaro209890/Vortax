@@ -1284,6 +1284,37 @@ small {
 }
 
 /* File List */
+.zip-download-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(8, 198, 93, 0.25);
+  border-radius: 10px;
+  background: rgba(8, 198, 93, 0.08);
+  color: var(--accent-blue);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.zip-download-btn:hover {
+  background: rgba(8, 198, 93, 0.15);
+  border-color: rgba(8, 198, 93, 0.4);
+  transform: translateY(-1px);
+}
+
+.zip-download-btn span {
+  flex: 1;
+}
+
+.zip-download-btn svg:last-child {
+  color: var(--accent-blue);
+  opacity: 0.7;
+}
+
 .file-item {
   display: flex;
   align-items: center;

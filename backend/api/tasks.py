@@ -1,8 +1,12 @@
 import asyncio
 import base64
 import contextlib
+import io
+import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from database import database
@@ -231,6 +235,45 @@ async def get_task(task_id: str) -> dict:
         "images": database.list_chat_images(task_id),
         "context": get_context_payload(task_id, event_bus.history(task_id)),
     }
+
+
+@router.get("/{task_id}/download")
+async def download_task_zip(task_id: str) -> StreamingResponse:
+    """Gera e retorna um ZIP com todos os arquivos criados na conversa."""
+    task = task_store.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task nao encontrada")
+
+    project_dir = settings.WORKSPACE_PATH / task_id
+    if not project_dir.exists() or not project_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Nenhum arquivo encontrado para esta conversa")
+
+    # Coleta todos os arquivos recursivamente
+    file_paths: list[Path] = []
+    for entry in project_dir.rglob("*"):
+        if entry.is_file() and entry.name != ".gitkeep":
+            file_paths.append(entry)
+
+    if not file_paths:
+        raise HTTPException(status_code=404, detail="Nenhum arquivo encontrado para esta conversa")
+
+    # Gera ZIP em memória
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in file_paths:
+            arcname = str(file_path.relative_to(project_dir))
+            zf.write(file_path, arcname)
+
+    zip_buffer.seek(0)
+
+    task_id_short = task_id[:8]
+    filename = f"vortax-{task_id_short}.zip"
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/{task_id}")
