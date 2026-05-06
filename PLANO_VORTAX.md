@@ -1264,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek |
 | 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
 | 2.3 | 06/05/2026 | Plano de visão alterado para `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq; Puter/Qwen removido do caminho principal; adicionada arquitetura backend para `VisionTool` multimodal |
 | 2.2 | 06/05/2026 | Ajustado escopo para MVP local em LAN, sem autenticação e sem hospedagem externa; frontend chat-first estilo Manus com stream de ações; DeepSeek V4 Flash para texto; Qwen3-VL via Puter apenas para testes de visão |
@@ -1295,8 +1296,8 @@ sudo systemctl restart vortax-backend
 - [x] Reaproveitamento útil dos projetos Vertex
 - [x] Integração Chrome CDP
 - [x] Screenshot/stream visual real
-- [ ] Visão experimental Groq/Llama 4 Scout
-- [ ] Ferramentas reais de arquivos/shell com whitelist
+- [x] Visão experimental Groq/Llama 4 Scout
+- [x] Ferramenta shell_run com whitelist, bloqueio de padrões perigosos e timeout
 - [x] Exclusão de chats com remoção no banco de dados
 - [x] Persistência de screenshots/prints no banco de dados
 - [x] Upload de imagens no chat para análise via Groq/Llama 4 Scout
@@ -1318,10 +1319,11 @@ sudo systemctl restart vortax-backend
 - [x] Ferramenta `browser_extract_article` para extracao limpa de conteudo principal
 - [x] Registro automatico de fontes abertas/extraias com pontuacao de qualidade
 - [x] Painel de fontes no frontend com tipo e score
+- [x] Integração Vertex CLI: agente usa `shell_run` com `vertex` para desenvolver software
+- [x] Documentação do Vertex CLI/Server e seu papel como motor de desenvolvimento
+- [x] ShellTool com `shell_run` no TOOLS_SCHEMA do DeepSeek
 - [ ] Download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download`
 - [ ] Botão de download ZIP no frontend por conversa com todos os arquivos gerados
-- [ ] Integração Vertex CLI: agente usa `shell_run` com `vertex` para desenvolver software
-- [ ] Documentação do Vertex CLI/Server e seu papel como motor de desenvolvimento
 
 ### Vertex CLI — Motor de Desenvolvimento de Software
 
@@ -1339,7 +1341,25 @@ O Vertex é o motor que permite ao Vortax desenvolver software, sites e scripts 
 5. Vortax captura o resultado e lista os arquivos no painel
 6. Usuário pode baixar os arquivos individualmente ou como ZIP
 
-**O Vertex CLI é um comando global do sistema.** Basta abrir o terminal e digitar `vertex` para usar interativamente, ou `vertex "instrução"` para execução direta. No contexto do Vortax, o agente faz essa chamada automaticamente.
+**O Vertex CLI é um comando global do sistema.** Basta abrir o terminal e digitar `vertex` para usar interativamente, ou `vertex "instrução"` para execução direta. No contexto do Vortax, o agente faz essa chamada automaticamente via `shell_run`.
+
+### ShellTool — Execução Segura de Comandos
+
+Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
+
+- **Whitelist:** 45 comandos permitidos: `python3`, `node`, `npm`, `npx`, `vertex`, `git`, `curl`, `wget`, `ls`, `cat`, `mkdir`, `cp`, `mv`, `rm`, `grep`, `find`, `echo`, `pwd`, `wc`, `head`, `tail`, `sort`, `uniq`, `awk`, `sed`, `cut`, `tr`, `df`, `free`, `uname`, `which`, `whereis`, `dirname`, `basename`, `readlink`, `rmdir`, `pandoc`, `ffmpeg`, `libreoffice`, `convert`, `clear`, `date`, `tee`, `xargs`, `true`, `false`.
+- **Bloqueio de padrões perigosos:** `sudo`, `chmod`, `chown`, `systemctl`, `service`, `kill`, `shutdown`, `reboot`, `dd`, `mkfs`, `rm -rf /`, `rm -rf ~`, escrita em `/dev/`, `curl | bash`, `wget | sh`.
+- **Timeout:** 30s padrão, 300s para comandos `vertex` (configurável via `.env`).
+- **Workspace isolada:** todos os comandos rodam em `workspace/` via `cwd`.
+- **rm restrito:** só permite `rm` se o caminho contiver o diretório da workspace.
+- **Saída truncada:** stdout limitado a 3000 chars, stderr a 500 chars.
+- **Função dedicada:** `run_vertex(task_description)` — wrapper que monta o comando vertex com escape seguro.
+
+**Testes validados:**
+- Comandos seguros: `echo`, `ls`, `pwd`, `vertex --version`, `echo hello | grep hello`
+- Comandos bloqueados: `nc`, `sudo`, `shutdown`, `curl | bash`
+- Fluxo ReAct: DeepSeek chama `shell_run` → executa `vertex --version` → retorna versão → finaliza
+- Fluxo de resiliência: quando `vertex` deu timeout, DeepSeek tentou abordagem alternativa com `python3` e teve sucesso
 
 ### BrowserTool + Planner JSON
 
@@ -1434,3 +1454,6 @@ Não reaproveitado agora:
 | 06/05/2026 | Validação BrowserTool direta | `backend/tools/browser.py` | Navegou em `data:text/html`, extraiu título/texto e gerou screenshot base64 via CDP |
 | 06/05/2026 | Validação ReAct navegador | backend ativo | Task via API/WebSocket abriu `data:text/html` e `https://example.com`, publicou `tool_call`, `tool_result`, `screen_frame` e finalizou com o título |
 | 06/05/2026 | Visão Groq/Llama 4 Scout funcional | `backend/tools/vision.py`, `backend/api/tasks.py`, `frontend/src/components/Composer.jsx`, `frontend/src/components/MessageList.jsx` | Smoke test real com `meta-llama/llama-4-scout-17b-16e-instruct`; rota `POST /api/tasks/images` salvou imagem em `chat_images` e retornou análise |
+| 06/05/2026 | Visão como tool automática do DeepSeek | `backend/tools/vision.py`, `backend/services/deepseek_client.py` | vision_analyze captura screenshot automaticamente; planner usa só quando texto extraído não for suficiente |
+| 06/05/2026 | ShellTool — shell_run com whitelist | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/deepseek_client.py`, `backend/config.py` | Comandos seguros (echo, ls, vertex) funcionam; bloqueio de sudo/shutdown/curl|bash; timeout 30s normal + 300s vertex; teste ReAct com vertex --version |
+| 06/05/2026 | Fluxo ReAct completo com Vertex CLI | backend e frontend ativos | DeepSeek chamou shell_run → vertex --version → stdout capturado → finish com resposta correta; script fibonacci via python3 criado com sucesso |

@@ -58,7 +58,8 @@ Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e
 - **Painel de atividade** — timeline lateral com resumo das ações do agente
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
-- **Desenvolvimento de software** — usa o Vertex CLI para criar projetos completos sob demanda
+- **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
+- **Shell seguro** — comandos com whitelist, bloqueio de padrões perigosos e workspace isolada
 - **Download em ZIP** — todos os arquivos gerados na conversa em um único arquivo
 - **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
 
@@ -79,9 +80,9 @@ Usuário na LAN (http://IP:5173)
                                  ▼                       ▼
             ┌────────────────────────────┐   ┌──────────────────────┐
             │    Ferramentas Locais      │   │   Vertex CLI         │
-            │  • Chrome CDP (Playwright) │   │   (desenvolvimento   │
-            │  • Shell seguro            │   │    de software)      │
-            │  • File Manager            │   │                      │
+            │  • Chrome CDP (Playwright) │   │   (via shell_run)    │
+            │  • Shell seguro + Vertex   │   │                      │
+            │  • Visão (Groq/Llama 4)    │   │                      │
             └────────────────────────────┘   └──────────────────────┘
                                  │                    │
                                  ▼                    ▼
@@ -163,10 +164,10 @@ Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
 | Navegador | Playwright + Google Chrome CDP |
 | IA (planejamento) | DeepSeek V4 Flash |
 | IA (visão) | Groq + Llama 4 Scout |
-| Motor de software | Vertex CLI (local) |
+| Motor de software | Vertex CLI via shell_run |
+| Shell | Whitelist, bloqueio de padrões perigosos, timeout |
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
-| Download | ZIP por conversa via API |
 | Segurança | Middleware LAN-only, sanitização de segredos |
 
 ---
