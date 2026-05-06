@@ -1,0 +1,27 @@
+import { useEffect, useRef } from "react";
+import { Sparkles, User } from "lucide-react";
+
+export function MessageList({ messages }) {
+  const endRef = useRef(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
+
+  return (
+    <div className="message-list">
+      {messages.map((message) => (
+        <article className={`message ${message.role}`} key={message.id}>
+          <div className="message-avatar">
+            {message.role === "user" ? <User size={18} /> : <Sparkles size={18} />}
+          </div>
+          <div className="message-content">
+            <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
+            <p>{message.content}</p>
+          </div>
+        </article>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}

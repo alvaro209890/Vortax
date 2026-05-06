@@ -1,0 +1,132 @@
+import json
+from typing import Any
+
+from config import settings
+from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action
+from services.event_bus import EventBus
+from services.mock_runner import run_mock_task
+from services.task_store import TaskStore
+from tools.tool_executor import compact_tool_result, execute_tool
+
+
+def _message_history_from_events(events: list[dict[str, Any]], fallback_description: str) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for event in events:
+        event_type = event.get("type")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            continue
+        if event_type == "user_message":
+            messages.append({"role": "user", "content": content})
+        elif event_type == "assistant_message_done":
+            messages.append({"role": "assistant", "content": content})
+
+    if not messages:
+        messages.append({"role": "user", "content": fallback_description})
+
+    # Keep the most recent turns so long-running chats stay within model context.
+    return messages[-12:]
+
+
+def _progress_label(action_name: str, description: str) -> str:
+    if action_name == "browser_google_search":
+        return "Pesquisando no Google"
+    if action_name == "browser_click_link_by_index":
+        return "Abrindo resultado"
+    if action_name in {"browser_extract_text", "browser_extract_links"}:
+        return "Lendo conteudo da pagina"
+    if action_name in {"browser_go_back", "browser_navigate"}:
+        return "Navegando"
+    if action_name.startswith("browser_"):
+        return "Operando o navegador"
+    return description or action_name
+
+
+async def _wait_if_paused_or_stopped(task_id: str, store: TaskStore, bus: EventBus) -> bool:
+    while store.is_paused(task_id):
+        if store.is_stopped(task_id):
+            await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Tarefa parada"})
+            return False
+        await bus.publish(task_id, "agent_status", {"status": "paused", "label": "Pausado"})
+        import asyncio
+
+        await asyncio.sleep(0.5)
+    if store.is_stopped(task_id):
+        await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Tarefa parada"})
+        return False
+    return True
+
+
+async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+    if not deepseek_configured():
+        await bus.publish(
+            task_id,
+            "tool_result",
+            {"name": "deepseek_config", "result": "Sem DEEPSEEK_API_KEY; usando runner mockado."},
+        )
+        await run_mock_task(task_id, description, store, bus)
+        return
+
+    try:
+        store.update_status(task_id, "running")
+        history = _message_history_from_events(bus.history(task_id), description)
+        await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
+        await bus.publish(task_id, "agent_progress", {"label": "Analisando pedido", "detail": description})
+
+        for iteration in range(settings.MAX_ITERATIONS):
+            if not await _wait_if_paused_or_stopped(task_id, store, bus):
+                return
+
+            await bus.publish(task_id, "agent_progress", {"label": "Planejando proximo passo", "step": iteration + 1})
+            action = await request_deepseek_action(history)
+            history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
+
+            action_name = str(action.get("action", "")).strip()
+            if action_name == "finish":
+                result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
+                store.update_status(task_id, "done", result=result)
+                await bus.publish(task_id, "assistant_message_done", {"content": result})
+                await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+                return
+
+            if action.get("requires_confirmation"):
+                message = action.get("confirmation_message") or action.get("description") or "Confirmar acao?"
+                await bus.publish(
+                    task_id,
+                    "confirmation_request",
+                    {"message": message, "action": action_name, "params": action.get("params", {})},
+                )
+                raise DeepSeekError("Planner pediu confirmacao; fluxo de confirmacao sera ligado no proximo bloco.")
+
+            progress_label = _progress_label(action_name, str(action.get("description") or ""))
+            await bus.publish(
+                task_id,
+                "agent_progress",
+                {"label": progress_label, "detail": action.get("description") or action_name, "tool": action_name},
+            )
+            await bus.publish(task_id, "agent_status", {"status": "executing", "label": "Executando"})
+            tool_result = await execute_tool(
+                action_name,
+                action.get("params") if isinstance(action.get("params"), dict) else {},
+                task_id=task_id,
+                bus=bus,
+                description=str(action.get("description") or action_name),
+            )
+            result_for_model = compact_tool_result(tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result})
+            history.append(
+                {
+                    "role": "user",
+                    "content": "Resultado da ferramenta: " + json.dumps(result_for_model, ensure_ascii=False),
+                }
+            )
+
+        raise DeepSeekError(f"Limite de iteracoes atingido ({settings.MAX_ITERATIONS}).")
+    except DeepSeekError as exc:
+        store.update_status(task_id, "error", result=str(exc))
+        await bus.publish(task_id, "error", {"message": str(exc)})
+        await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
+    except Exception as exc:
+        store.update_status(task_id, "error", result=str(exc))
+        await bus.publish(task_id, "error", {"message": str(exc)})
+        await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro"})

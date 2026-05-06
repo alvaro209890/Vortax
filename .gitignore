@@ -1,0 +1,14 @@
+.env
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.db-journal
+*.db-wal
+workspace/*
+!workspace/.gitkeep
+cloudflared-config.yml
