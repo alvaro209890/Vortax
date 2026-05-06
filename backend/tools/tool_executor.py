@@ -148,6 +148,19 @@ async def execute_tool(
                     {"files": files, "directory": str(project_dir)},
                 )
 
+            # Se foi vertex, publica progresso final
+            command = str((params or {}).get("command", ""))
+            if "vertex" in command and result.get("success"):
+                await bus.publish(
+                    task_id,
+                    "vertex_progress",
+                    {
+                        "stage": "done",
+                        "message": "Vertex concluiu o projeto.",
+                        "interactive_rounds": result.get("interactive_rounds", 0),
+                    },
+                )
+
         if tool_name == "browser_screenshot":
             await bus.publish(
                 task_id,

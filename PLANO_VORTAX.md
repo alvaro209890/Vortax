@@ -1264,7 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
-| 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created` |
+| 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created`; shell interativo com follow-up automático (detecção de prompts e mini-loop DeepSeek); progresso estruturado do Vertex CLI com parse de passos internos e evento `vertex_progress` |
 | 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
 | 2.3 | 06/05/2026 | Plano de visão alterado para `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq; Puter/Qwen removido do caminho principal; adicionada arquitetura backend para `VisionTool` multimodal |
 | 2.2 | 06/05/2026 | Ajustado escopo para MVP local em LAN, sem autenticação e sem hospedagem externa; frontend chat-first estilo Manus com stream de ações; DeepSeek V4 Flash para texto; Qwen3-VL via Puter apenas para testes de visão |
@@ -1353,6 +1353,8 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - **Workspace isolada:** todos os comandos rodam em `workspace/<task_id>/` — cada conversa tem seu próprio subdiretório.
 - **Streaming stdout/stderr:** usa `subprocess.Popen` e publica cada linha como evento `shell_stdout`/`shell_stderr` via WebSocket em tempo real. O frontend renderiza as linhas em um componente `ShellOutput` estilo terminal inline no chat.
 - **Evento `files_created`:** após cada `shell_run`, o backend lista os arquivos no diretório da conversa e publica o evento `files_created` com caminhos e tamanhos, atualizando instantaneamente o painel de arquivos no frontend.
+- **Shell interativo com follow-up:** detecta automaticamente prompts interativos (ex: "Qual framework?", "Continue? [y/N]", "Digite o nome:") usando 14 padrões regex. Quando detectado, o shell publica `shell_interactive_prompt` e consulta o DeepSeek para gerar uma resposta automática, que é enviada ao stdin do processo. Máximo de 3 rounds interativos por comando.
+- **Progresso estruturado do Vertex:** faz parse das linhas de stdout do Vertex CLI com 10 padrões de estágio (planning, writing_file, creating, installing, executing, editing, reading_file, configuring, validating, done). Extrai nome de arquivo quando disponível. Publica eventos `vertex_progress` que o frontend renderiza como barra de progresso com spinner e nome do arquivo sendo criado.
 - **rm restrito:** só permite `rm` se o caminho contiver o diretório da workspace.
 - **Saída truncada:** stdout limitado a 3000 chars, stderr a 500 chars.
 - **Função dedicada:** `run_vertex(task_description)` — wrapper que monta o comando vertex com escape seguro.
@@ -1364,6 +1366,8 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - Fluxo de resiliência: quando `vertex` deu timeout, DeepSeek tentou abordagem alternativa com `python3` e teve sucesso
 - Streaming stdout: linhas são publicadas como `shell_stdout` via WebSocket e armazenadas no banco
 - Isolamento por conversa: projetos criados em `workspace/<task_id>/`
+- Follow-up interativo: detectou pergunta "Qual nome do projeto?" e "Escolha: [a/b]" → DeepSeek respondeu automaticamente
+- Progresso do Vertex: parse correto de "Planejando...", "Criando arquivo src/main.py", "Instalando dependências...", "Tarefa concluída"
 
 ### BrowserTool + Planner JSON
 
@@ -1468,3 +1472,4 @@ Não reaproveitado agora:
 | 06/05/2026 | Fluxo ReAct completo com Vertex CLI | backend e frontend ativos | DeepSeek chamou shell_run → vertex --version → stdout capturado → finish com resposta correta; script fibonacci via python3 criado com sucesso |
 | 06/05/2026 | Contexto por conversa e compactação automática | `backend/services/context_manager.py`, `backend/database.py`, `backend/services/agent_runner.py`, `frontend/src/components/ContextIndicator.jsx` | `npm run build`, `python3 -m py_compile` e testes backend de contexto/histórico |
 | 06/05/2026 | Streaming stdout/stderr, output-dir por chat e auto-listagem de arquivos | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; testes de shell com e sem EventBus; eventos `shell_stdout`, `shell_stderr` e `files_created` publicados e persistidos; frontend mostra terminal inline |
+| 06/05/2026 | Shell interativo com follow-up DeepSeek + progresso estruturado do Vertex | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/index.css` | `npm run build` OK; 10 padrões de progresso Vertex testados; 14 padrões de prompt interativo testados; follow-up automático funcional com stdin write; frontend mostra barra de progresso com estágio e arquivo |

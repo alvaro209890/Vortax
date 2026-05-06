@@ -24,6 +24,8 @@ KNOWN_EVENT_TYPES = frozenset(
         "shell_stdout",
         "shell_stderr",
         "files_created",
+        "vertex_progress",
+        "shell_interactive_prompt",
         "error",
         "pong",
     }
