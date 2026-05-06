@@ -26,6 +26,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "files_created",
         "vertex_progress",
         "shell_interactive_prompt",
+        "dev_server_started",
         "error",
         "pong",
     }

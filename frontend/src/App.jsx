@@ -8,6 +8,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { MessageList } from "./components/MessageList.jsx";
+import { PreviewPanel } from "./components/PreviewPanel.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
@@ -77,13 +78,13 @@ export default function App() {
         }
       })
       .catch(() => {});
-    listFiles().then((data) => setFiles(data.files || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!activeTaskId) {
       setActiveTask(null);
       setTaskEvents([]);
+      setFiles([]);
       setSources([]);
       setContextState(null);
       setAgentStatus("idle");
@@ -97,6 +98,7 @@ export default function App() {
         const loadedEvents = data.events || [];
         setActiveTask(loadedTask);
         setTaskEvents(loadedEvents);
+        setFiles(data.files || []);
         setSources(data.sources || []);
         setContextState(data.context || null);
         setAgentStatus(loadedTask?.status || "idle");
@@ -108,6 +110,7 @@ export default function App() {
       .catch(() => {
         setActiveTask(null);
         setTaskEvents([]);
+        setFiles([]);
         setSources([]);
         setContextState(null);
         setAgentStatus("idle");
@@ -138,7 +141,7 @@ export default function App() {
     }
 
     if (currentEvents.some((event) => event.type === "tool_result" || event.type === "assistant_message_done" || event.type === "files_created")) {
-      listFiles().then((data) => setFiles(data.files || [])).catch(() => {});
+      listFiles(activeTaskId).then((data) => setFiles(data.files || [])).catch(() => {});
     }
 
     const lastFilesCreated = [...currentEvents].reverse().find((event) => event.type === "files_created");
@@ -201,6 +204,7 @@ export default function App() {
       setTasks((current) => [result.task, ...current]);
       setActiveTask(result.task);
       setTaskEvents([]);
+      setFiles([]);
       setSources([]);
       setContextState(null);
       setActiveTaskId(result.task_id);
@@ -226,6 +230,7 @@ export default function App() {
     setTasks((current) => [result.task, ...current]);
     setActiveTask(result.task);
     setTaskEvents([]);
+    setFiles([]);
     setSources([]);
     setContextState(null);
     setActiveTaskId(result.task_id);
@@ -255,6 +260,7 @@ export default function App() {
     setActiveTaskId(null);
     setActiveTask(null);
     setTaskEvents([]);
+    setFiles([]);
     setSources([]);
     setContextState(null);
     setAgentStatus("idle");
@@ -332,6 +338,7 @@ export default function App() {
         <>
           <ScreenView events={currentEvents} connectionState={connectionState} />
 
+          <PreviewPanel files={files} events={currentEvents} taskId={activeTaskId} />
           <SourceList sources={sources} />
           <FileList files={files} taskId={activeTaskId} hasFiles={files.length > 0} />
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />

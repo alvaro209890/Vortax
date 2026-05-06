@@ -49,6 +49,21 @@ def compact_tool_result(result: dict[str, Any]) -> dict[str, Any]:
         items = compact.get(key)
         if isinstance(items, list):
             compact[key] = items[:10]
+
+    # Se o resultado tem file_summary, preserva e adiciona nota de truncamento
+    if compact.get("file_summary"):
+        # Ja esta no formato certo, so garantir que nao e muito grande
+        summary = compact["file_summary"]
+        if isinstance(summary, dict) and summary.get("file_count", 0) > 100:
+            summary["root_files"] = summary.get("root_files", [])[:30]
+            summary["top_dirs"] = summary.get("top_dirs", [])[:15]
+            summary["by_extension"] = dict(sorted(
+                summary.get("by_extension", {}).items(),
+                key=lambda x: -x[1]
+            )[:10])
+    if compact.get("stdout_truncated"):
+        compact["_note"] = "A saida stdout foi truncada. Use o file_summary para ver a lista completa de arquivos gerados."
+
     return compact
 
 
@@ -166,6 +181,19 @@ async def execute_tool(
                     {"files": files, "directory": str(project_dir)},
                 )
 
+            # Se foi dev server, publica evento
+            shell_data = result.get("data", result) if isinstance(result, dict) else {}
+            if shell_data.get("is_dev_server") and shell_data.get("dev_server_url"):
+                await bus.publish(
+                    task_id,
+                    "dev_server_started",
+                    {
+                        "url": shell_data["dev_server_url"],
+                        "port": shell_data.get("dev_server_port"),
+                        "task_id": task_id,
+                    },
+                )
+
             # Se foi vertex, publica progresso final
             command = str((params or {}).get("command", ""))
             if "vertex" in command and result.get("success"):
@@ -175,7 +203,7 @@ async def execute_tool(
                     {
                         "stage": "done",
                         "message": "Vertex concluiu o projeto.",
-                        "interactive_rounds": result.get("interactive_rounds", 0),
+                        "interactive_rounds": shell_data.get("interactive_rounds", 0),
                     },
                 )
 

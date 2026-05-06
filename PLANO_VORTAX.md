@@ -1,6 +1,6 @@
 # 🌀 Plano Técnico — Vortax (Agente Web Local com Acesso a Este PC)
 
-> **Versão:** 2.6 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
+> **Versão:** 2.7 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
 > **Objetivo:** Desenvolver um site web local, parecido no fluxo com o Manus, para controlar uma IA que opera este PC Linux Mint. A primeira versão roda somente na rede local, sem autenticação e sem hospedagem externa, com chat em tempo real, stream das ações executadas no computador, DeepSeek V4 Flash para texto/planejamento e `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq para análise de imagem.
 
 ---
@@ -1264,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.7 | 06/05/2026 | Preview de projetos web em iframe embutido no painel inspetor (`PreviewPanel`); servidores de desenvolvimento (`npm run dev`, `npx vite`, `python -m http.server`) executados em background com detecção de porta e proxy local; resumo estruturado de arquivos (`file_summary`) como parte do resultado do `shell_run` em vez de truncamento bruto; evento `dev_server_started` via WebSocket |
 | 2.6 | 06/05/2026 | Terminal do Vertex integrado diretamente no card AgentActivity com barra de progresso, stage pill, arquivo atual, linhas stdout/stderr e toggle collapse; download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download` com botão destacado no FileList; cache de pesquisa por conversa antes de chamar Google novamente; verificação cruzada automática para preço, versão, documentação, notícia, comparação e dados sensíveis |
 | 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created`; shell interativo com follow-up automático (detecção de prompts e mini-loop DeepSeek); progresso estruturado do Vertex CLI com parse de passos internos e evento `vertex_progress` |
 | 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
@@ -1359,7 +1360,23 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - **Shell interativo com follow-up:** detecta automaticamente prompts interativos (ex: "Qual framework?", "Continue? [y/N]", "Digite o nome:") usando 14 padrões regex. Quando detectado, o shell publica `shell_interactive_prompt` e consulta o DeepSeek para gerar uma resposta automática, que é enviada ao stdin do processo. Máximo de 3 rounds interativos por comando.
 - **Progresso estruturado do Vertex:** faz parse das linhas de stdout do Vertex CLI com 10 padrões de estágio (planning, writing_file, creating, installing, executing, editing, reading_file, configuring, validating, done). Extrai nome de arquivo quando disponível. Publica eventos `vertex_progress` que o frontend renderiza como barra de progresso com spinner e nome do arquivo sendo criado.
 - **rm restrito:** só permite `rm` se o caminho contiver o diretório da workspace.
-- **Saída truncada:** stdout limitado a 3000 chars, stderr a 500 chars.
+- **Saída truncada com resumo inteligente:** stdout limitado a 3000 chars, stderr a 500 chars — mas quando truncado, o resultado inclui flags `stdout_truncated`/`stderr_truncated` e um `file_summary` estruturado contendo contagem de arquivos, tipo de projeto (static_web, react_app, python, etc.), extensões, arquivos principais e diretórios top-level. O DeepSeek recebe esse resumo como parte do `tool_result`, permitindo que ele entenda o que foi gerado mesmo quando a saída bruta foi cortada.
+- **Servidores de desenvolvimento em background:** detecta automaticamente comandos que iniciam servidores (`npm run dev`, `npx vite`, `npx serve`, `python -m http.server`, `yarn dev`, `php -S`, etc.) via 6 padrões regex. Quando detectado:
+  - Define `CI=true`, `FORCE_COLOR=0`, `BROWSER=none` no ambiente para evitar prompts
+  - Usa `preexec_fn=os.setsid` para grupo de processo próprio
+  - Drena stdout/stderr por 12s para detectar a porta (4 padrões de regex: `localhost:5173`, `0.0.0.0:3000`, `port 8080`, `listening on`)
+  - Se a porta não for detectada, infere pela ferramenta (Vite=5173, React=3000, serve=5000, etc.)
+  - Registra o processo em `_dev_servers` para consulta e shutdown posteriores
+  - Publica evento `dev_server_started` com URL e porta via WebSocket
+  - Acesso via `GET /api/files/preview-dev/{task_id}` (status) e `DELETE` (parar)
+- **Preview de projetos web (iframe embed):** novo componente `PreviewPanel` no painel inspetor:
+  - Detecta automaticamente projetos web: `index.html` na workspace ou evento `dev_server_started`
+  - Para HTML estático: serve via `GET /api/files/preview/{task_id}/` com `FileResponse`
+  - Para dev servers: usa a URL detectada do servidor em background
+  - Iframe com sandbox (`allow-scripts allow-same-origin`), altura 400px, fundo branco
+  - Botões: expandir/recolher, abrir em nova aba, status do servidor (live/offline)
+  - Auto-exibe quando detecta projeto web
+  - Banner de loading com spinner enquanto aguarda dev server iniciar
 - **Função dedicada:** `run_vertex(task_description)` — wrapper que monta o comando vertex com escape seguro.
 
 **Testes validados:**
@@ -1491,3 +1508,4 @@ Não reaproveitado agora:
 | 06/05/2026 | Shell interativo com follow-up DeepSeek + progresso estruturado do Vertex | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/index.css` | `npm run build` OK; 10 padrões de progresso Vertex testados; 14 padrões de prompt interativo testados; follow-up automático funcional com stdin write; frontend mostra barra de progresso com estágio e arquivo |
 | 06/05/2026 | Cache de pesquisa e verificacao cruzada | `backend/services/research_policy.py`, `backend/tools/tool_executor.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/tests/test_research_policy.py`, `backend/tests/test_tool_executor_research_cache.py`, `README.md`, `PLANO_VORTAX.md` | `python -m unittest discover -s tests` OK; busca reutiliza fontes salvas por conversa e respostas sensiveis exigem fontes suficientes antes de finalizar |
 | 06/05/2026 | Terminal Vertex integrado no AgentActivity + Download ZIP | `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css`, `backend/api/tasks.py` | `npm run build` OK; VertexTerminal inline no card de atividade com barra de progresso, stage pill, linhas stdout/stderr; ZIP endpoint com streaming de bytes em memoria; botao de download no FileList com destaque visual |
+| 06/05/2026 | Preview iframe, dev servers em background e file_summary | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/api/files.py`, `backend/services/stream_contract.py`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; `python -m py_compile` OK; preview de index.html estatico e dev servers; 6 padroes de deteccao de dev server; 4 padroes de extracao de porta; file_summary com tipo de projeto, extensoes e arquivos principais |

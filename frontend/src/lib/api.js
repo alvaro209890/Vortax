@@ -77,8 +77,9 @@ export function confirmTask(taskId, approved) {
   return request(`/api/control/${taskId}/confirm?approved=${approved}`, { method: "POST" });
 }
 
-export function listFiles() {
-  return request("/api/files/");
+export function listFiles(taskId) {
+  if (!taskId) return Promise.resolve({ files: [] });
+  return request(`/api/files/task/${taskId}`);
 }
 
 export function healthcheck() {
