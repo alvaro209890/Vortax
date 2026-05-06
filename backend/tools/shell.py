@@ -341,8 +341,8 @@ async def run_shell(
             return
         await bus.publish(task_id, event_type, {"line": stripped})
 
-        # Parse de progresso do Vertex
-        if is_vertex and event_type == "shell_stdout":
+        # Parse de progresso (funciona para qualquer comando, mas os labels são otimizados para Vertex)
+        if event_type == "shell_stdout":
             progress = _parse_vertex_progress(stripped)
             if progress:
                 await bus.publish(task_id, "vertex_progress", progress)

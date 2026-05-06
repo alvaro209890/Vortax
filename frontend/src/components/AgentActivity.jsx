@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, Loader2, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, FileText, Loader2, Sparkles, Terminal } from "lucide-react";
 
 const busyStatuses = new Set(["queued", "thinking", "executing", "running"]);
 
@@ -136,11 +136,155 @@ function StepIcon({ state }) {
   return <Circle size={15} />;
 }
 
+// ── Vertex Live Terminal ────────────────────────────────────────────────────
+
+const stageLabels = {
+  planning: "Planejando",
+  writing_file: "Criando arquivo",
+  creating: "Criando",
+  installing: "Instalando",
+  executing: "Executando",
+  editing: "Editando",
+  reading_file: "Lendo arquivo",
+  configuring: "Configurando",
+  validating: "Verificando",
+  done: "Concluído",
+};
+
+function useVertexTerminal(events) {
+  return useMemo(() => {
+    const shellLines = events
+      .filter((e) => e.type === "shell_stdout" || e.type === "shell_stderr")
+      .slice(-200);
+
+    const progressEvents = events.filter((e) => e.type === "vertex_progress");
+    const hasShellActivity = shellLines.length > 0;
+
+    let progress = null;
+    if (progressEvents.length > 0) {
+      const last = progressEvents[progressEvents.length - 1].payload;
+      const stagesSeen = progressEvents.map((e) => e.payload.stage);
+      progress = {
+        stage: last.stage,
+        message: last.message || "",
+        file: last.file || null,
+        done: stagesSeen.includes("done"),
+        totalSteps: new Set(stagesSeen).size,
+        interactiveRounds: last.interactive_rounds || 0,
+      };
+    }
+
+    // Detecta se tem shell rodando (último tool_call foi shell_run sem tool_result correspondente)
+    const lastShellCall = [...events].reverse().find(
+      (e) => e.type === "tool_call" && e.payload?.name === "shell_run"
+    );
+    const lastShellResult = [...events].reverse().find(
+      (e) => e.type === "tool_result" && e.payload?.name === "shell_run"
+    );
+    const shellRunning = lastShellCall && (!lastShellResult || lastShellResult.created_at < lastShellCall.created_at);
+
+    return { shellLines, progress, hasShellActivity, shellRunning };
+  }, [events]);
+}
+
+function VertexTerminal({ events }) {
+  const endRef = useRef(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const { shellLines, progress, hasShellActivity, shellRunning } = useVertexTerminal(events);
+
+  useEffect(() => {
+    if (!collapsed) {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [shellLines.length, collapsed]);
+
+  if (!hasShellActivity && !progress) return null;
+
+  return (
+    <div className={`vertex-terminal ${progress?.done ? "done" : ""} ${collapsed ? "collapsed" : ""}`}>
+      <button
+        className="vertex-terminal-header"
+        onClick={() => setCollapsed((c) => !c)}
+        type="button"
+      >
+        <div className="vertex-terminal-title">
+          <Terminal size={13} />
+          <span>Terminal</span>
+          {shellRunning && <Loader2 size={11} className="spinner" />}
+          {progress && !progress.done && (
+            <span className="vertex-stage-pill">
+              {stageLabels[progress.stage] || progress.stage}
+            </span>
+          )}
+          {progress?.done && (
+            <span className="vertex-stage-pill done">Concluído</span>
+          )}
+        </div>
+        <div className="vertex-terminal-meta">
+          {progress && !progress.done && progress.file && (
+            <span className="vertex-current-file">
+              <FileText size={11} /> {progress.file}
+            </span>
+          )}
+          <small>{shellLines.length} linhas</small>
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </div>
+      </button>
+
+      <div className="vertex-terminal-body">
+        {progress && (
+          <div className="vertex-terminal-progress">
+            <div className="vertex-progress-track">
+              {["planning", "creating", "executing", "done"].map((stage) => {
+                const reached = progress.totalSteps > 0 && (
+                  stage === "planning" ? true :
+                  stage === "creating" ? ["writing_file", "creating", "installing"].some(s =>
+                    events.some(e => e.type === "vertex_progress" && e.payload?.stage === s)
+                  ) :
+                  stage === "executing" ? ["executing", "editing", "validating", "configuring"].some(s =>
+                    events.some(e => e.type === "vertex_progress" && e.payload?.stage === s)
+                  ) :
+                  progress.done
+                );
+                return (
+                  <div
+                    key={stage}
+                    className={`vertex-progress-dot ${reached ? "reached" : ""} ${stage === "done" && progress.done ? "done" : ""}`}
+                  />
+                );
+              })}
+            </div>
+            <span className="vertex-progress-label">
+              {progress.done ? progress.message : (progress.file ? `Criando ${progress.file}` : progress.message)}
+            </span>
+          </div>
+        )}
+
+        <pre className="vertex-terminal-lines">
+          {shellLines.map((event, i) => (
+            <span
+              className={event.type === "shell_stderr" ? "stderr" : ""}
+              key={`${event.created_at}-${i}`}
+            >
+              {event.payload?.line || ""}
+            </span>
+          ))}
+        </pre>
+        <div ref={endRef} />
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ──────────────────────────────────────────────────────────
+
 export function AgentActivity({ events, status, taskDescription }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const steps = useMemo(() => buildSteps(events, status, taskDescription), [events, status, taskDescription]);
-  if (steps.length === 0) return null;
+  const { hasShellActivity } = useVertexTerminal(events);
+
+  if (steps.length === 0 && !hasShellActivity) return null;
 
   const label = currentLabel(events, status);
   const detail = currentDetail(events);
@@ -162,6 +306,7 @@ export function AgentActivity({ events, status, taskDescription }) {
           {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
         </div>
       </button>
+
       <div className="activity-steps" aria-label="Tasks da atividade">
         {steps.map((step) => (
           <button
@@ -178,6 +323,13 @@ export function AgentActivity({ events, status, taskDescription }) {
             <p>{step.detail}</p>
           </button>
         ))}
+
+        {/* Vertex Terminal inline dentro da atividade */}
+        {hasShellActivity && (
+          <div className="activity-vertex-slot">
+            <VertexTerminal events={events} />
+          </div>
+        )}
       </div>
     </section>
   );

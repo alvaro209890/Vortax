@@ -9,7 +9,6 @@ import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { MessageList } from "./components/MessageList.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
-import { ShellOutput } from "./components/ShellOutput.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { useWebSocket } from "./hooks/useWebSocket.js";
@@ -325,7 +324,6 @@ export default function App() {
             </div>
           </header>
           <MessageList messages={messages} />
-          <ShellOutput events={currentEvents} />
           <AgentActivity events={currentEvents} status={agentStatus} taskDescription={activeTask?.description} />
           <Composer disabled={backendStatus !== "online" || agentBusy} onSubmit={handleSubmit} />
         </>

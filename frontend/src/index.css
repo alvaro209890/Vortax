@@ -1398,135 +1398,181 @@ small {
   background: #10D86C;
 }
 
-/* Shell Output */
-.shell-output {
-  width: calc(100% - 64px);
-  max-width: 860px;
-  margin: 0 auto 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background: #0A0F14;
+/* Vertex Terminal — Integrado ao AgentActivity */
+.vertex-terminal {
+  border: 1px solid rgba(8, 198, 93, 0.16);
+  border-radius: 12px;
+  background: #080E12;
   overflow: hidden;
-  animation: fadeIn 0.2s ease-out;
+  transition: all 0.22s ease;
 }
 
-.shell-output-header {
+.vertex-terminal.done {
+  border-color: rgba(52, 211, 153, 0.18);
+  opacity: 0.92;
+}
+
+.vertex-terminal-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
-  background: rgba(255, 255, 255, 0.02);
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: none;
+  background: rgba(8, 198, 93, 0.04);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-.shell-output-header svg {
-  color: var(--text-muted);
+.vertex-terminal-header:hover {
+  background: rgba(8, 198, 93, 0.08);
 }
 
-.shell-output-header span {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.shell-stage-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  background: rgba(8, 198, 93, 0.12);
-  color: var(--accent-blue);
-  border: 1px solid rgba(8, 198, 93, 0.2);
-}
-
-.shell-stage-badge svg {
-  color: var(--accent-blue);
-}
-
-.shell-stage-badge.done {
-  background: rgba(52, 211, 153, 0.12);
-  color: var(--accent-green);
-  border-color: rgba(52, 211, 153, 0.2);
-}
-
-.shell-stage-badge.done svg {
-  color: var(--accent-green);
-}
-
-/* Vertex Progress Bar */
-.vertex-progress-bar {
-  padding: 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(8, 198, 93, 0.03);
-}
-
-.vertex-progress-steps {
+.vertex-terminal-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  gap: 7px;
+  min-width: 0;
 }
 
-.vertex-progress-steps .spinner {
+.vertex-terminal-title svg {
   color: var(--accent-blue);
   flex-shrink: 0;
 }
 
-.vertex-progress-steps span {
+.vertex-terminal-title .spinner {
+  color: var(--accent-blue);
+  animation: spin 1s linear infinite;
+}
+
+.vertex-stage-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(8, 198, 93, 0.15);
+  color: var(--accent-blue);
+  white-space: nowrap;
 }
 
-.vertex-done-msg {
+.vertex-stage-pill.done {
+  background: rgba(52, 211, 153, 0.15);
   color: var(--accent-green);
-  font-weight: 500;
 }
 
-.vertex-interactive-note {
-  margin-left: auto;
-  font-size: 11px;
+.vertex-terminal-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-muted);
-  font-style: italic;
-}
-
-/* Shell interactive note */
-.shell-interactive-note {
-  padding: 6px 14px;
   font-size: 11px;
-  color: var(--accent-warn);
-  background: rgba(251, 191, 36, 0.06);
-  border-bottom: 1px solid rgba(251, 191, 36, 0.1);
+  flex-shrink: 0;
 }
 
-.shell-output-header small {
-  color: var(--text-muted);
-  margin-left: auto;
+.vertex-current-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.shell-output-lines {
+.vertex-terminal-body {
+  max-height: 340px;
+  overflow: hidden;
+  transition: max-height 0.26s ease, opacity 0.2s ease;
+}
+
+.vertex-terminal.collapsed .vertex-terminal-body {
+  max-height: 0;
+  opacity: 0;
+}
+
+.vertex-terminal-progress {
+  padding: 8px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vertex-progress-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vertex-progress-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.vertex-progress-dot.reached {
+  background: var(--accent-blue);
+  box-shadow: 0 0 6px rgba(8, 198, 93, 0.4);
+}
+
+.vertex-progress-dot.done {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
+}
+
+.vertex-progress-dot:not(:last-child)::after {
+  content: "";
+  display: block;
+  width: 28px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  position: relative;
+  left: 8px;
+  top: -4px;
+}
+
+.vertex-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vertex-terminal-lines {
   margin: 0;
-  padding: 12px 14px;
-  max-height: 300px;
+  padding: 10px 11px;
+  max-height: 260px;
   overflow-y: auto;
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.55;
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
 }
 
-.shell-output-lines span {
+.vertex-terminal-lines span {
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-.shell-output-lines span.stderr {
+.vertex-terminal-lines span.stderr {
   color: var(--accent-danger);
+}
+
+.activity-vertex-slot {
+  margin-top: 2px;
 }
 
 .muted {
