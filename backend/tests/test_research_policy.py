@@ -1,6 +1,6 @@
 import unittest
 
-from services.research_policy import cached_search_result, cross_check_status, detect_source_divergence
+from services.research_policy import cached_search_result, cross_check_status, detect_source_divergence, research_profile
 
 
 SOURCES = [
@@ -49,6 +49,13 @@ class ResearchPolicyTests(unittest.TestCase):
 
         self.assertFalse(status["satisfied"])
         self.assertEqual(status["required_sources"], 2)
+
+    def test_software_creation_does_not_require_research_sources(self) -> None:
+        profile = research_profile("gere um site simples de calculadora para mim")
+
+        self.assertTrue(profile["development_intent"])
+        self.assertFalse(profile["search_intent"])
+        self.assertEqual(profile["required_sources"], 0)
 
     def test_marks_possible_price_divergence(self) -> None:
         sources = [

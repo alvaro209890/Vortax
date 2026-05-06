@@ -187,7 +187,7 @@ function useVertexTerminal(events) {
   }, [events]);
 }
 
-function VertexTerminal({ events }) {
+export function VertexTerminal({ events }) {
   const endRef = useRef(null);
   const [collapsed, setCollapsed] = useState(false);
   const { shellLines, progress, hasShellActivity, shellRunning } = useVertexTerminal(events);

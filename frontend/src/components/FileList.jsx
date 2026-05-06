@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Download, FileArchive, Folder } from "lucide-react";
+import { Download, FileArchive, Folder } from "lucide-react";
+
+import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+import { API_BASE_URL } from "../lib/api.js";
 
 function fileDownloadUrl(taskId, path) {
   const safeTaskId = encodeURIComponent(taskId || "");
@@ -7,53 +9,43 @@ function fileDownloadUrl(taskId, path) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  return `/api/files/task/${safeTaskId}/${safePath}`;
+  return `${API_BASE_URL}/api/files/task/${safeTaskId}/${safePath}`;
 }
 
-export function FileList({ files, taskId, hasFiles }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const downloadZipUrl = taskId ? `/api/tasks/${taskId}/download` : null;
+export function FileList({ error, files, loading, taskId }) {
+  const downloadZipUrl = taskId ? `${API_BASE_URL}/api/tasks/${encodeURIComponent(taskId)}/download` : null;
 
   return (
-    <section className={`panel files-panel ${collapsed ? "collapsed" : ""}`}>
-      <button
-        aria-expanded={!collapsed}
-        className="files-toggle"
-        onClick={() => setCollapsed((current) => !current)}
-        type="button"
-      >
-        <span>Arquivos</span>
-        <small>{files.length}</small>
-        {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-      </button>
+    <CollapsiblePanel className="files-panel" count={files.length} storageKey="vortax.inspector.files.collapsed" title="Arquivos">
+      {loading ? (
+        <p className="panel-state">Carregando arquivos...</p>
+      ) : error ? (
+        <p className="panel-state error">Nao foi possivel carregar os arquivos.</p>
+      ) : files.length === 0 ? (
+        <p className="panel-state">Nenhum arquivo gerado.</p>
+      ) : (
+        <>
+          {downloadZipUrl && (
+            <a
+              className="zip-download-btn"
+              href={downloadZipUrl}
+              download
+              title="Baixar todos os arquivos em ZIP"
+            >
+              <FileArchive size={16} />
+              <span>Baixar projeto (.zip)</span>
+              <Download size={14} />
+            </a>
+          )}
 
-      <div className="files-content">
-        {files.length === 0 ? (
-          <p className="muted">Nenhum arquivo gerado.</p>
-        ) : (
-          <>
-            {downloadZipUrl && (
-              <a
-                className="zip-download-btn"
-                href={downloadZipUrl}
-                download
-                title="Baixar todos os arquivos em ZIP"
-              >
-                <FileArchive size={16} />
-                <span>Baixar projeto (.zip)</span>
-                <Download size={14} />
-              </a>
-            )}
-
-            {files.map((file) => (
-              <a className="file-item" href={fileDownloadUrl(taskId, file.path)} key={file.path}>
-                <Folder size={15} />
-                <span>{file.path}</span>
-              </a>
-            ))}
-          </>
-        )}
-      </div>
-    </section>
+          {files.map((file) => (
+            <a className="file-item" href={fileDownloadUrl(taskId, file.path)} key={file.path}>
+              <Folder size={15} />
+              <span>{file.path}</span>
+            </a>
+          ))}
+        </>
+      )}
+    </CollapsiblePanel>
   );
 }

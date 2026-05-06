@@ -1,6 +1,8 @@
 import { ChevronLeft, ChevronRight, Monitor, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+
 export function ScreenView({ events, connectionState }) {
   const frames = useMemo(
     () => events.filter((event) => event.type === "screen_frame" && event.payload?.image_base64),
@@ -38,11 +40,12 @@ export function ScreenView({ events, connectionState }) {
   }
 
   return (
-    <section className="panel screen-panel">
-      <div className="panel-title">
-        <span>Tela</span>
-        <small>{frames.length > 0 ? `${selectedIndex + 1}/${frames.length}` : connectionState}</small>
-      </div>
+    <CollapsiblePanel
+      className="screen-panel"
+      count={frames.length > 0 ? `${selectedIndex + 1}/${frames.length}` : connectionState}
+      storageKey="vortax.inspector.screen.collapsed"
+      title="Tela"
+    >
       <div className="screen-view">
         {image ? (
           <>
@@ -85,6 +88,6 @@ export function ScreenView({ events, connectionState }) {
           </div>
         </div>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }

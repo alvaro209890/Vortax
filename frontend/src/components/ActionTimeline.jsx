@@ -1,5 +1,7 @@
 import { AlertTriangle, CheckCircle2, Circle, Globe2, Monitor, Search, Terminal } from "lucide-react";
 
+import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+
 const hiddenTypes = new Set(["task_created", "user_message", "assistant_message_delta", "agent_status"]);
 
 function iconFor(event) {
@@ -69,14 +71,15 @@ export function ActionTimeline({ events }) {
   const operationalEvents = events.filter((event) => !hiddenTypes.has(event.type));
 
   return (
-    <section className="panel timeline-panel">
-      <div className="panel-title">
-        <span>Atividade</span>
-        <small>{operationalEvents.length}</small>
-      </div>
+    <CollapsiblePanel
+      className="timeline-panel"
+      count={operationalEvents.length}
+      storageKey="vortax.inspector.activity.collapsed"
+      title="Atividade"
+    >
       <div className="timeline">
         {operationalEvents.length === 0 ? (
-          <p className="muted">O andamento aparece aqui.</p>
+          <p className="panel-state">O andamento aparece aqui.</p>
         ) : (
           operationalEvents.map((event, index) => (
             <div className={`timeline-item ${event.type}`} key={`${event.created_at}-${index}`}>
@@ -89,6 +92,6 @@ export function ActionTimeline({ events }) {
           ))
         )}
       </div>
-    </section>
+    </CollapsiblePanel>
   );
 }

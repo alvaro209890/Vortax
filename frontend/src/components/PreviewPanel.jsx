@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, Eye, EyeOff, Globe, Loader2, RefreshCw, Terminal } from "lucide-react";
 
+import { usePersistentState } from "../hooks/usePersistentState.js";
+import { API_BASE_URL } from "../lib/api.js";
+
 function detectPreviewType(files, events) {
   const hasIndexHtml = files.some(
     (f) => f.path === "index.html" || f.path.endsWith("/index.html")
@@ -23,7 +26,7 @@ function detectPreviewType(files, events) {
 }
 
 export function PreviewPanel({ files, events, taskId }) {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = usePersistentState("vortax.inspector.preview.visible", true);
   const [devServerStatus, setDevServerStatus] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,7 +38,7 @@ export function PreviewPanel({ files, events, taskId }) {
   const previewUrl = useMemo(() => {
     if (!taskId || !preview) return null;
     if (preview.type === "dev_server") return preview.url;
-    return `/api/files/preview/${taskId}/`;
+    return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId)}/`;
   }, [taskId, preview]);
 
   // Check dev server status on mount and when preview changes
@@ -43,7 +46,7 @@ export function PreviewPanel({ files, events, taskId }) {
     if (!taskId || preview?.type !== "dev_server") return;
     const checkStatus = async () => {
       try {
-        const resp = await fetch(`/api/files/preview-dev/${taskId}`);
+        const resp = await fetch(`${API_BASE_URL}/api/files/preview-dev/${encodeURIComponent(taskId)}`);
         const data = await resp.json();
         setDevServerStatus(data);
       } catch {
@@ -55,16 +58,11 @@ export function PreviewPanel({ files, events, taskId }) {
     return () => clearInterval(interval);
   }, [taskId, preview?.type]);
 
-  // Auto-show when preview becomes available
-  useEffect(() => {
-    if (preview) setVisible(true);
-  }, [preview]);
-
   async function handleRefresh() {
     if (!taskId || preview?.type !== "dev_server") return;
     setRefreshing(true);
     try {
-      await fetch(`/api/files/preview-dev/${taskId}`, { method: "DELETE" });
+      await fetch(`${API_BASE_URL}/api/files/preview-dev/${encodeURIComponent(taskId)}`, { method: "DELETE" });
       setDevServerStatus(null);
     } catch {
       // ignore

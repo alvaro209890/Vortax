@@ -55,28 +55,7 @@ async def download_task_file(task_id: str, file_path: str) -> FileResponse:
     return FileResponse(target)
 
 
-@router.get("/")
-async def list_files() -> dict:
-    raise HTTPException(status_code=400, detail="Informe uma conversa: /api/files/task/{task_id}")
-
-
-@router.get("/{file_path:path}")
-async def download_file(file_path: str) -> FileResponse:
-    raise HTTPException(status_code=400, detail="Use /api/files/task/{task_id}/{file_path}")
-
-
 # ── Preview de projetos web gerados ────────────────────────────────────────
-
-@router.get("/preview/{task_id}/{file_path:path}")
-async def preview_task_file(task_id: str, file_path: str):
-    """Serve arquivos estaticos da workspace para preview em iframe."""
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
-    target = safe_task_workspace_path(task_id, file_path)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="Arquivo nao encontrado")
-    return FileResponse(target)
-
 
 @router.get("/preview/{task_id}/")
 async def preview_task_index(task_id: str):
@@ -88,6 +67,17 @@ async def preview_task_index(task_id: str):
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Nenhum index.html encontrado para preview")
     return FileResponse(index_path)
+
+
+@router.get("/preview/{task_id}/{file_path:path}")
+async def preview_task_file(task_id: str, file_path: str):
+    """Serve arquivos estaticos da workspace para preview em iframe."""
+    if not task_store.get(task_id):
+        raise HTTPException(status_code=404, detail="Task nao encontrada")
+    target = safe_task_workspace_path(task_id, file_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo nao encontrado")
+    return FileResponse(target)
 
 
 @router.get("/preview-dev/{task_id}")
@@ -108,3 +98,13 @@ async def stop_dev_server_endpoint(task_id: str) -> dict:
 
     stopped = await stop_dev_server(task_id)
     return {"ok": stopped}
+
+
+@router.get("/")
+async def list_files() -> dict:
+    raise HTTPException(status_code=400, detail="Informe uma conversa: /api/files/task/{task_id}")
+
+
+@router.get("/{file_path:path}")
+async def download_file(file_path: str) -> FileResponse:
+    raise HTTPException(status_code=400, detail="Use /api/files/task/{task_id}/{file_path}")

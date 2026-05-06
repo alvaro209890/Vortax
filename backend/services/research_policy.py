@@ -65,6 +65,11 @@ VERSION_RE = re.compile(r"\bv?\d+(?:\.\d+){1,3}\b", re.IGNORECASE)
 DATE_RE = re.compile(r"\b(?:20\d{2}|\d{1,2}/\d{1,2}/20\d{2})\b")
 NUMBER_RE = re.compile(r"\b\d+(?:[.,]\d+)?%?\b")
 
+DEVELOPMENT_PATTERNS = (
+    r"\b(crie|criar|gere|gerar|desenvolva|desenvolver|implemente|implementar|fa[cç]a|construa)\b",
+    r"\b(site|pagina|p[aá]gina|app|aplicativo|calculadora|dashboard|landing|frontend|html|css|javascript|react|vite)\b",
+)
+
 
 def normalized_terms(text: str) -> set[str]:
     normalized = "".join(char.lower() if char.isalnum() else " " for char in text)
@@ -73,15 +78,22 @@ def normalized_terms(text: str) -> set[str]:
 
 def research_profile(text: str) -> dict[str, object]:
     lowered = text.lower()
+    development_intent = all(
+        any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in group)
+        for group in (
+            DEVELOPMENT_PATTERNS[:1],
+            DEVELOPMENT_PATTERNS[1:],
+        )
+    )
     categories = [
         category
         for category, patterns in SENSITIVE_PATTERNS.items()
         if any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in patterns)
     ]
     freshness_requested = any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in FRESHNESS_PATTERNS)
-    search_intent = bool(
+    search_intent = (not development_intent) and bool(
         re.search(
-            r"\b(pesquis|busc|procure|encontre|fonte|fontes|site|web|internet|not[ií]ci[aa]|pre[cç]o|compar)",
+            r"\b(pesquis|busc|procure|encontre|fonte|fontes|web|internet|not[ií]ci[aa]|pre[cç]o|compar)",
             lowered,
             flags=re.IGNORECASE,
         )
@@ -94,6 +106,7 @@ def research_profile(text: str) -> dict[str, object]:
         "requires_cross_check": requires_cross_check,
         "required_sources": required_sources,
         "search_intent": search_intent,
+        "development_intent": development_intent,
     }
 
 

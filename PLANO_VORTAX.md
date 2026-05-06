@@ -1,6 +1,6 @@
 # 🌀 Plano Técnico — Vortax (Agente Web Local com Acesso a Este PC)
 
-> **Versão:** 2.7 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
+> **Versão:** 2.8 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
 > **Objetivo:** Desenvolver um site web local, parecido no fluxo com o Manus, para controlar uma IA que opera este PC Linux Mint. A primeira versão roda somente na rede local, sem autenticação e sem hospedagem externa, com chat em tempo real, stream das ações executadas no computador, DeepSeek V4 Flash para texto/planejamento e `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq para análise de imagem.
 
 ---
@@ -1264,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.8 | 06/05/2026 | Botao de parar tarefa durante execucao com `POST /api/control/{task_id}/stop`; interrupcao de subprocessos shell/vertex/dev-server via `killpg`; checagem `is_stopped` no loop de drain do shell e entre iteracoes do runner; preview automatico no Chrome quando `index.html` e gerado (`_open_static_preview_if_available`); componente `CollapsiblePanel` reutilizavel refatorando FileList/SourceList/ScreenView/ActionTimeline; `usePersistentState` hook para lembrar estado collapsed dos paineis; favicon e apple-touch-icon no index.html |
 | 2.7 | 06/05/2026 | Preview de projetos web em iframe embutido no painel inspetor (`PreviewPanel`); servidores de desenvolvimento (`npm run dev`, `npx vite`, `python -m http.server`) executados em background com detecção de porta e proxy local; resumo estruturado de arquivos (`file_summary`) como parte do resultado do `shell_run` em vez de truncamento bruto; evento `dev_server_started` via WebSocket |
 | 2.6 | 06/05/2026 | Terminal do Vertex integrado diretamente no card AgentActivity com barra de progresso, stage pill, arquivo atual, linhas stdout/stderr e toggle collapse; download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download` com botão destacado no FileList; cache de pesquisa por conversa antes de chamar Google novamente; verificação cruzada automática para preço, versão, documentação, notícia, comparação e dados sensíveis |
 | 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created`; shell interativo com follow-up automático (detecção de prompts e mini-loop DeepSeek); progresso estruturado do Vertex CLI com parse de passos internos e evento `vertex_progress` |
@@ -1416,6 +1417,17 @@ Implementado no backend:
 - Os testes também cobrem bloqueio de URLs de login/conta Google.
 - Smoke test real em 06/05/2026 validou `browser_google_search` contra o Google com retorno de 10 resultados estruturados.
 
+### Interrupção de Tarefas em Execução
+
+Implementado em 06/05/2026:
+
+- **Rota `POST /api/control/{task_id}/stop`:** interrompe uma tarefa em andamento. Marca `task_store.stop()`, cancela o `asyncio.Task` do runner, e chama `_kill_runner_and_children()`.
+- **Kill de subprocessos:** usa `os.killpg()` para matar o grupo de processo inteiro (shell, vertex, dev servers) — o `preexec_fn=os.setsid` no `Popen` garante que todos os filhos estejam no mesmo grupo. Remove dev servers do registro `_dev_servers`. Fallback com `psutil` para encontrar processos orfaos.
+- **Checagem no loop do runner:** `agent_runner.py` verifica `store.is_stopped()` antes de executar cada ferramenta e apos o resultado. Se interrompido, publica mensagem "Tarefa interrompida pelo usuario" e retorna. Trata `asyncio.CancelledError` para cancelamento externo.
+- **Checagem no loop de drain do shell:** `shell.py` verifica `task_store.is_stopped()` a cada iteracao do `_drain_and_interact` via `_check_stopped()`. Se detectado, mata o subprocesso imediatamente com `process.kill()` (ou `killpg` para dev servers) e interrompe o streaming.
+- **Botao "Parar" no frontend:** aparece no header do chat (vermelho) quando `agentBusy` e true. Mostra "Parando..." com estado `stopping` enquanto aguarda confirmacao do backend. Some automaticamente quando o status muda para `stopped`/`done`/`error`/`idle`.
+- **Delete de task:** a rota `DELETE /api/tasks/{task_id}` tambem chama `task_store.stop()`, cancela o runner e mata o dev server antes de deletar.
+
 ### Chat Persistente e Stream
 
 Implementado no backend/frontend:
@@ -1509,3 +1521,4 @@ Não reaproveitado agora:
 | 06/05/2026 | Cache de pesquisa e verificacao cruzada | `backend/services/research_policy.py`, `backend/tools/tool_executor.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/tests/test_research_policy.py`, `backend/tests/test_tool_executor_research_cache.py`, `README.md`, `PLANO_VORTAX.md` | `python -m unittest discover -s tests` OK; busca reutiliza fontes salvas por conversa e respostas sensiveis exigem fontes suficientes antes de finalizar |
 | 06/05/2026 | Terminal Vertex integrado no AgentActivity + Download ZIP | `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css`, `backend/api/tasks.py` | `npm run build` OK; VertexTerminal inline no card de atividade com barra de progresso, stage pill, linhas stdout/stderr; ZIP endpoint com streaming de bytes em memoria; botao de download no FileList com destaque visual |
 | 06/05/2026 | Preview iframe, dev servers em background e file_summary | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/api/files.py`, `backend/services/stream_contract.py`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; `python -m py_compile` OK; preview de index.html estatico e dev servers; 6 padroes de deteccao de dev server; 4 padroes de extracao de porta; file_summary com tipo de projeto, extensoes e arquivos principais |
+| 06/05/2026 | Interrupcao de tarefas + CollapsiblePanel + preview automatico no Chrome | `backend/api/control.py`, `backend/services/agent_runner.py`, `backend/tools/shell.py`, `backend/api/tasks.py`, `backend/tools/tool_executor.py`, `frontend/src/App.jsx`, `frontend/src/lib/api.js`, `frontend/src/index.css`, `frontend/src/components/CollapsiblePanel.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/components/SourceList.jsx`, `frontend/src/components/ScreenView.jsx`, `frontend/src/components/ActionTimeline.jsx`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/hooks/usePersistentState.js`, `frontend/index.html` | `npm run build` OK; `python -m py_compile` OK; botao Parar interrompe runner + shell + vertex + dev server; `_open_static_preview_if_available` navega Chrome para index.html gerado; CollapsiblePanel refatora 5 paineis; usePersistentState salva collapsed no localStorage; favicon adicionado |

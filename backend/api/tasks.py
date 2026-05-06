@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from config import settings
 from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history

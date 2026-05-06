@@ -1,4 +1,5 @@
 from typing import Any, Awaitable, Callable
+from urllib.parse import quote
 
 from database import database
 from services.event_bus import EventBus
@@ -120,6 +121,27 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
         await bus.publish(task_id, "error", {"message": f"Screenshot apos tool falhou: {type(exc).__name__}"})
 
 
+async def _open_static_preview_if_available(task_id: str, files: list[dict[str, Any]], bus: EventBus) -> None:
+    has_index = any(str(file.get("path") or "") == "index.html" for file in files)
+    if not has_index:
+        return
+
+    preview_url = f"http://127.0.0.1:{settings.BACKEND_PORT}/api/files/preview/{quote(task_id)}/"
+    try:
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Abrindo preview do site",
+                "detail": "Carregando o index.html gerado no Chrome para validar visualmente.",
+                "tool": "browser_navigate",
+            },
+        )
+        await browser_tool.navigate(preview_url, task_id=task_id)
+    except Exception as exc:
+        await bus.publish(task_id, "error", {"message": f"Preview automatico falhou: {type(exc).__name__}: {exc}"})
+
+
 async def execute_tool(
     tool_name: str,
     params: dict[str, Any] | None,
@@ -180,6 +202,7 @@ async def execute_tool(
                     "files_created",
                     {"files": files, "directory": str(project_dir)},
                 )
+                await _open_static_preview_if_available(task_id, files, bus)
 
             # Se foi dev server, publica evento
             shell_data = result.get("data", result) if isinstance(result, dict) else {}
