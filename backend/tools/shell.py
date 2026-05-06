@@ -1,5 +1,8 @@
+import asyncio
+import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from config import settings
@@ -87,13 +90,41 @@ def _has_blocked_patterns(command: str) -> str | None:
 
 
 def _shell_timeout(command: str) -> float:
-    # Vertex CLI precisa de mais tempo para desenvolvimento de software.
     if "vertex" in command:
         return float(getattr(settings, "SHELL_VERTEX_TIMEOUT_SECONDS", 300) or 300)
     return float(getattr(settings, "SHELL_TIMEOUT_SECONDS", 30) or 30)
 
 
-async def run_shell(command: str, task_id: str | None = None) -> dict[str, Any]:
+def _project_dir(task_id: str | None) -> Path:
+    """Retorna o diretório do projeto dentro da workspace para um task_id."""
+    if task_id:
+        project = settings.WORKSPACE_PATH / task_id
+    else:
+        project = settings.WORKSPACE_PATH
+    project.mkdir(parents=True, exist_ok=True)
+    return project
+
+
+async def _list_files(cwd: Path) -> list[dict[str, Any]]:
+    """Lista arquivos no diretório para o evento files_created."""
+    files = []
+    try:
+        for entry in sorted(cwd.rglob("*")):
+            if entry.is_file() and not entry.name.startswith("."):
+                rel = str(entry.relative_to(cwd))
+                size = entry.stat().st_size
+                files.append({"path": rel, "size": size})
+    except OSError:
+        pass
+    return files[:100]
+
+
+async def run_shell(
+    command: str,
+    task_id: str | None = None,
+    bus: Any = None,
+) -> dict[str, Any]:
+    """Executa um comando shell seguro com streaming de stdout via EventBus."""
     cmd = str(command).strip()
     if not cmd:
         return _shell_error("Comando vazio.")
@@ -121,29 +152,85 @@ async def run_shell(command: str, task_id: str | None = None) -> dict[str, Any]:
                 f"Use caminhos dentro de {workspace_str}"
             )
 
+    cwd = str(_project_dir(task_id))
+
+    # Se for vertex, injeta o output-dir via env e usa o task_id como subdiretório
+    env = os.environ.copy()
+    if "vertex" in executable:
+        env["VERTEX_OUTPUT_DIR"] = cwd
+
     timeout = _shell_timeout(cmd)
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
             shell=True,
-            cwd=str(settings.WORKSPACE_PATH),
-            capture_output=True,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
+            env=env,
         )
-    except subprocess.TimeoutExpired:
-        return _shell_error(f"Comando excedeu timeout de {timeout}s e foi cancelado.")
     except OSError as exc:
         return _shell_error(f"Erro ao executar comando: {exc}")
 
-    stdout = result.stdout[:3000] if result.stdout else ""
-    stderr = result.stderr[:500] if result.stderr else ""
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    async def _drain_stream(stream, lines_list: list[str], event_type: str) -> None:
+        """Le e publica linhas de um stream ate que ele feche."""
+        loop = asyncio.get_event_loop()
+
+        while True:
+            try:
+                line = await asyncio.wait_for(
+                    loop.run_in_executor(None, stream.readline),
+                    timeout=0.3,
+                )
+            except asyncio.TimeoutError:
+                continue
+
+            if not line:
+                break
+
+            lines_list.append(line)
+            if bus and task_id:
+                stripped = line.rstrip("\n\r")
+                if stripped:
+                    await bus.publish(task_id, event_type, {"line": stripped})
+
+    async def _drain_with_timeout() -> None:
+        """Drena ambos os streams com timeout global."""
+        drain_task = asyncio.gather(
+            _drain_stream(process.stdout, stdout_lines, "shell_stdout"),
+            _drain_stream(process.stderr, stderr_lines, "shell_stderr"),
+        )
+        try:
+            await asyncio.wait_for(drain_task, timeout=timeout)
+        except asyncio.TimeoutError:
+            process.kill()
+
+    await _drain_with_timeout()
+
+    # Garante que o processo terminou
+    loop = asyncio.get_event_loop()
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, process.wait),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        await loop.run_in_executor(None, process.wait)
+
+    returncode = process.returncode if process.returncode is not None else -1
+    stdout = "".join(stdout_lines)[:3000]
+    stderr = "".join(stderr_lines)[:500]
 
     return {
-        "success": result.returncode == 0,
+        "success": returncode == 0,
         "stdout": stdout,
         "stderr": stderr,
-        "returncode": result.returncode,
+        "returncode": returncode,
     }
 
 

@@ -5,11 +5,14 @@ export const API_BASE_URL = explicitBaseUrl || defaultBaseUrl;
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");
 
 async function request(path, options = {}) {
+  const headers = options.body instanceof FormData
+    ? { ...(options.headers || {}) }
+    : {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
     ...options,
   });
 
@@ -47,8 +50,31 @@ export function appendTaskMessage(taskId, content) {
   });
 }
 
-export function controlTask(taskId, action) {
-  return request(`/api/control/${taskId}/${action}`, { method: "POST" });
+function imageFormData(question, files) {
+  const formData = new FormData();
+  formData.append("question", question);
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  return formData;
+}
+
+export function createImageTask(question, files) {
+  return request("/api/tasks/images", {
+    method: "POST",
+    body: imageFormData(question, files),
+  });
+}
+
+export function appendTaskImages(taskId, question, files) {
+  return request(`/api/tasks/${taskId}/images`, {
+    method: "POST",
+    body: imageFormData(question, files),
+  });
+}
+
+export function confirmTask(taskId, approved) {
+  return request(`/api/control/${taskId}/confirm?approved=${approved}`, { method: "POST" });
 }
 
 export function listFiles() {

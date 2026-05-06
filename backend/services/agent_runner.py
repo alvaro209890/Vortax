@@ -2,6 +2,8 @@ import json
 from typing import Any
 
 from config import settings
+from database import database
+from services.context_manager import prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action
 from services.event_bus import EventBus
 from services.mock_runner import run_mock_task
@@ -25,7 +27,6 @@ def _message_history_from_events(events: list[dict[str, Any]], fallback_descript
     if not messages:
         messages.append({"role": "user", "content": fallback_description})
 
-    # Keep the most recent turns so long-running chats stay within model context.
     return messages[-12:]
 
 
@@ -41,6 +42,25 @@ def _progress_label(action_name: str, description: str) -> str:
     if action_name.startswith("browser_"):
         return "Operando o navegador"
     return description or action_name
+
+
+def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    sources = database.list_sources(task_id)[:8]
+    if not sources:
+        return history
+    lines = []
+    for source in sources:
+        title = source.get("title") or source.get("url")
+        score = source.get("quality_score", 0)
+        source_type = source.get("source_type") or "web"
+        snippet = str(source.get("snippet") or "").strip()
+        lines.append(f"- [{source_type} {score}/100] {title}: {source.get('url')}" + (f" — {snippet[:220]}" if snippet else ""))
+    source_context = (
+        "Fontes ja abertas e salvas nesta conversa. Reutilize antes de pesquisar de novo quando responder ao mesmo tema; "
+        "se precisar de informacao atual, controversa ou insuficiente, busque fontes adicionais.\n"
+        + "\n".join(lines)
+    )
+    return [{"role": "system", "content": source_context}, *history]
 
 
 async def _wait_if_paused_or_stopped(task_id: str, store: TaskStore, bus: EventBus) -> bool:
@@ -60,6 +80,11 @@ async def _wait_if_paused_or_stopped(task_id: str, store: TaskStore, bus: EventB
 
 async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
     if not deepseek_configured():
+        history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+        _ = history
+        if compacted:
+            await bus.publish(task_id, "context_compacted", context_payload)
+        await bus.publish(task_id, "context_status", context_payload)
         await bus.publish(
             task_id,
             "tool_result",
@@ -70,7 +95,10 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
     try:
         store.update_status(task_id, "running")
-        history = _message_history_from_events(bus.history(task_id), description)
+        history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+        if compacted:
+            await bus.publish(task_id, "context_compacted", context_payload)
+        await bus.publish(task_id, "context_status", context_payload)
         await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
         await bus.publish(task_id, "agent_progress", {"label": "Analisando pedido", "detail": description})
 
@@ -79,7 +107,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 return
 
             await bus.publish(task_id, "agent_progress", {"label": "Planejando proximo passo", "step": iteration + 1})
-            action = await request_deepseek_action(history)
+            action = await request_deepseek_action(_history_with_research_context(task_id, history))
             history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
 
             action_name = str(action.get("action", "")).strip()
@@ -87,6 +115,10 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
                 store.update_status(task_id, "done", result=result)
                 await bus.publish(task_id, "assistant_message_done", {"content": result})
+                _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+                if final_compacted:
+                    await bus.publish(task_id, "context_compacted", final_context)
+                await bus.publish(task_id, "context_status", final_context)
                 await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
                 return
 

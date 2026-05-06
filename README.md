@@ -51,11 +51,13 @@ Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e
 ## Funcionalidades
 
 - **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
+- **Contexto por conversa** — cada chat mantém estado de contexto, estimativa de tokens e compactação automática
 - **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
 - **Stream em tempo real** — WebSocket com eventos de ação, screenshots e resultados
 - **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
 - **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
 - **Painel de atividade** — timeline lateral com resumo das ações do agente
+- **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
 - **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
@@ -169,6 +171,26 @@ Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
 | Segurança | Middleware LAN-only, sanitização de segredos |
+
+## Contexto e Compactação
+
+O Vortax mantém contexto por conversa no SQLite, inspirado na lógica de sessão do Vertex:
+
+- cada `task_id` tem um registro em `conversation_contexts`;
+- o backend estima tokens por histórico textual, imagens e resumo compactado;
+- quando a conversa passa de 70% do limite, o frontend mostra `Quase cheio`;
+- quando passa de 88%, os turnos antigos são compactados em um resumo e os turnos recentes continuam completos;
+- o limite padrão é `24000` tokens estimados, menor que janelas máximas de modelos grandes para deixar margem ao prompt do planner, schema de tools e resultados de ferramentas.
+
+Configuração via `.env`:
+
+```bash
+CONTEXT_TOKEN_LIMIT=24000
+CONTEXT_WARNING_RATIO=0.70
+CONTEXT_COMPACT_RATIO=0.88
+CONTEXT_RECENT_MESSAGES=8
+CONTEXT_SUMMARY_MAX_CHARS=5000
+```
 
 ---
 

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     GROQ_VISION_TIMEOUT_SECONDS: float = 60.0
 
     MAX_ITERATIONS: int = 30
+    CONTEXT_TOKEN_LIMIT: int = 24000
+    CONTEXT_WARNING_RATIO: float = 0.70
+    CONTEXT_COMPACT_RATIO: float = 0.88
+    CONTEXT_RECENT_MESSAGES: int = 8
+    CONTEXT_SUMMARY_MAX_CHARS: int = 5000
     WORKSPACE_PATH: Path = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Vortax/workspace")
     SCREENSHOT_INTERVAL: int = 5
     STREAM_SCREENSHOT_INTERVAL: int = 2

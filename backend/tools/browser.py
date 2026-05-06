@@ -11,6 +11,7 @@ from playwright.async_api import Browser, Page, Playwright, async_playwright
 
 from config import settings
 from services.process_registry import register_pid, unregister_pid
+from services.source_quality import query_from_google_url, rank_search_results
 
 
 class BrowserToolError(RuntimeError):
@@ -131,7 +132,8 @@ class BrowserTool:
     async def click_link_by_index(self, index: int = 1, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
         if "://www.google." in page.url and "/search" in page.url:
-            links = await self._google_results(page, limit=max(int(index), 1))
+            query = query_from_google_url(page.url)
+            links = rank_search_results(query, await self._google_results(page, limit=10), limit=max(int(index), 1))
         else:
             links = await self._visible_links(page, limit=max(int(index), 1))
         position = max(int(index), 1) - 1
@@ -174,7 +176,7 @@ class BrowserTool:
         page = await self._ensure_page()
         search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl={quote_plus(hl)}"
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        results = await self._google_results(page, limit=10)
+        results = rank_search_results(query, await self._google_results(page, limit=20), limit=10)
         return {
             "query": query,
             "url": page.url,
@@ -230,7 +232,8 @@ class BrowserTool:
         page_url = page.url
         links = []
         if prefer_google_results and "://www.google." in page_url and "/search" in page_url:
-            links = await self._google_results(page, limit=int(limit))
+            query = query_from_google_url(page_url)
+            links = rank_search_results(query, await self._google_results(page, limit=max(int(limit) * 2, 10)), limit=int(limit))
         if not links:
             links = await self._visible_links(page, limit=int(limit))
         return {"url": page.url, "title": await page.title(), "links": links, "count": len(links)}

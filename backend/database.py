@@ -72,6 +72,22 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_screenshots_task_id_id ON screenshots(task_id, id);
 
+                CREATE TABLE IF NOT EXISTS chat_images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    event_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    filename TEXT,
+                    content_type TEXT NOT NULL,
+                    question TEXT,
+                    analysis TEXT,
+                    image_base64 TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_chat_images_task_id_id ON chat_images(task_id, id);
+
                 CREATE TABLE IF NOT EXISTS sources (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
@@ -87,6 +103,20 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_sources_task_id_id ON sources(task_id, id);
+
+                CREATE TABLE IF NOT EXISTS conversation_contexts (
+                    task_id TEXT PRIMARY KEY,
+                    summary TEXT NOT NULL DEFAULT '',
+                    estimated_tokens INTEGER NOT NULL DEFAULT 0,
+                    token_limit INTEGER NOT NULL DEFAULT 0,
+                    warning_threshold INTEGER NOT NULL DEFAULT 0,
+                    compact_threshold INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'empty',
+                    compaction_count INTEGER NOT NULL DEFAULT 0,
+                    last_compacted_event_id INTEGER,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                );
                 """
             )
 
@@ -174,11 +204,73 @@ class Database:
                 )
         return event_id
 
+    def insert_chat_image(self, image: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO chat_images (
+                    task_id, event_id, created_at, filename, content_type, question,
+                    analysis, image_base64
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    image["task_id"],
+                    image.get("event_id"),
+                    image["created_at"],
+                    image.get("filename"),
+                    image["content_type"],
+                    image.get("question"),
+                    image.get("analysis"),
+                    image["image_base64"],
+                ),
+            )
+            image_id = int(cursor.lastrowid)
+        saved = self.get_chat_image(image_id)
+        if saved is None:
+            raise RuntimeError("Imagem salva nao encontrada")
+        return saved
+
+    def update_chat_image_analysis(self, image_id: int, analysis: str) -> dict[str, Any] | None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE chat_images SET analysis = ? WHERE id = ?",
+                (analysis, image_id),
+            )
+        return self.get_chat_image(image_id)
+
+    def get_chat_image(self, image_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT id, task_id, event_id, created_at, filename, content_type,
+                       question, analysis, image_base64
+                FROM chat_images
+                WHERE id = ?
+                """,
+                (image_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_chat_images(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, task_id, event_id, created_at, filename, content_type,
+                       question, analysis, image_base64
+                FROM chat_images
+                WHERE task_id = ?
+                ORDER BY id ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_events(self, task_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT event_type, created_at, payload_json
+                SELECT id, event_type, created_at, payload_json
                 FROM events
                 WHERE task_id = ?
                 ORDER BY id ASC
@@ -189,6 +281,7 @@ class Database:
         for row in rows:
             events.append(
                 {
+                    "event_id": int(row["id"]),
                     "type": row["event_type"],
                     "task_id": task_id,
                     "created_at": row["created_at"],
@@ -196,6 +289,59 @@ class Database:
                 }
             )
         return events
+
+    def get_context(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT task_id, summary, estimated_tokens, token_limit,
+                       warning_threshold, compact_threshold, status,
+                       compaction_count, last_compacted_event_id, updated_at
+                FROM conversation_contexts
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_context(self, task_id: str, context: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO conversation_contexts (
+                    task_id, summary, estimated_tokens, token_limit,
+                    warning_threshold, compact_threshold, status,
+                    compaction_count, last_compacted_event_id, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    summary = excluded.summary,
+                    estimated_tokens = excluded.estimated_tokens,
+                    token_limit = excluded.token_limit,
+                    warning_threshold = excluded.warning_threshold,
+                    compact_threshold = excluded.compact_threshold,
+                    status = excluded.status,
+                    compaction_count = excluded.compaction_count,
+                    last_compacted_event_id = excluded.last_compacted_event_id,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    task_id,
+                    context.get("summary", ""),
+                    int(context.get("estimated_tokens", 0)),
+                    int(context.get("token_limit", 0)),
+                    int(context.get("warning_threshold", 0)),
+                    int(context.get("compact_threshold", 0)),
+                    context.get("status", "empty"),
+                    int(context.get("compaction_count", 0)),
+                    context.get("last_compacted_event_id"),
+                    context["updated_at"],
+                ),
+            )
+        saved = self.get_context(task_id)
+        if saved is None:
+            raise RuntimeError("Contexto salvo nao encontrado")
+        return saved
 
     def upsert_source(self, task_id: str, source: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self._connection:

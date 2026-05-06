@@ -1264,7 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
-| 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek |
+| 2.5 | 06/05/2026 | Implementada ShellTool (`shell_run`) com whitelist, bloqueio de padrões perigosos, timeout e workspace isolada; integração Vertex CLI via shell_run testada e funcional; DeepSeek orientado a delegar desenvolvimento ao Vertex; visão ajustada para ser tratada como tool comum pelo DeepSeek; streaming stdout/stderr em tempo real via WebSocket (`shell_stdout`/`shell_stderr`); projetos isolados em `workspace/<task_id>/`; listagem automática de arquivos após shell_run com evento `files_created` |
 | 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
 | 2.3 | 06/05/2026 | Plano de visão alterado para `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq; Puter/Qwen removido do caminho principal; adicionada arquitetura backend para `VisionTool` multimodal |
 | 2.2 | 06/05/2026 | Ajustado escopo para MVP local em LAN, sem autenticação e sem hospedagem externa; frontend chat-first estilo Manus com stream de ações; DeepSeek V4 Flash para texto; Qwen3-VL via Puter apenas para testes de visão |
@@ -1350,7 +1350,9 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - **Whitelist:** 45 comandos permitidos: `python3`, `node`, `npm`, `npx`, `vertex`, `git`, `curl`, `wget`, `ls`, `cat`, `mkdir`, `cp`, `mv`, `rm`, `grep`, `find`, `echo`, `pwd`, `wc`, `head`, `tail`, `sort`, `uniq`, `awk`, `sed`, `cut`, `tr`, `df`, `free`, `uname`, `which`, `whereis`, `dirname`, `basename`, `readlink`, `rmdir`, `pandoc`, `ffmpeg`, `libreoffice`, `convert`, `clear`, `date`, `tee`, `xargs`, `true`, `false`.
 - **Bloqueio de padrões perigosos:** `sudo`, `chmod`, `chown`, `systemctl`, `service`, `kill`, `shutdown`, `reboot`, `dd`, `mkfs`, `rm -rf /`, `rm -rf ~`, escrita em `/dev/`, `curl | bash`, `wget | sh`.
 - **Timeout:** 30s padrão, 300s para comandos `vertex` (configurável via `.env`).
-- **Workspace isolada:** todos os comandos rodam em `workspace/` via `cwd`.
+- **Workspace isolada:** todos os comandos rodam em `workspace/<task_id>/` — cada conversa tem seu próprio subdiretório.
+- **Streaming stdout/stderr:** usa `subprocess.Popen` e publica cada linha como evento `shell_stdout`/`shell_stderr` via WebSocket em tempo real. O frontend renderiza as linhas em um componente `ShellOutput` estilo terminal inline no chat.
+- **Evento `files_created`:** após cada `shell_run`, o backend lista os arquivos no diretório da conversa e publica o evento `files_created` com caminhos e tamanhos, atualizando instantaneamente o painel de arquivos no frontend.
 - **rm restrito:** só permite `rm` se o caminho contiver o diretório da workspace.
 - **Saída truncada:** stdout limitado a 3000 chars, stderr a 500 chars.
 - **Função dedicada:** `run_vertex(task_description)` — wrapper que monta o comando vertex com escape seguro.
@@ -1360,6 +1362,8 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - Comandos bloqueados: `nc`, `sudo`, `shutdown`, `curl | bash`
 - Fluxo ReAct: DeepSeek chama `shell_run` → executa `vertex --version` → retorna versão → finaliza
 - Fluxo de resiliência: quando `vertex` deu timeout, DeepSeek tentou abordagem alternativa com `python3` e teve sucesso
+- Streaming stdout: linhas são publicadas como `shell_stdout` via WebSocket e armazenadas no banco
+- Isolamento por conversa: projetos criados em `workspace/<task_id>/`
 
 ### BrowserTool + Planner JSON
 
@@ -1389,6 +1393,10 @@ Implementado no backend/frontend:
 - A sidebar tem ação explícita de novo chat para iniciar outra conversa sem perder a continuidade da conversa atual.
 - Eventos `user_message` são salvos no SQLite e usados para reconstruir o chat ao recarregar a página.
 - Antes de cada execução, o runner reconstrói o contexto do modelo a partir dos últimos turnos persistidos (`user_message` e `assistant_message_done`), seguindo o padrão de reutilizar a conversa existente em vez de responder só à última mensagem isolada.
+- Cada conversa tem um registro `conversation_contexts` no SQLite com resumo compactado, estimativa de tokens, limite, thresholds e contador de compactações.
+- O limite padrão foi ajustado para a realidade do Vortax (`CONTEXT_TOKEN_LIMIT=24000`), deixando margem para prompt do planner, schema de ferramentas e resultados de tool. Aviso em 70% e compactação automática em 88%.
+- A compactação segue a lógica do Vertex: turnos antigos viram um resumo denso e persistido; os turnos recentes continuam completos no contexto enviado ao modelo.
+- O frontend mostra uma bolinha de contexto no canto superior direito do chat, indicando `Contexto ok`, `Quase cheio`, `Contexto cheio` ou `Contexto compactado`.
 - O frontend monta as mensagens a partir de `user_message`, `assistant_message_delta` e `assistant_message_done`.
 - O stream lateral oculta ruído técnico como `task_created` e `agent_status`, exibindo atividade resumida: pesquisa, abertura de resultado, leitura de página, tela atualizada e erros.
 - O chat mostra um indicador de andamento com o último `agent_progress`, inspirado em feedback de execução de CLI.
@@ -1429,6 +1437,7 @@ Reaproveitado no Vortax:
 - **Mapeamento de erros de provider:** inspirado em `providers/error_mapping.py`. O Vortax agora mapeia 401/403, 429, 5xx e timeout do DeepSeek para mensagens de usuário mais claras em `backend/services/provider_errors.py`.
 - **Registry de processos:** inspirado em `cli/process_registry.py`. O Vortax agora tem `backend/services/process_registry.py` e cleanup no lifespan do FastAPI, preparando o terreno para Chrome CDP/shell sem deixar subprocessos órfãos.
 - **Status de providers:** inspirado no endpoint de modelos/health do Vertex Server. O Vortax agora expõe `/api/providers/` e mostra DeepSeek e Groq/Llama 4 Scout na sidebar do frontend; o próximo ajuste é criar `backend/tools/vision.py`.
+- **Contexto e compactação:** inspirado em `core/anthropic/tokens.py`, `cli/session.py` e no comando `/compact` documentado no Vertex. O Vortax implementa estimativa leve de tokens, contexto por conversa e compactação automática antes de o histórico ficar grande demais para o planner.
 
 Não reaproveitado agora:
 
@@ -1457,3 +1466,5 @@ Não reaproveitado agora:
 | 06/05/2026 | Visão como tool automática do DeepSeek | `backend/tools/vision.py`, `backend/services/deepseek_client.py` | vision_analyze captura screenshot automaticamente; planner usa só quando texto extraído não for suficiente |
 | 06/05/2026 | ShellTool — shell_run com whitelist | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/deepseek_client.py`, `backend/config.py` | Comandos seguros (echo, ls, vertex) funcionam; bloqueio de sudo/shutdown/curl|bash; timeout 30s normal + 300s vertex; teste ReAct com vertex --version |
 | 06/05/2026 | Fluxo ReAct completo com Vertex CLI | backend e frontend ativos | DeepSeek chamou shell_run → vertex --version → stdout capturado → finish com resposta correta; script fibonacci via python3 criado com sucesso |
+| 06/05/2026 | Contexto por conversa e compactação automática | `backend/services/context_manager.py`, `backend/database.py`, `backend/services/agent_runner.py`, `frontend/src/components/ContextIndicator.jsx` | `npm run build`, `python3 -m py_compile` e testes backend de contexto/histórico |
+| 06/05/2026 | Streaming stdout/stderr, output-dir por chat e auto-listagem de arquivos | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/services/stream_contract.py`, `frontend/src/components/ShellOutput.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; testes de shell com e sem EventBus; eventos `shell_stdout`, `shell_stderr` e `files_created` publicados e persistidos; frontend mostra terminal inline |

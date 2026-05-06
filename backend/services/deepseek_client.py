@@ -200,6 +200,9 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Se a tarefa envolver pesquisar, encontrar informacao atual, comparar sites, resumir conteudo da web ou responder algo que dependa da internet, seja proativo: "
         "primeiro use browser_google_search com uma consulta objetiva; depois observe results/links; abra resultados relevantes com browser_click_link_by_index ou browser_navigate; "
         "extraia conteudo da pagina aberta preferencialmente com browser_extract_article; use browser_extract_text se a extracao limpa vier fraca; volte e abra outra fonte quando a resposta exigir comparacao ou confirmacao. "
+        "Os resultados de busca ja chegam ranqueados e deduplicados por confiabilidade, relevancia e dominio; priorize indices menores, mas ignore qualquer resultado que pareca login, anuncio, agregador fraco ou duplicado. "
+        "Se o historico trouxer 'Fontes ja abertas e salvas nesta conversa', reutilize-as antes de pesquisar de novo quando forem suficientes para o mesmo assunto. "
+        "Politica minima de fontes: pergunta simples pode usar 1 fonte oficial/confiavel; noticia, preco, disponibilidade ou informacao que muda no tempo exige pelo menos 2 fontes recentes; comparacao exige pelo menos 2 fontes por item quando possivel; especificacao oficial deve priorizar site oficial. "
         "Nunca tente fazer login em contas Google, contas de sites, paywalls ou paginas de autenticacao; se cair em login, use browser_go_back e escolha outro resultado. "
         "Evite resultados de accounts.google.com, ServiceLogin, paginas de preferencia/configuracao do Google, anuncios e links sem conteudo informativo. "
         "Nao finalize uma pesquisa complexa baseado apenas na lista de resultados; abra pelo menos uma fonte relevante e extraia conteudo. "
@@ -207,7 +210,7 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Se uma ferramenta falhar, tente uma consulta alternativa, outro resultado ou browser_extract_links antes de finalizar com erro. "
         "Use browser_get_state quando estiver incerto sobre a pagina atual. "
         "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
-        "Na resposta final, diferencie informacao confirmada em fonte aberta de informacao apenas sugerida por resultado de busca. "
+        "Na resposta final, estruture evidencias quando houver pesquisa: para cada conclusao importante, indique fonte/URL; diferencie 'confirmado em fonte aberta', 'inferido' e 'nao encontrado'. "
         "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
         "O Vertex CLI criara todos os arquivos do projeto dentro da workspace/. Nao tente escrever codigo manualmente — delegue ao Vertex. "
         "Depois que o vertex terminar, use finish e informe ao usuario que os arquivos estao prontos para download. "
@@ -240,3 +243,45 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
     if "action" not in action:
         raise DeepSeekError("Planner DeepSeek retornou JSON sem action")
     return action
+
+
+async def request_context_summary(
+    previous_summary: str,
+    messages: list[dict[str, str]],
+    *,
+    max_chars: int,
+) -> str:
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    transcript = "\n".join(
+        f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+        for message in messages
+        if str(message.get("content") or "").strip()
+    )
+    system_prompt = (
+        "Voce compacta historico de uma conversa do Vortax para preservar contexto. "
+        "Produza um resumo denso em portugues, sem markdown pesado, mantendo: pedidos do usuario, "
+        "decisoes tomadas, resultados entregues, URLs/fontes importantes, arquivos/projetos criados, "
+        "restricoes e pendencias. Nao invente fatos. A saida deve caber no limite indicado."
+    )
+    user_prompt = (
+        f"Resumo anterior:\n{previous_summary or '(vazio)'}\n\n"
+        f"Novos turnos a compactar:\n{transcript}\n\n"
+        f"Escreva um resumo consolidado com no maximo {max_chars} caracteres."
+    )
+    payload = {
+        "model": settings.DEEPSEEK_MODEL,
+        "temperature": 0.0,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    data = await _post_deepseek(payload)
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
+    return content.strip()[:max_chars]

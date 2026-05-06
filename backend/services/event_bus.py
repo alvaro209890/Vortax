@@ -28,7 +28,8 @@ class EventBus:
 
     async def publish(self, task_id: str, event_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
         event = build_stream_event(task_id, event_type, payload)
-        database.insert_event(task_id, event["type"], event["created_at"], event["payload"])
+        event_id = database.insert_event(task_id, event["type"], event["created_at"], event["payload"])
+        event["event_id"] = event_id
         async with self._lock:
             sockets = list(self._connections.get(task_id, []))
 

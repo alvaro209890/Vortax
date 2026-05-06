@@ -17,7 +17,26 @@ export function MessageList({ messages }) {
           </div>
           <div className="message-content">
             <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
-            <p>{message.content}</p>
+            {message.content ? <p>{message.content}</p> : null}
+            {message.images?.length > 0 && (
+              <div className="message-images">
+                {message.images.map((image, index) => (
+                  <a
+                    href={`data:${image.content_type};base64,${image.image_base64}`}
+                    key={`${image.filename || "imagem"}-${index}`}
+                    rel="noreferrer"
+                    target="_blank"
+                    title="Abrir imagem"
+                  >
+                    <img
+                      alt={image.filename || "Imagem enviada para analise"}
+                      src={`data:${image.content_type};base64,${image.image_base64}`}
+                    />
+                    <span>{image.filename || "Imagem"}</span>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </article>
       ))}

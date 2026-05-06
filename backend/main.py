@@ -47,4 +47,7 @@ async def health() -> dict:
         "lan_only": settings.LAN_ONLY,
         "model": settings.DEEPSEEK_MODEL,
         "deepseek_configured": bool(settings.DEEPSEEK_API_KEY.strip()),
+        "vision_provider": settings.VISION_PROVIDER,
+        "vision_model": settings.GROQ_VISION_MODEL,
+        "vision_configured": settings.ENABLE_VISION_TESTS and bool(settings.GROQ_API_KEY.strip()),
     }

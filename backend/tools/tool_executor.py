@@ -5,8 +5,11 @@ from services.event_bus import EventBus
 from services.safe_diagnostics import sanitize_payload
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
+from pathlib import Path
+
+from config import settings
 from tools.browser import browser_tool
-from tools.shell import run_shell
+from tools.shell import _project_dir, run_shell
 from tools.vision import vision_tool
 
 
@@ -123,10 +126,28 @@ async def execute_tool(
         return error
 
     try:
-        result = await tool(**(params or {}), task_id=task_id)
+        # shell_run recebe o bus para streaming de stdout
+        if tool_name == "shell_run":
+            result = await tool(**(params or {}), task_id=task_id, bus=bus)
+        else:
+            result = await tool(**(params or {}), task_id=task_id)
         await _save_source_if_extracted(task_id, tool_name, result, bus)
         compact = compact_tool_result(result)
         await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+
+        # Após shell_run, lista arquivos criados e publica files_created
+        if tool_name == "shell_run":
+            from tools.shell import _list_files
+
+            project_dir = _project_dir(task_id)
+            files = await _list_files(project_dir)
+            if files:
+                await bus.publish(
+                    task_id,
+                    "files_created",
+                    {"files": files, "directory": str(project_dir)},
+                )
+
         if tool_name == "browser_screenshot":
             await bus.publish(
                 task_id,

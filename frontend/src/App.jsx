@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, Pause, Play, Square, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Trash2 } from "lucide-react";
 
-import { ActionTimeline } from "./components/ActionTimeline.jsx";
 import { AgentActivity } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
+import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { MessageList } from "./components/MessageList.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
+import { ShellOutput } from "./components/ShellOutput.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { useWebSocket } from "./hooks/useWebSocket.js";
 import {
-  controlTask,
   appendTaskMessage,
+  appendTaskImages,
+  confirmTask,
   createTask,
+  createImageTask,
   deleteTask,
   getTask,
   healthcheck,
@@ -38,6 +41,7 @@ function buildMessages(task, events) {
       id: `${event.type}-${event.created_at}-${index}`,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
+      images: event.payload.images || [],
     }));
 
   if (messages.length > 0) return messages;
@@ -52,6 +56,7 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [files, setFiles] = useState([]);
   const [sources, setSources] = useState([]);
+  const [contextState, setContextState] = useState(null);
   const [backendStatus, setBackendStatus] = useState("checking");
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const { events, connectionState } = useWebSocket(activeTaskId);
@@ -81,6 +86,7 @@ export default function App() {
       setActiveTask(null);
       setTaskEvents([]);
       setSources([]);
+      setContextState(null);
       setAgentStatus("idle");
       setPendingConfirmation(null);
       return;
@@ -93,6 +99,7 @@ export default function App() {
         setActiveTask(loadedTask);
         setTaskEvents(loadedEvents);
         setSources(data.sources || []);
+        setContextState(data.context || null);
         setAgentStatus(loadedTask?.status || "idle");
 
         const lastConfirmation = [...loadedEvents].reverse().find((event) => event.type === "confirmation_request");
@@ -103,6 +110,7 @@ export default function App() {
         setActiveTask(null);
         setTaskEvents([]);
         setSources([]);
+        setContextState(null);
         setAgentStatus("idle");
         setPendingConfirmation(null);
       });
@@ -123,8 +131,26 @@ export default function App() {
     const lastConfirmationResult = [...currentEvents].reverse().find((event) => event.type === "confirmation_result");
     setPendingConfirmation(lastConfirmation && !lastConfirmationResult ? lastConfirmation.payload : null);
 
-    if (currentEvents.some((event) => event.type === "tool_result" || event.type === "assistant_message_done")) {
+    const lastContext = [...currentEvents]
+      .reverse()
+      .find((event) => event.type === "context_status" || event.type === "context_compacted");
+    if (lastContext?.payload) {
+      setContextState(lastContext.payload);
+    }
+
+    if (currentEvents.some((event) => event.type === "tool_result" || event.type === "assistant_message_done" || event.type === "files_created")) {
       listFiles().then((data) => setFiles(data.files || [])).catch(() => {});
+    }
+
+    const lastFilesCreated = [...currentEvents].reverse().find((event) => event.type === "files_created");
+    if (lastFilesCreated?.payload?.files) {
+      setFiles((current) => {
+        const byPath = new Map(current.map((f) => [f.path, f]));
+        for (const f of lastFilesCreated.payload.files) {
+          byPath.set(f.path, { ...(byPath.get(f.path) || {}), ...f });
+        }
+        return Array.from(byPath.values());
+      });
     }
     const savedSources = currentEvents
       .filter((event) => event.type === "source_saved")
@@ -140,8 +166,49 @@ export default function App() {
     }
   }, [activeTaskId, currentEvents]);
 
-  async function handleSubmit(description) {
+  async function handleSubmit(description, files = []) {
     setAgentStatus("queued");
+    if (files.length > 0) {
+      if (activeTaskId) {
+        const result = await appendTaskImages(activeTaskId, description, files);
+        const now = new Date().toISOString();
+        setTaskEvents((current) => [
+          ...current,
+          {
+            type: "user_message",
+            task_id: activeTaskId,
+            created_at: now,
+            payload: {
+              content: description || "Analise esta imagem.",
+              images: result.images?.map((image) => ({
+                filename: image.filename,
+                content_type: image.content_type,
+                image_base64: image.image_base64,
+              })) || [],
+            },
+          },
+          {
+            type: "assistant_message_done",
+            task_id: activeTaskId,
+            created_at: new Date().toISOString(),
+            payload: { content: result.answer },
+          },
+        ]);
+        setAgentStatus("done");
+        return;
+      }
+
+      const result = await createImageTask(description, files);
+      setTasks((current) => [result.task, ...current]);
+      setActiveTask(result.task);
+      setTaskEvents([]);
+      setSources([]);
+      setContextState(null);
+      setActiveTaskId(result.task_id);
+      setAgentStatus("done");
+      return;
+    }
+
     if (activeTaskId) {
       await appendTaskMessage(activeTaskId, description);
       setTaskEvents((current) => [
@@ -161,17 +228,13 @@ export default function App() {
     setActiveTask(result.task);
     setTaskEvents([]);
     setSources([]);
+    setContextState(null);
     setActiveTaskId(result.task_id);
-  }
-
-  async function handleControl(action) {
-    if (!activeTaskId) return;
-    await controlTask(activeTaskId, action);
   }
 
   async function handleConfirm(approved) {
     if (!activeTaskId) return;
-    await controlTask(activeTaskId, `confirm?approved=${approved}`);
+    await confirmTask(activeTaskId, approved);
     setPendingConfirmation(null);
   }
 
@@ -194,6 +257,7 @@ export default function App() {
     setActiveTask(null);
     setTaskEvents([]);
     setSources([]);
+    setContextState(null);
     setAgentStatus("idle");
     setPendingConfirmation(null);
   }
@@ -255,28 +319,21 @@ export default function App() {
               <span className="panel-label">Chat local</span>
               <h1>Controle este PC pela rede local</h1>
             </div>
-            <StatusBadge status={agentStatus} label={agentStatus} />
+            <div className="chat-header-actions">
+              <ContextIndicator context={contextState} />
+              <StatusBadge status={agentStatus} label={agentStatus} />
+            </div>
           </header>
           <MessageList messages={messages} />
-          <AgentActivity events={currentEvents} status={agentStatus} />
+          <ShellOutput events={currentEvents} />
+          <AgentActivity events={currentEvents} status={agentStatus} taskDescription={activeTask?.description} />
           <Composer disabled={backendStatus !== "online" || agentBusy} onSubmit={handleSubmit} />
         </>
       }
       inspector={
         <>
-          <div className="inspector-actions">
-            <button title="Pausar" onClick={() => handleControl("pause")} disabled={!activeTaskId} type="button">
-              <Pause size={17} />
-            </button>
-            <button title="Continuar" onClick={() => handleControl("resume")} disabled={!activeTaskId} type="button">
-              <Play size={17} />
-            </button>
-            <button title="Parar" onClick={() => handleControl("stop")} disabled={!activeTaskId} type="button">
-              <Square size={17} />
-            </button>
-          </div>
           <ScreenView events={currentEvents} connectionState={connectionState} />
-          <ActionTimeline events={currentEvents} />
+
           <SourceList sources={sources} />
           <FileList files={files} />
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />

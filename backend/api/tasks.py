@@ -1,12 +1,16 @@
 import asyncio
+import base64
 import contextlib
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from database import database
 from services.agent_runner import run_agent_task
+from services.context_manager import get_context_payload, prepare_context_history
 from services.registry import event_bus, runner_tasks, task_store
+from services.stream_contract import utc_now
+from tools.vision import VisionError, vision_tool
 
 router = APIRouter()
 
@@ -17,6 +21,133 @@ class TaskCreate(BaseModel):
 
 class TaskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_BYTES = 6 * 1024 * 1024
+
+
+def _normalize_question(question: str | None) -> str:
+    value = (question or "").strip()
+    return value or "Analise esta imagem."
+
+
+async def _read_image_upload(file: UploadFile) -> dict:
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Tipo de imagem nao suportado: {content_type or 'desconhecido'}")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Imagem vazia")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Imagem maior que 6 MB")
+    return {
+        "filename": file.filename or "imagem",
+        "content_type": content_type,
+        "image_base64": base64.b64encode(data).decode("ascii"),
+        "size": len(data),
+    }
+
+
+async def _publish_and_analyze_images(task_id: str, question: str, files: list[UploadFile]) -> dict:
+    images = [await _read_image_upload(file) for file in files]
+    chat_images = [
+        {
+            "filename": image["filename"],
+            "content_type": image["content_type"],
+            "image_base64": image["image_base64"],
+            "size": image["size"],
+        }
+        for image in images
+    ]
+    user_event = await event_bus.publish(
+        task_id,
+        "user_message",
+        {"content": question, "images": chat_images},
+    )
+    _, context_payload, compacted = await prepare_context_history(task_id, event_bus.history(task_id), question)
+    if compacted:
+        await event_bus.publish(task_id, "context_compacted", context_payload)
+    await event_bus.publish(task_id, "context_status", context_payload)
+
+    analyses = []
+    saved_images = []
+    await event_bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "thinking", "label": "Analisando imagem"},
+    )
+    for index, image in enumerate(images, start=1):
+        saved = database.insert_chat_image(
+            {
+                "task_id": task_id,
+                "event_id": user_event.get("event_id"),
+                "created_at": utc_now(),
+                "filename": image["filename"],
+                "content_type": image["content_type"],
+                "question": question,
+                "image_base64": image["image_base64"],
+            }
+        )
+        saved_images.append(saved)
+        await event_bus.publish(
+            task_id,
+            "image_saved",
+            {
+                "id": saved["id"],
+                "filename": saved.get("filename"),
+                "content_type": saved["content_type"],
+                "question": question,
+            },
+        )
+        await event_bus.publish(
+            task_id,
+            "agent_progress",
+            {"label": "Enviando imagem para Groq", "detail": image["filename"], "step": index},
+        )
+        analysis = await vision_tool.analyze(
+            image["image_base64"],
+            question=question,
+            content_type=image["content_type"],
+            task_id=task_id,
+        )
+        analyses.append(analysis)
+        updated_saved = database.update_chat_image_analysis(saved["id"], analysis.get("summary") or "")
+        if updated_saved:
+            saved_images[-1] = updated_saved
+
+    if len(analyses) == 1:
+        answer = _format_vision_answer(analyses[0])
+    else:
+        answer = "\n\n".join(
+            f"Imagem {index}: {_format_vision_answer(analysis)}" for index, analysis in enumerate(analyses, start=1)
+        )
+
+    task_store.update_status(task_id, "done", result=answer)
+    await event_bus.publish(task_id, "assistant_message_done", {"content": answer})
+    _, context_payload, compacted = await prepare_context_history(task_id, event_bus.history(task_id), question)
+    if compacted:
+        await event_bus.publish(task_id, "context_compacted", context_payload)
+    await event_bus.publish(task_id, "context_status", context_payload)
+    await event_bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+    return {"ok": True, "task_id": task_id, "images": saved_images, "analysis": analyses, "answer": answer}
+
+
+def _format_vision_answer(analysis: dict) -> str:
+    parts = []
+    summary = str(analysis.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
+    visible_text = analysis.get("visible_text")
+    if visible_text:
+        parts.append(f"Texto visivel: {visible_text}")
+    suggested_action = str(analysis.get("suggested_action") or "").strip()
+    if suggested_action:
+        parts.append(f"Acao sugerida: {suggested_action}")
+    confidence = analysis.get("confidence")
+    if confidence:
+        parts.append(f"Confianca: {confidence}")
+    return "\n".join(parts) if parts else "Analise concluida."
 
 
 @router.post("/")
@@ -47,6 +178,42 @@ async def create_task_message(task_id: str, payload: TaskMessageCreate) -> dict:
     return {"ok": True, "task_id": task_id}
 
 
+@router.post("/images")
+async def create_image_task(question: str = Form(""), files: list[UploadFile] = File(...)) -> dict:
+    normalized_question = _normalize_question(question)
+    task = task_store.create(normalized_question)
+    await event_bus.publish(task["id"], "task_created", {"task": task})
+    try:
+        result = await _publish_and_analyze_images(task["id"], normalized_question, files)
+    except VisionError as exc:
+        task_store.update_status(task["id"], "error", result=str(exc))
+        await event_bus.publish(task["id"], "error", {"message": str(exc)})
+        await event_bus.publish(task["id"], "agent_status", {"status": "error", "label": "Erro na visão"})
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"task": task_store.get(task["id"]) or task, **result}
+
+
+@router.post("/{task_id}/images")
+async def create_task_images(task_id: str, question: str = Form(""), files: list[UploadFile] = File(...)) -> dict:
+    task = task_store.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task nao encontrada")
+
+    runner = runner_tasks.get(task_id)
+    if runner and not runner.done():
+        raise HTTPException(status_code=409, detail="A tarefa ainda esta em execucao")
+
+    normalized_question = _normalize_question(question)
+    task_store.update_status(task_id, "running")
+    try:
+        return await _publish_and_analyze_images(task_id, normalized_question, files)
+    except VisionError as exc:
+        task_store.update_status(task_id, "error", result=str(exc))
+        await event_bus.publish(task_id, "error", {"message": str(exc)})
+        await event_bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro na visão"})
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.get("/")
 async def list_tasks() -> dict:
     return {"tasks": task_store.list()}
@@ -57,7 +224,13 @@ async def get_task(task_id: str) -> dict:
     task = task_store.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task nao encontrada")
-    return {"task": task, "events": event_bus.history(task_id), "sources": database.list_sources(task_id)}
+    return {
+        "task": task,
+        "events": event_bus.history(task_id),
+        "sources": database.list_sources(task_id),
+        "images": database.list_chat_images(task_id),
+        "context": get_context_payload(task_id, event_bus.history(task_id)),
+    }
 
 
 @router.delete("/{task_id}")
