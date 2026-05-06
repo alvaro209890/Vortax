@@ -3,6 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
+function isVertexCommand(command) {
+  let text = String(command || "").trim();
+  for (const prefix of ["cd workspace && ", "cd ./workspace && ", "cd /workspace && "]) {
+    if (text.startsWith(prefix)) text = text.slice(prefix.length).trim();
+  }
+  return text.split(/\s+/)[0] === "vertex";
+}
+
 export function ScreenView({ events, connectionState }) {
   const frames = useMemo(
     () => events.filter((event) => event.type === "screen_frame" && event.payload?.image_base64),
@@ -26,6 +34,15 @@ export function ScreenView({ events, connectionState }) {
   }, [frames.length, isModalOpen]);
 
   const selectedFrame = frames[selectedIndex] || null;
+  const vertexRunning = useMemo(() => {
+    const lastVertexCall = [...events].reverse().find(
+      (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isVertexCommand(event.payload?.params?.command),
+    );
+    const lastVertexResult = [...events].reverse().find(
+      (event) => event.type === "tool_result" && event.payload?.name === "shell_run",
+    );
+    return Boolean(lastVertexCall && (!lastVertexResult || lastVertexResult.created_at < lastVertexCall.created_at));
+  }, [events]);
   const image = selectedFrame?.payload?.image_base64;
   const caption = selectedFrame?.payload?.caption || selectedFrame?.payload?.title || "Tela do navegador";
   const canGoBack = selectedIndex > 0;
@@ -61,7 +78,7 @@ export function ScreenView({ events, connectionState }) {
         ) : (
           <div className="screen-placeholder">
             <Monitor size={34} />
-            <p>Os prints do stream aparecem aqui.</p>
+            <p>{vertexRunning ? "Aguardando o primeiro print do Vertex." : "Os prints do stream aparecem aqui."}</p>
           </div>
         )}
       </div>

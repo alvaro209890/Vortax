@@ -132,7 +132,7 @@ small {
 .sidebar-toggle-container {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: -36px;
+  margin-bottom: 8px;
   position: relative;
   z-index: 10;
 }
@@ -182,9 +182,11 @@ small {
 .brand-logo {
   display: block;
   width: min(190px, 100%);
-  height: 44px;
+  height: auto;
+  max-height: 48px;
   object-fit: contain;
   object-position: left center;
+  margin-bottom: 4px;
 }
 
 .brand-mark {
@@ -337,21 +339,11 @@ small {
 }
 
 /* Chat Header */
-.panel-title {
+.panel-label-group {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
-}
-
-.panel-title span {
-  font-weight: 500;
-  font-size: 14px;
-}
-
-.panel-title small {
-  color: var(--text-secondary);
-  font-size: 12px;
 }
 
 .chat-header {
@@ -1332,24 +1324,11 @@ small {
   margin-bottom: 16px;
 }
 
-.preview-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.preview-header span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-  font-size: 14px;
-}
-
 .preview-header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-bottom: 8px;
 }
 
 .preview-header-actions small {
@@ -1395,7 +1374,6 @@ small {
 }
 
 .preview-body {
-  margin-top: 8px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--border-light);
@@ -1409,6 +1387,7 @@ small {
   background: #fff;
 }
 
+.preview-panel.collapsed .preview-header-actions,
 .preview-panel.collapsed .preview-body {
   display: none;
 }
@@ -1655,7 +1634,12 @@ small {
   border-radius: 12px;
   background: #080E12;
   overflow: hidden;
+  margin-bottom: 16px;
   transition: all 0.22s ease;
+}
+
+.activity-vertex-slot .vertex-terminal {
+  margin-bottom: 0;
 }
 
 .vertex-terminal.done {
@@ -1824,6 +1808,51 @@ small {
 
 .activity-vertex-slot {
   margin-top: 2px;
+}
+
+.ai-exchange-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-exchange-item {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ai-exchange-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(8, 198, 93, 0.1);
+  color: var(--accent-blue);
+}
+
+.ai-exchange-item.vertex .ai-exchange-icon {
+  background: rgba(251, 191, 36, 0.11);
+  color: var(--accent-warn);
+}
+
+.ai-exchange-item strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.ai-exchange-item p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .muted {

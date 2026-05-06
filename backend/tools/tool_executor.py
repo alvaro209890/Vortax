@@ -121,6 +121,14 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
         await bus.publish(task_id, "error", {"message": f"Screenshot apos tool falhou: {type(exc).__name__}"})
 
 
+def _is_vertex_command(command: str) -> bool:
+    cmd = str(command or "").strip()
+    for prefix in ("cd workspace && ", "cd ./workspace && ", "cd /workspace && "):
+        if cmd.startswith(prefix):
+            cmd = cmd[len(prefix):].lstrip()
+    return bool(cmd.split()) and cmd.split()[0] == "vertex"
+
+
 async def _open_static_preview_if_available(task_id: str, files: list[dict[str, Any]], bus: EventBus) -> None:
     has_index = any(str(file.get("path") or "") == "index.html" for file in files)
     if not has_index:
@@ -183,6 +191,18 @@ async def execute_tool(
 
         # shell_run recebe o bus para streaming de stdout
         if tool_name == "shell_run":
+            command = str((params or {}).get("command", ""))
+            if _is_vertex_command(command):
+                await bus.publish(
+                    task_id,
+                    "ai_exchange",
+                    {
+                        "actor": "deepseek",
+                        "target": "vertex",
+                        "message": "DeepSeek delegou a criacao de codigo ao Vertex.",
+                        "kind": "delegation",
+                    },
+                )
             result = await tool(**(params or {}), task_id=task_id, bus=bus)
         else:
             result = await tool(**(params or {}), task_id=task_id)
@@ -219,7 +239,7 @@ async def execute_tool(
 
             # Se foi vertex, publica progresso final
             command = str((params or {}).get("command", ""))
-            if "vertex" in command and result.get("success"):
+            if _is_vertex_command(command) and result.get("success"):
                 await bus.publish(
                     task_id,
                     "vertex_progress",
@@ -227,6 +247,16 @@ async def execute_tool(
                         "stage": "done",
                         "message": "Vertex concluiu o projeto.",
                         "interactive_rounds": shell_data.get("interactive_rounds", 0),
+                    },
+                )
+                await bus.publish(
+                    task_id,
+                    "ai_exchange",
+                    {
+                        "actor": "vertex",
+                        "target": "deepseek",
+                        "message": "Vertex terminou a criacao do projeto e devolveu o resultado.",
+                        "kind": "completion",
                     },
                 )
 

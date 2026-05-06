@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Eye, EyeOff, Globe, Loader2, RefreshCw, Terminal } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, Globe, Loader2, RefreshCw } from "lucide-react";
 
+import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 import { usePersistentState } from "../hooks/usePersistentState.js";
 import { API_BASE_URL } from "../lib/api.js";
 
@@ -75,35 +76,34 @@ export function PreviewPanel({ files, events, taskId }) {
   const isDevServer = preview.type === "dev_server";
 
   return (
-    <section className={`panel preview-panel ${visible ? "" : "collapsed"}`}>
-      <div className="panel-title preview-header">
-        <span>
-          <Globe size={14} />
-          Preview
-        </span>
-        <div className="preview-header-actions">
-          {isDevServer && (
-            <small className={devServerStatus?.running ? "live" : ""}>
-              {devServerStatus?.running ? `:${preview.port}` : "offline"}
-            </small>
-          )}
-          <a
-            href={previewUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="preview-external-btn"
-            title="Abrir em nova aba"
-          >
-            <ExternalLink size={13} />
-          </a>
-          <button
-            type="button"
-            onClick={() => setVisible((v) => !v)}
-            title={visible ? "Ocultar preview" : "Mostrar preview"}
-          >
-            {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
+    <CollapsiblePanel
+      className="preview-panel"
+      storageKey="vortax.inspector.preview.collapsed"
+      title="Preview"
+      titleIcon={<Globe size={14} />}
+    >
+      <div className="preview-header-actions">
+        {isDevServer && (
+          <small className={devServerStatus?.running ? "live" : ""}>
+            {devServerStatus?.running ? `:${preview.port}` : "offline"}
+          </small>
+        )}
+        <a
+          href={previewUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="preview-external-btn"
+          title="Abrir em nova aba"
+        >
+          <ExternalLink size={13} />
+        </a>
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          title={visible ? "Ocultar preview" : "Mostrar preview"}
+        >
+          {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>
       </div>
 
       {visible && (
@@ -131,6 +131,6 @@ export function PreviewPanel({ files, events, taskId }) {
           />
         </div>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }

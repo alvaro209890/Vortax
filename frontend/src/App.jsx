@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlus, StopCircle, Trash2 } from "lucide-react";
 
-import { AgentActivity, VertexTerminal } from "./components/AgentActivity.jsx";
+import { AgentActivity, AiExchangePanel, VertexTerminal } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
@@ -247,7 +247,7 @@ export default function App() {
       sidebar={
         <>
           <div className="brand">
-            <div className="brand-mark">V</div>
+            <img className="brand-logo" src="/vortax-logo.png" alt="Vortax" />
             <div>
               <strong>Vortax</strong>
               <span>LAN MVP</span>
@@ -329,6 +329,7 @@ export default function App() {
         <>
           <ScreenView events={currentEvents} connectionState={connectionState} />
           <VertexTerminal events={currentEvents} />
+          <AiExchangePanel events={currentEvents} />
           <ActionTimeline events={currentEvents} />
           <PreviewPanel files={files} events={currentEvents} taskId={activeTaskId} />
           <SourceList error={taskError} loading={taskLoading} sources={sources} />

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 import re
 import signal
@@ -240,6 +241,10 @@ def _shell_timeout(command: str) -> float:
     return float(getattr(settings, "SHELL_TIMEOUT_SECONDS", 30) or 30)
 
 
+def _is_vertex_executable(executable: str) -> bool:
+    return executable == "vertex"
+
+
 def _project_dir(task_id: str | None) -> Path:
     """Retorna o diretório do projeto dentro da workspace para um task_id."""
     if task_id:
@@ -262,6 +267,53 @@ async def _list_files(cwd: Path) -> list[dict[str, Any]]:
     except OSError:
         pass
     return files[:100]
+
+
+async def _publish_ai_exchange(
+    task_id: str | None,
+    bus: Any,
+    *,
+    actor: str,
+    target: str,
+    message: str,
+    kind: str,
+) -> None:
+    if not bus or not task_id:
+        return
+    await bus.publish(
+        task_id,
+        "ai_exchange",
+        {
+            "actor": actor,
+            "target": target,
+            "message": message[:500],
+            "kind": kind,
+        },
+    )
+
+
+async def _stream_vertex_screenshots(task_id: str, bus: Any, process: subprocess.Popen) -> None:
+    interval = max(float(getattr(settings, "STREAM_SCREENSHOT_INTERVAL", 2) or 2), 1.0)
+    while process.poll() is None:
+        try:
+            from tools.browser import browser_tool
+
+            frame = await browser_tool.screenshot(task_id=task_id)
+            await bus.publish(
+                task_id,
+                "screen_frame",
+                {
+                    "caption": "Vertex trabalhando - tela atual",
+                    "title": frame.get("title"),
+                    "url": frame.get("url"),
+                    "image_base64": frame.get("image_base64"),
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
 
 
 def _parse_vertex_progress(line: str) -> dict[str, Any] | None:
@@ -359,6 +411,14 @@ async def _ask_deepseek_for_response(
                 "shell_stdout",
                 {"line": f"[Vortax auto-resposta: {content}]"},
             )
+            await _publish_ai_exchange(
+                task_id,
+                bus,
+                actor="deepseek",
+                target="vertex",
+                message=f"DeepSeek respondeu ao prompt interativo do Vertex: {content}",
+                kind="auto_response",
+            )
         return content[:500]
     except Exception:
         return None
@@ -409,7 +469,7 @@ async def run_shell(
 
     cwd = str(_project_dir(task_id))
     cwd_path = _project_dir(task_id)
-    is_vertex = "vertex" in executable
+    is_vertex = _is_vertex_executable(executable)
     is_dev_server = _is_dev_server_command(cmd)
 
     env = os.environ.copy()
@@ -437,6 +497,18 @@ async def run_shell(
         )
     except OSError as exc:
         return _shell_error(f"Erro ao executar comando: {exc}")
+
+    screenshot_task: asyncio.Task | None = None
+    if is_vertex and bus and task_id:
+        await _publish_ai_exchange(
+            task_id,
+            bus,
+            actor="vertex",
+            target="deepseek",
+            message="Vertex iniciou a execucao local da tarefa.",
+            kind="start",
+        )
+        screenshot_task = asyncio.create_task(_stream_vertex_screenshots(task_id, bus, process))
 
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
@@ -476,11 +548,18 @@ async def run_shell(
         if is_dev_server and detected_port is None and event_type == "shell_stdout":
             detected_port = _extract_port_from_output(stripped)
 
-        # Parse de progresso (funciona para qualquer comando, mas os labels são otimizados para Vertex)
-        if event_type == "shell_stdout":
+        if is_vertex and event_type == "shell_stdout":
             progress = _parse_vertex_progress(stripped)
             if progress:
                 await bus.publish(task_id, "vertex_progress", progress)
+                await _publish_ai_exchange(
+                    task_id,
+                    bus,
+                    actor="vertex",
+                    target="deepseek",
+                    message=progress["message"],
+                    kind="progress",
+                )
 
     async def _drain_and_interact(stream, lines_list: list[str], event_type: str) -> None:
         """Le um stream com detecção de prompts interativos e auto-resposta."""
@@ -500,7 +579,7 @@ async def run_shell(
                 )
             except asyncio.TimeoutError:
                 # Verifica se o processo ainda está rodando e pode estar esperando input
-                if process.poll() is None and event_type == "stdout":
+                if process.poll() is None and event_type == "shell_stdout":
                     pass
                 continue
 
@@ -528,6 +607,15 @@ async def run_shell(
                             "shell_interactive_prompt",
                             {"prompt": prompt_snapshot[:500], "round": interactive_rounds},
                         )
+                        if is_vertex:
+                            await _publish_ai_exchange(
+                                task_id,
+                                bus,
+                                actor="vertex",
+                                target="deepseek",
+                                message=prompt_snapshot,
+                                kind="prompt",
+                            )
 
                     response = await _ask_deepseek_for_response(
                         prompt_snapshot,
@@ -660,6 +748,11 @@ async def run_shell(
     except asyncio.TimeoutError:
         process.kill()
         await loop.run_in_executor(None, process.wait)
+
+    if screenshot_task:
+        screenshot_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await screenshot_task
 
     returncode = process.returncode if process.returncode is not None else -1
     stdout_full = "".join(stdout_lines)

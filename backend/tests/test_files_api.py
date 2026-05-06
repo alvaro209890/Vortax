@@ -44,6 +44,11 @@ class FilesApiTests(unittest.TestCase):
 
         self.assertLess(preview_index, catchall_index)
 
+    def test_preview_index_endpoint_targets_generated_index_html(self) -> None:
+        response = asyncio.run(files_api.preview_task_index(self.task_id))
+
+        self.assertEqual(Path(response.path).name, "index.html")
+
     def test_task_files_are_listed_inside_only_that_task_directory(self) -> None:
         (self.workspace / "other-task").mkdir()
         (self.workspace / "other-task" / "leak.txt").write_text("nope", encoding="utf-8")

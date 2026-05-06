@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, FileText, Loader2, Sparkles, Terminal } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, FileText, Loader2, Sparkles, Terminal } from "lucide-react";
+
+import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
 const busyStatuses = new Set(["queued", "thinking", "executing", "running"]);
 
@@ -12,6 +14,14 @@ function lastIndexOfType(events, type) {
 
 function hasEvent(events, types) {
   return events.some((event) => types.includes(event.type));
+}
+
+function isVertexCommand(command) {
+  let text = String(command || "").trim();
+  for (const prefix of ["cd workspace && ", "cd ./workspace && ", "cd /workspace && "]) {
+    if (text.startsWith(prefix)) text = text.slice(prefix.length).trim();
+  }
+  return text.split(/\s+/)[0] === "vertex";
 }
 
 function lastUserPrompt(events, fallbackDescription) {
@@ -159,6 +169,11 @@ function useVertexTerminal(events) {
 
     const progressEvents = events.filter((e) => e.type === "vertex_progress");
     const hasShellActivity = shellLines.length > 0;
+    const hasVertexActivity = progressEvents.length > 0 || events.some((e) => (
+      e.type === "tool_call" &&
+      e.payload?.name === "shell_run" &&
+      isVertexCommand(e.payload?.params?.command)
+    ));
 
     let progress = null;
     if (progressEvents.length > 0) {
@@ -183,14 +198,14 @@ function useVertexTerminal(events) {
     );
     const shellRunning = lastShellCall && (!lastShellResult || lastShellResult.created_at < lastShellCall.created_at);
 
-    return { shellLines, progress, hasShellActivity, shellRunning };
+    return { shellLines, progress, hasShellActivity, hasVertexActivity, shellRunning };
   }, [events]);
 }
 
 export function VertexTerminal({ events }) {
   const endRef = useRef(null);
   const [collapsed, setCollapsed] = useState(false);
-  const { shellLines, progress, hasShellActivity, shellRunning } = useVertexTerminal(events);
+  const { shellLines, progress, hasShellActivity, hasVertexActivity, shellRunning } = useVertexTerminal(events);
 
   useEffect(() => {
     if (!collapsed) {
@@ -209,7 +224,7 @@ export function VertexTerminal({ events }) {
       >
         <div className="vertex-terminal-title">
           <Terminal size={13} />
-          <span>Terminal</span>
+          <span>{hasVertexActivity ? "Vertex trabalhando" : "Terminal"}</span>
           {shellRunning && <Loader2 size={11} className="spinner" />}
           {progress && !progress.done && (
             <span className="vertex-stage-pill">
@@ -273,6 +288,58 @@ export function VertexTerminal({ events }) {
         <div ref={endRef} />
       </div>
     </div>
+  );
+}
+
+function actorLabel(actor) {
+  if (actor === "deepseek") return "DeepSeek";
+  if (actor === "vertex") return "Vertex";
+  return "Vortax";
+}
+
+function actorIcon(actor) {
+  if (actor === "vertex") return <Code2 size={14} />;
+  if (actor === "deepseek") return <Bot size={14} />;
+  return <Sparkles size={14} />;
+}
+
+function exchangeEvents(events) {
+  return events
+    .filter((event) => event.type === "ai_exchange")
+    .slice(-30);
+}
+
+export function AiExchangePanel({ events }) {
+  const exchanges = useMemo(() => exchangeEvents(events), [events]);
+
+  if (exchanges.length === 0) return null;
+
+  return (
+    <CollapsiblePanel
+      className="ai-exchange-panel"
+      count={exchanges.length}
+      storageKey="vortax.inspector.ai_exchange.collapsed"
+      title="DeepSeek ↔ Vertex"
+    >
+      <div className="ai-exchange-list">
+        {exchanges.map((event, index) => {
+          const payload = event.payload || {};
+          const actor = payload.actor || "vortax";
+          return (
+            <div className={`ai-exchange-item ${actor}`} key={`${event.created_at}-${index}`}>
+              <div className="ai-exchange-icon">{actorIcon(actor)}</div>
+              <div>
+                <strong>
+                  {actorLabel(actor)}
+                  {payload.target ? ` → ${actorLabel(payload.target)}` : ""}
+                </strong>
+                <p>{payload.message || ""}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </CollapsiblePanel>
   );
 }
 

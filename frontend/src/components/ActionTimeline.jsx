@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Circle, Globe2, Monitor, Search, Terminal } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Circle, Code2, Globe2, Monitor, Search, Terminal } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
@@ -8,6 +8,8 @@ function iconFor(event) {
   const tool = event.payload?.name || event.payload?.tool;
   if (event.type === "error") return <AlertTriangle size={16} />;
   if (event.type === "screen_frame") return <Monitor size={16} />;
+  if (event.type === "vertex_progress") return <Code2 size={16} />;
+  if (event.type === "ai_exchange") return event.payload?.actor === "vertex" ? <Code2 size={16} /> : <Bot size={16} />;
   if (event.type === "source_saved") return <Globe2 size={16} />;
   if (event.type === "assistant_message_done") return <CheckCircle2 size={16} />;
   if (tool === "browser_google_search") return <Search size={16} />;
@@ -22,6 +24,10 @@ function titleFor(event) {
   if (event.type === "tool_call") return toolTitle(payload.name, "Executando");
   if (event.type === "tool_result") return toolTitle(payload.name, "Resultado");
   if (event.type === "screen_frame") return "Tela atualizada";
+  if (event.type === "vertex_progress") return "Vertex trabalhando";
+  if (event.type === "ai_exchange") return "DeepSeek ↔ Vertex";
+  if (event.type === "shell_interactive_prompt") return "Prompt interativo";
+  if (event.type === "dev_server_started") return "Servidor iniciado";
   if (event.type === "source_saved") return "Fonte salva";
   if (event.type === "assistant_message_done") return "Resposta final";
   if (event.type === "error") return "Erro";
@@ -46,6 +52,10 @@ function labelFor(event) {
   if (event.type === "tool_result") return summarizeToolResult(payload.result);
   if (payload.description) return payload.description;
   if (event.type === "source_saved") return `${payload.title || payload.url} (${payload.quality_score || 0}/100)`;
+  if (event.type === "vertex_progress") return payload.file ? `Criando ${payload.file}` : payload.message;
+  if (event.type === "ai_exchange") return payload.message;
+  if (event.type === "shell_interactive_prompt") return payload.prompt;
+  if (event.type === "dev_server_started") return payload.url;
   if (payload.detail) return payload.detail;
   if (payload.message) return payload.message;
   if (payload.content) return payload.content;
