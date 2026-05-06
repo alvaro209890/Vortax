@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { MessageSquarePlus, StopCircle, Trash2 } from "lucide-react";
 
 import { AgentActivity } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
@@ -12,7 +12,11 @@ import { PreviewPanel } from "./components/PreviewPanel.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
-import { useWebSocket } from "./hooks/useWebSocket.js";
+import { ActionTimeline } from "./components/ActionTimeline.jsx";
+import { useTaskData } from "./hooks/useTaskData.js";
+import { useTaskEvents } from "./hooks/useTaskEvents.js";
+import { useTaskFiles } from "./hooks/useTaskFiles.js";
+import { useTaskSources } from "./hooks/useTaskSources.js";
 import {
   appendTaskMessage,
   appendTaskImages,
@@ -20,11 +24,10 @@ import {
   createTask,
   createImageTask,
   deleteTask,
-  getTask,
   healthcheck,
-  listFiles,
   listProviders,
   listTasks,
+  stopTask,
 } from "./lib/api.js";
 
 const welcomeMessage = {
@@ -50,19 +53,40 @@ function buildMessages(task, events) {
 
 export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
-  const [activeTask, setActiveTask] = useState(null);
-  const [taskEvents, setTaskEvents] = useState([]);
   const [agentStatus, setAgentStatus] = useState("idle");
   const [tasks, setTasks] = useState([]);
-  const [files, setFiles] = useState([]);
-  const [sources, setSources] = useState([]);
-  const [contextState, setContextState] = useState(null);
   const [backendStatus, setBackendStatus] = useState("checking");
-  const [pendingConfirmation, setPendingConfirmation] = useState(null);
-  const { events, connectionState } = useWebSocket(activeTaskId);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState(null);
+  const [stopping, setStopping] = useState(false);
+  const {
+    activeTask,
+    contextState,
+    error: taskError,
+    initialFiles,
+    initialSources,
+    loading: taskLoading,
+    pendingConfirmation,
+    resetTaskData,
+    setActiveTask,
+    setContextState,
+    setPendingConfirmation,
+    setTaskEvents,
+    taskEvents,
+  } = useTaskData(activeTaskId);
+  const { connectionState, currentEvents } = useTaskEvents(activeTaskId, taskEvents);
+  const { error: filesError, files, loading: filesLoading } = useTaskFiles(activeTaskId, currentEvents, initialFiles);
+  const { sources } = useTaskSources(activeTaskId, currentEvents, initialSources);
 
-  const currentEvents = events.length > 0 ? events : taskEvents;
-  const messages = useMemo(() => buildMessages(activeTask, currentEvents), [activeTask, currentEvents]);
+  const messages = useMemo(() => {
+    if (taskLoading) {
+      return [{ id: "task-loading", role: "assistant", content: "Carregando conversa..." }];
+    }
+    if (taskError) {
+      return [{ id: "task-error", role: "assistant", content: "Nao foi possivel carregar esta conversa." }];
+    }
+    return buildMessages(activeTask, currentEvents);
+  }, [activeTask, currentEvents, taskError, taskLoading]);
   const agentBusy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
 
   useEffect(() => {
@@ -73,50 +97,23 @@ export default function App() {
       .then((data) => {
         const loadedTasks = data.tasks || [];
         setTasks(loadedTasks);
+        setTasksError(null);
         if (loadedTasks.length > 0) {
           setActiveTaskId(loadedTasks[0].id);
         }
       })
-      .catch(() => {});
+      .catch((error) => setTasksError(error))
+      .finally(() => setTasksLoading(false));
   }, []);
 
   useEffect(() => {
     if (!activeTaskId) {
-      setActiveTask(null);
-      setTaskEvents([]);
-      setFiles([]);
-      setSources([]);
-      setContextState(null);
+      resetTaskData();
       setAgentStatus("idle");
-      setPendingConfirmation(null);
-      return;
+    } else if (activeTask?.status) {
+      setAgentStatus(activeTask.status);
     }
-
-    getTask(activeTaskId)
-      .then((data) => {
-        const loadedTask = data.task || null;
-        const loadedEvents = data.events || [];
-        setActiveTask(loadedTask);
-        setTaskEvents(loadedEvents);
-        setFiles(data.files || []);
-        setSources(data.sources || []);
-        setContextState(data.context || null);
-        setAgentStatus(loadedTask?.status || "idle");
-
-        const lastConfirmation = [...loadedEvents].reverse().find((event) => event.type === "confirmation_request");
-        const lastConfirmationResult = [...loadedEvents].reverse().find((event) => event.type === "confirmation_result");
-        setPendingConfirmation(lastConfirmation && !lastConfirmationResult ? lastConfirmation.payload : null);
-      })
-      .catch(() => {
-        setActiveTask(null);
-        setTaskEvents([]);
-        setFiles([]);
-        setSources([]);
-        setContextState(null);
-        setAgentStatus("idle");
-        setPendingConfirmation(null);
-      });
-  }, [activeTaskId]);
+  }, [activeTaskId, activeTask?.status, resetTaskData]);
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -127,6 +124,9 @@ export default function App() {
       setAgentStatus(status);
       setTasks((current) => current.map((task) => (task.id === activeTaskId ? { ...task, status } : task)));
       setActiveTask((current) => (current && current.id === activeTaskId ? { ...current, status } : current));
+      if (status === "stopped" || status === "done" || status === "error" || status === "idle") {
+        setStopping(false);
+      }
     }
 
     const lastConfirmation = [...currentEvents].reverse().find((event) => event.type === "confirmation_request");
@@ -140,32 +140,6 @@ export default function App() {
       setContextState(lastContext.payload);
     }
 
-    if (currentEvents.some((event) => event.type === "tool_result" || event.type === "assistant_message_done" || event.type === "files_created")) {
-      listFiles(activeTaskId).then((data) => setFiles(data.files || [])).catch(() => {});
-    }
-
-    const lastFilesCreated = [...currentEvents].reverse().find((event) => event.type === "files_created");
-    if (lastFilesCreated?.payload?.files) {
-      setFiles((current) => {
-        const byPath = new Map(current.map((f) => [f.path, f]));
-        for (const f of lastFilesCreated.payload.files) {
-          byPath.set(f.path, { ...(byPath.get(f.path) || {}), ...f });
-        }
-        return Array.from(byPath.values());
-      });
-    }
-    const savedSources = currentEvents
-      .filter((event) => event.type === "source_saved")
-      .map((event) => event.payload);
-    if (savedSources.length > 0) {
-      setSources((current) => {
-        const byUrl = new Map(current.map((source) => [source.url, source]));
-        for (const source of savedSources) {
-          byUrl.set(source.url, { ...(byUrl.get(source.url) || {}), ...source });
-        }
-        return Array.from(byUrl.values()).sort((a, b) => (b.quality_score || 0) - (a.quality_score || 0));
-      });
-    }
   }, [activeTaskId, currentEvents]);
 
   async function handleSubmit(description, files = []) {
@@ -204,8 +178,6 @@ export default function App() {
       setTasks((current) => [result.task, ...current]);
       setActiveTask(result.task);
       setTaskEvents([]);
-      setFiles([]);
-      setSources([]);
       setContextState(null);
       setActiveTaskId(result.task_id);
       setAgentStatus("done");
@@ -230,8 +202,6 @@ export default function App() {
     setTasks((current) => [result.task, ...current]);
     setActiveTask(result.task);
     setTaskEvents([]);
-    setFiles([]);
-    setSources([]);
     setContextState(null);
     setActiveTaskId(result.task_id);
   }
@@ -240,6 +210,16 @@ export default function App() {
     if (!activeTaskId) return;
     await confirmTask(activeTaskId, approved);
     setPendingConfirmation(null);
+  }
+
+  async function handleStop() {
+    if (!activeTaskId) return;
+    setStopping(true);
+    try {
+      await stopTask(activeTaskId);
+    } catch {
+      setStopping(false);
+    }
   }
 
   async function handleDeleteTask(taskId) {
@@ -258,13 +238,8 @@ export default function App() {
 
   function handleNewChat() {
     setActiveTaskId(null);
-    setActiveTask(null);
-    setTaskEvents([]);
-    setFiles([]);
-    setSources([]);
-    setContextState(null);
+    resetTaskData();
     setAgentStatus("idle");
-    setPendingConfirmation(null);
   }
 
   return (
@@ -287,8 +262,12 @@ export default function App() {
                 <MessageSquarePlus size={15} />
               </button>
             </div>
-            {tasks.length === 0 ? (
-              <p className="muted">Nenhuma tarefa criada.</p>
+            {tasksLoading ? (
+              <p className="panel-state">Carregando conversas...</p>
+            ) : tasksError ? (
+              <p className="panel-state error">Nao foi possivel carregar conversas.</p>
+            ) : tasks.length === 0 ? (
+              <p className="panel-state">Nenhuma conversa criada.</p>
             ) : (
               tasks.map((task) => (
                 <div
@@ -325,6 +304,18 @@ export default function App() {
               <h1>Controle este PC pela rede local</h1>
             </div>
             <div className="chat-header-actions">
+              {agentBusy && (
+                <button
+                  className="stop-btn"
+                  onClick={handleStop}
+                  disabled={stopping}
+                  title="Interromper tarefa"
+                  type="button"
+                >
+                  <StopCircle size={16} />
+                  <span>{stopping ? "Parando..." : "Parar"}</span>
+                </button>
+              )}
               <ContextIndicator context={contextState} />
               <StatusBadge status={agentStatus} label={agentStatus} />
             </div>
@@ -337,10 +328,10 @@ export default function App() {
       inspector={
         <>
           <ScreenView events={currentEvents} connectionState={connectionState} />
-
+          <ActionTimeline events={currentEvents} />
           <PreviewPanel files={files} events={currentEvents} taskId={activeTaskId} />
-          <SourceList sources={sources} />
-          <FileList files={files} taskId={activeTaskId} hasFiles={files.length > 0} />
+          <SourceList error={taskError} loading={taskLoading} sources={sources} />
+          <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
         </>
       }

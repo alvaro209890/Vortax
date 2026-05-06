@@ -173,9 +173,18 @@ small {
 /* Sidebar Elements */
 .brand {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   margin-bottom: 32px;
+}
+
+.brand-logo {
+  display: block;
+  width: min(190px, 100%);
+  height: 44px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .brand-mark {
@@ -371,6 +380,37 @@ small {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.stop-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.stop-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.stop-btn svg {
+  flex-shrink: 0;
 }
 
 .context-indicator {
@@ -1008,6 +1048,10 @@ small {
   box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
 }
 
+.screen-panel .screen-view {
+  margin-bottom: 0;
+}
+
 .screen-view img {
   width: 100%;
   height: 100%;
@@ -1156,9 +1200,8 @@ small {
 .timeline-panel {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .timeline {
@@ -1167,6 +1210,7 @@ small {
   flex-direction: column;
   gap: 0;
   overflow-y: auto;
+  max-height: 260px;
   padding-right: 8px;
   padding-left: 4px;
 }
@@ -1389,9 +1433,12 @@ small {
   to { transform: rotate(360deg); }
 }
 
-/* File List */
-.files-toggle,
-.sources-toggle {
+/* Collapsible Inspector Panels */
+.collapsible-panel {
+  margin-bottom: 16px;
+}
+
+.collapsible-toggle {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1405,8 +1452,10 @@ small {
   border: 0;
 }
 
-.files-toggle span,
-.sources-toggle span {
+.collapsible-toggle span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1415,38 +1464,46 @@ small {
   font-weight: 500;
 }
 
-.files-toggle small,
-.sources-toggle small {
+.collapsible-toggle small {
   color: var(--text-secondary);
   font-size: 12px;
 }
 
-.files-toggle svg,
-.sources-toggle svg {
+.collapsible-toggle svg {
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
-.files-toggle:hover svg,
-.sources-toggle:hover svg {
+.collapsible-toggle:hover svg {
   color: var(--text-primary);
 }
 
-.files-content,
-.sources-content {
+.collapsible-content {
   display: flex;
   flex-direction: column;
 }
 
-.files-panel.collapsed .files-toggle,
-.sources-panel.collapsed .sources-toggle {
+.collapsible-panel.collapsed .collapsible-toggle {
   margin-bottom: 0;
 }
 
-.files-panel.collapsed .files-content,
-.sources-panel.collapsed .sources-content {
+.collapsible-panel.collapsed .collapsible-content {
   display: none;
 }
 
+.panel-state {
+  margin: 0;
+  padding: 8px 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.panel-state.error {
+  color: var(--accent-danger);
+}
+
+/* File List */
 .zip-download-btn {
   display: flex;
   align-items: center;

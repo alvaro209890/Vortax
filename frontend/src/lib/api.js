@@ -86,6 +86,10 @@ export function healthcheck() {
   return request("/health");
 }
 
+export function stopTask(taskId) {
+  return request(`/api/control/${taskId}/stop`, { method: "POST" });
+}
+
 export function listProviders() {
   return request("/api/providers/");
 }

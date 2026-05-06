@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any
 
@@ -190,6 +191,11 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 {"label": progress_label, "detail": action.get("description") or action_name, "tool": action_name},
             )
             await bus.publish(task_id, "agent_status", {"status": "executing", "label": "Executando"})
+
+            # Checa se foi interrompido antes de executar a ferramenta
+            if store.is_stopped(task_id):
+                break
+
             tool_result = await execute_tool(
                 action_name,
                 action.get("params") if isinstance(action.get("params"), dict) else {},
@@ -197,6 +203,11 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 bus=bus,
                 description=str(action.get("description") or action_name),
             )
+
+            # Checa se foi interrompido apos a ferramenta (o usuario pode ter clicado stop durante)
+            if store.is_stopped(task_id):
+                break
+
             result_for_model = compact_tool_result(tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result})
             history.append(
                 {
@@ -205,7 +216,18 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 }
             )
 
+        if store.is_stopped(task_id):
+            store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
+            await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+            await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
+            return
+
         raise DeepSeekError(f"Limite de iteracoes atingido ({settings.MAX_ITERATIONS}).")
+    except asyncio.CancelledError:
+        store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
+        await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+        await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
+        return
     except DeepSeekError as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})

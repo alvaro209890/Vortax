@@ -442,6 +442,26 @@ async def run_shell(
     stderr_lines: list[str] = []
     interactive_rounds = 0
     detected_port: int | None = None
+    stopped = False  # flag local para interrupcao
+
+    def _check_stopped() -> bool:
+        """Verifica se a task foi interrompida e mata o processo se necessario."""
+        nonlocal stopped
+        if stopped:
+            return True
+        if task_id:
+            from services.registry import task_store
+            if task_store.is_stopped(task_id):
+                stopped = True
+                try:
+                    if is_dev_server:
+                        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    else:
+                        process.kill()
+                except OSError:
+                    pass
+                return True
+        return False
 
     async def _publish_line(line: str, event_type: str) -> None:
         nonlocal detected_port
@@ -469,6 +489,10 @@ async def run_shell(
 
         accumulated = ""
         while True:
+            # Verifica interrupcao a cada iteracao
+            if _check_stopped():
+                break
+
             try:
                 line = await asyncio.wait_for(
                     loop.run_in_executor(None, stream.readline),
@@ -477,8 +501,6 @@ async def run_shell(
             except asyncio.TimeoutError:
                 # Verifica se o processo ainda está rodando e pode estar esperando input
                 if process.poll() is None and event_type == "stdout":
-                    # Se acumulou texto mas não tem newline e o processo está parado,
-                    # pode ser um prompt esperando resposta
                     pass
                 continue
 

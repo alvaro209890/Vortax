@@ -284,11 +284,25 @@ async def delete_task(task_id: str) -> dict:
     if not task:
         raise HTTPException(status_code=404, detail="Task nao encontrada")
 
+    task_store.stop(task_id)
+
     runner = runner_tasks.pop(task_id, None)
     if runner and not runner.done():
         runner.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await runner
+
+    # Mata dev server se estiver rodando
+    from tools.shell import _dev_servers
+    dev_server = _dev_servers.pop(task_id, None)
+    if dev_server:
+        import os as _os
+        import signal as _signal
+        proc = dev_server["process"]
+        try:
+            _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
 
     await event_bus.close_task_connections(task_id)
     deleted = task_store.delete(task_id)
