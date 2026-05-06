@@ -1,8 +1,66 @@
 # Vortax
 
-**Agente de IA web local** — inspirado no fluxo do Manus. Converse em um chat e veja a IA operar este computador: pesquisar na web, navegar em páginas, extrair conteúdo, capturar screenshots e gerenciar arquivos — tudo em tempo real.
+**Agente de IA web local** — inspirado no fluxo do Manus. Converse em um chat e veja a IA operar este computador: pesquisar na web, navegar em páginas, extrair conteúdo, capturar screenshots, **desenvolver software completo usando o Vertex CLI** e gerenciar arquivos — tudo em tempo real.
 
 > Versão MVP local em LAN. Sem autenticação, sem hospedagem externa.
+
+---
+
+## Vertex CLI — Motor de Desenvolvimento de Software
+
+O Vortax usa o **Vertex CLI** como motor para desenvolver software, sites, scripts e qualquer projeto de código que você pedir.
+
+O Vertex é um assistente de codificação por terminal que roda localmente. Ele entende linguagem natural e cria arquivos completos de código. Quando você pede "Crie um site de portfólio" ou "Faça uma API em Python", o agente do Vortax:
+
+1. Abre o terminal e executa o comando `vertex` com suas instruções
+2. O Vertex CLI desenvolve o projeto completo dentro da `workspace/`
+3. Os arquivos gerados aparecem automaticamente no chat
+4. Você pode baixar cada arquivo individualmente ou todos juntos em um arquivo **.zip**
+
+### Como usar o Vertex diretamente
+
+O Vertex CLI está disponível como comando global do sistema neste computador:
+
+```bash
+# Abrir o chat interativo do Vertex
+vertex
+
+# Execução direta de uma tarefa
+vertex "Crie um sistema de login em Python com Flask e SQLite"
+```
+
+No Vortax, essa chamada é feita automaticamente pelo agente quando você solicita desenvolvimento de software.
+
+### Onde está instalado
+
+- **Vertex CLI:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-cli` (v1.2.6)
+- **Vertex Server:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-server`
+
+---
+
+## Download de Arquivos
+
+Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e disponível para download:
+
+- **Download individual** — cada arquivo gerado aparece no painel "Arquivos" com link direto
+- **Download completo em ZIP** — um botão de download reúne todos os arquivos da conversa em um único `.zip`
+- **Persistência** — os arquivos ficam salvos na `workspace/` e vinculados à conversa no banco de dados
+
+---
+
+## Funcionalidades
+
+- **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
+- **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
+- **Stream em tempo real** — WebSocket com eventos de ação, screenshots e resultados
+- **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
+- **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
+- **Painel de atividade** — timeline lateral com resumo das ações do agente
+- **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
+- **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
+- **Desenvolvimento de software** — usa o Vertex CLI para criar projetos completos sob demanda
+- **Download em ZIP** — todos os arquivos gerados na conversa em um único arquivo
+- **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
 
 ---
 
@@ -16,31 +74,23 @@ Usuário na LAN (http://IP:5173)
 │   Frontend       │───▶│   Backend        │───▶│   DeepSeek API   │
 │   React + Vite   │    │   FastAPI :8010  │    │   V4 Flash       │
 │   :5173          │◀───│   WebSocket      │    │   (planejamento) │
-└──────────────────┘    └────────┬─────────┘    └──────────────────┘
-                                 │
-                                 ▼
-            ┌────────────────────────────────────┐
-            │         Ferramentas Locais          │
-            │  • Chrome CDP (Playwright)          │
-            │  • Shell seguro (whitelist)         │
-            │  • Screenshot (MSS/X11)             │
-            │  • PyAutoGUI (desktop)              │
-            │  • File Manager (workspace/)        │
-            └────────────────────────────────────┘
+└──────────────────┘    └────────┬─────────┘    └───────┬──────────┘
+                                 │                       │
+                                 ▼                       ▼
+            ┌────────────────────────────┐   ┌──────────────────────┐
+            │    Ferramentas Locais      │   │   Vertex CLI         │
+            │  • Chrome CDP (Playwright) │   │   (desenvolvimento   │
+            │  • Shell seguro            │   │    de software)      │
+            │  • File Manager            │   │                      │
+            └────────────────────────────┘   └──────────────────────┘
+                                 │                    │
+                                 ▼                    ▼
+            ┌───────────────────────────────────────────┐
+            │         workspace/ + SQLite               │
+            │   • Arquivos gerados → download ZIP      │
+            │   • Histórico persistido por conversa    │
+            └───────────────────────────────────────────┘
 ```
-
----
-
-## Funcionalidades
-
-- **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
-- **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
-- **Stream em tempo real** — WebSocket com eventos de ação, screenshots e resultados
-- **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
-- **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
-- **Painel de atividade** — timeline lateral com resumo das ações do agente
-- **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
-- **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
 
 ---
 
@@ -51,15 +101,15 @@ Vortax/
 ├── backend/              # FastAPI + Uvicorn
 │   ├── api/              # REST + WebSocket
 │   ├── services/         # Agente, stream, qualidade de fontes
-│   ├── tools/            # Browser, executor
+│   ├── tools/            # Browser, visão, executor
 │   └── tests/            # Testes automatizados
 ├── frontend/             # React 18 + Vite
 │   └── src/
-│       ├── components/   # 10 componentes de UI
+│       ├── components/   # 11 componentes de UI
 │       ├── hooks/        # WebSocket hook
 │       └── lib/          # API client
 ├── scripts/              # start-dev.sh
-└── workspace/            # Área isolada do agente
+└── workspace/            # Área isolada do agente — arquivos + download ZIP
 ```
 
 ---
@@ -70,6 +120,7 @@ Vortax/
 - Node.js 18+
 - Google Chrome instalado
 - Chave de API DeepSeek (ou roda em modo mock)
+- Vertex CLI instalado (para desenvolvimento de software)
 
 ## Instalação e execução
 
@@ -110,9 +161,12 @@ Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
 | Backend | Python, FastAPI, Uvicorn, httpx |
 | Frontend | React 18, Vite, Lucide React |
 | Navegador | Playwright + Google Chrome CDP |
-| IA | DeepSeek V4 Flash (planejamento) |
+| IA (planejamento) | DeepSeek V4 Flash |
+| IA (visão) | Groq + Llama 4 Scout |
+| Motor de software | Vertex CLI (local) |
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
+| Download | ZIP por conversa via API |
 | Segurança | Middleware LAN-only, sanitização de segredos |
 
 ---

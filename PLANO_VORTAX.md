@@ -80,6 +80,35 @@ O Vortax será executado e terá acesso operacional **a este PC Linux Mint**:
 
 ---
 
+### Vertex CLI/Server — Motor de Desenvolvimento de Software
+
+O Vertex é um **assistente de codificação por terminal** que roda localmente neste PC. Ele está instalado em dois projetos complementares:
+
+- **Vertex CLI** (`/media/server/HD Backup/Servidores_NAO_MEXA/vertex-cli` v1.2.6) — Cliente de linha de comando. Aceita comandos em linguagem natural e desenvolve software, sites, scripts e quaisquer arquivos de código que o usuário solicitar. Usa o modelo `deepseek-v4-flash` ou `deepseek-v4-pro` como cérebro, com plena capacidade de ler, editar e criar arquivos no sistema.
+
+- **Vertex Server** (`/media/server/HD Backup/Servidores_NAO_MEXA/vertex-server`) — Proxy FastAPI que traduz chamadas no formato Anthropic para DeepSeek. Inclui backend Express (porta 4000) para autenticação e dashboard web. O Vertex CLI se conecta a este servidor para funcionar.
+
+**Como o Vortax usará o Vertex:**
+
+O Vortax é o **frontend web** (chat em LAN) que permite ao usuário pedir tarefas de desenvolvimento de software. Quando o usuário solicitar a criação de um site, script, API ou qualquer código, o agente do Vortax:
+
+1. Abre o terminal (`shell_run`)
+2. Executa o comando `vertex` (que está no PATH)
+3. Passa as instruções do usuário para o Vertex CLI
+4. O Vertex CLI desenvolve o software, criando todos os arquivos necessários na `workspace/`
+5. Captura o resultado e o progresso
+6. Os arquivos gerados ficam disponíveis para download
+
+**Exemplo de fluxo:** O usuário digita "Crie um site de portfólio com HTML, CSS e JS". O agente Vortax executa `vertex "Crie um site portfolio em workspace/portfolio com HTML, CSS e JS responsivo"`, o Vertex desenvolve o projeto completo, e os arquivos aparecem no painel de arquivos do chat.
+
+**Comando de ativação:** O Vertex CLI está registrado como comando global do sistema. Basta executar no terminal:
+```bash
+vertex "descrição do software que deseja criar"
+```
+Para desenvolvimento de software pelo Vortax, o agente usará `shell_run` com o comando `vertex`.
+
+---
+
 ## 2. Arquitetura do Sistema
 
 ```
@@ -382,6 +411,21 @@ settings = Settings()
 settings.WORKSPACE_PATH.mkdir(parents=True, exist_ok=True)
 ```
 
+### Armazenamento e Download de Arquivos por Conversa
+
+Os arquivos que o agente (via Vertex CLI ou ferramentas shell) gerar durante uma tarefa ficam salvos na pasta `workspace/`. O sistema deve permitir:
+
+- **Listagem por conversa:** `GET /api/tasks/{task_id}/files` — lista apenas os arquivos gerados durante aquela conversa específica, retornando nome, tamanho e data de modificação.
+- **Download completo em ZIP:** `GET /api/tasks/{task_id}/download` — gera e retorna um arquivo `.zip` contendo **todos** os arquivos que o agente criou na workspace durante aquela conversa. O ZIP é gerado sob demanda e descartado após o download.
+- **Download individual:** `GET /api/files/{path}` — já existe para baixar um arquivo específico da workspace.
+
+**Regras:**
+- O download ZIP lista arquivos da workspace cujos nomes/timestamps correspondam ao período de execução da tarefa.
+- Na primeira implementação, o ZIP incluirá todos os arquivos da workspace que foram criados ou modificados durante a janela de atividade da tarefa (entre `created_at` e `updated_at` da task, com margem de 5 minutos).
+- O nome do arquivo ZIP segue o padrão: `vortax-{task_id[:8]}.zip`.
+- O ZIP é gerado em memória com `io.BytesIO` e `zipfile.ZipFile`, nunca escrito em disco.
+- O botão de download no frontend fica no painel de arquivos (FileList) e em um botão de destaque no cabeçalho da conversa quando há arquivos disponíveis.
+
 ### 4.4 `backend/database.py`
 
 Status atual: **concluído e funcional**.
@@ -411,6 +455,7 @@ Tabelas:
 - **tasks** — `id TEXT PK, description TEXT, status TEXT, created_at TEXT, updated_at TEXT, result TEXT`
 - **events** — `id INTEGER PK AUTOINCREMENT, task_id TEXT FK, event_type TEXT, created_at TEXT, payload_json TEXT`
 - **screenshots** — `id INTEGER PK AUTOINCREMENT, task_id TEXT FK, event_id INTEGER FK, created_at TEXT, caption TEXT, title TEXT, url TEXT, image_base64 TEXT`
+- **chat_images** — `id INTEGER PK AUTOINCREMENT, task_id TEXT FK, event_id INTEGER FK, created_at TEXT, filename TEXT, content_type TEXT, question TEXT, analysis TEXT, image_base64 TEXT`
 
 Funções mínimas:
 
@@ -947,6 +992,17 @@ curl -X POST http://localhost:8010/api/tasks/ \
 4. O resultado volta ao histórico como JSON compacto, sem base64.
 5. O planner decide a próxima ferramenta: `browser_click_text`, `browser_click_selector` ou, em desktop, `pyautogui_click` com confirmação quando necessário.
 
+#### Upload de imagens pelo chat
+
+Implementado em 06/05/2026:
+
+- Frontend aceita anexos `png`, `jpeg` e `webp` no composer do chat.
+- `POST /api/tasks/images` cria uma conversa nova com imagem e pergunta.
+- `POST /api/tasks/{task_id}/images` adiciona imagem a uma conversa existente.
+- Backend limita cada imagem a 6 MB, converte para base64, publica `user_message` com `images[]` e salva em `chat_images`.
+- A resposta da Groq é publicada como `assistant_message_done` e a imagem permanece visível no histórico do chat ao recarregar.
+- `GET /api/tasks/{task_id}` retorna também `images` com os uploads persistidos.
+
 ### 5.23 `backend/tools/pyautogui_tool.py`
 
 - Usa PyAutoGUI + Xlib para controlar **este desktop Linux Mint** fora do navegador.
@@ -1109,6 +1165,8 @@ WantedBy=multi-user.target
 - [ ] Export de sessão como replay (WebSocket dump).
 - [ ] OpenCV/template matching para localizar elementos visuais por imagem.
 - [ ] Notificação via email/Telegram quando tarefas longas terminarem.
+- [ ] Rastreamento fino de arquivos por tarefa com metadados no banco (tabela `task_files` ligando `task_id` a caminhos e hashes dos arquivos gerados).
+- [ ] Download ZIP com progresso para tarefas com muitos arquivos grandes.
 
 ---
 
@@ -1206,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.4 | 06/05/2026 | Adicionada seção sobre Vertex CLI/Server como motor de desenvolvimento de software; documentado sistema de download ZIP de arquivos por conversa; atualizado checklist com novos itens de arquivamento e integração Vertex |
 | 2.3 | 06/05/2026 | Plano de visão alterado para `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq; Puter/Qwen removido do caminho principal; adicionada arquitetura backend para `VisionTool` multimodal |
 | 2.2 | 06/05/2026 | Ajustado escopo para MVP local em LAN, sem autenticação e sem hospedagem externa; frontend chat-first estilo Manus com stream de ações; DeepSeek V4 Flash para texto; Qwen3-VL via Puter apenas para testes de visão |
 | 2.1 | 06/05/2026 | Incorporadas especificações do PDF: Chrome via CDP usando Google Chrome deste PC, PyAutoGUI/X11, MSS com `DISPLAY=:0`, banco por sessão no HD de backup em `Banco_de_dados/Vortax`, WebSocket autenticado e systemd preparado para desktop local |
@@ -1240,6 +1299,8 @@ sudo systemctl restart vortax-backend
 - [ ] Ferramentas reais de arquivos/shell com whitelist
 - [x] Exclusão de chats com remoção no banco de dados
 - [x] Persistência de screenshots/prints no banco de dados
+- [x] Upload de imagens no chat para análise via Groq/Llama 4 Scout
+- [x] Persistência de imagens enviadas pelo chat na tabela `chat_images`
 - [x] Pesquisa estruturada no Google via `browser_google_search`
 - [x] Extração de links/resultados via `browser_extract_links`
 - [x] Abertura de resultados por índice via `browser_click_link_by_index`
@@ -1257,6 +1318,28 @@ sudo systemctl restart vortax-backend
 - [x] Ferramenta `browser_extract_article` para extracao limpa de conteudo principal
 - [x] Registro automatico de fontes abertas/extraias com pontuacao de qualidade
 - [x] Painel de fontes no frontend com tipo e score
+- [ ] Download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download`
+- [ ] Botão de download ZIP no frontend por conversa com todos os arquivos gerados
+- [ ] Integração Vertex CLI: agente usa `shell_run` com `vertex` para desenvolver software
+- [ ] Documentação do Vertex CLI/Server e seu papel como motor de desenvolvimento
+
+### Vertex CLI — Motor de Desenvolvimento de Software
+
+O Vertex é o motor que permite ao Vortax desenvolver software, sites e scripts completos. Instalado em:
+
+- **Vertex CLI:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-cli` (v1.2.6)
+- **Vertex Server:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-server` (proxy DeepSeek)
+
+**Como o Vortax invoca o Vertex:**
+
+1. Usuário pede: "Crie um sistema de login em Python"
+2. Agente do Vortax usa `shell_run` com `cwd=./workspace`
+3. Executa: `vertex "Crie um sistema de login em Python com Flask e SQLite, salve em workspace/" --output-dir ./workspace/login-system`
+4. Vertex CLI processa o pedido e gera todos os arquivos do projeto
+5. Vortax captura o resultado e lista os arquivos no painel
+6. Usuário pode baixar os arquivos individualmente ou como ZIP
+
+**O Vertex CLI é um comando global do sistema.** Basta abrir o terminal e digitar `vertex` para usar interativamente, ou `vertex "instrução"` para execução direta. No contexto do Vortax, o agente faz essa chamada automaticamente.
 
 ### BrowserTool + Planner JSON
 
@@ -1350,3 +1433,4 @@ Não reaproveitado agora:
 | 06/05/2026 | BrowserTool CDP + Tool Executor + planner JSON | `backend/tools/browser.py`, `backend/tools/tool_executor.py`, `backend/services/deepseek_client.py`, `backend/services/agent_runner.py`, `backend/requirements.txt` | Implementado loop ReAct simples com ferramentas de navegador |
 | 06/05/2026 | Validação BrowserTool direta | `backend/tools/browser.py` | Navegou em `data:text/html`, extraiu título/texto e gerou screenshot base64 via CDP |
 | 06/05/2026 | Validação ReAct navegador | backend ativo | Task via API/WebSocket abriu `data:text/html` e `https://example.com`, publicou `tool_call`, `tool_result`, `screen_frame` e finalizou com o título |
+| 06/05/2026 | Visão Groq/Llama 4 Scout funcional | `backend/tools/vision.py`, `backend/api/tasks.py`, `frontend/src/components/Composer.jsx`, `frontend/src/components/MessageList.jsx` | Smoke test real com `meta-llama/llama-4-scout-17b-16e-instruct`; rota `POST /api/tasks/images` salvou imagem em `chat_images` e retornou análise |
