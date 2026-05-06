@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, FileText, Loader2, Sparkles, Terminal } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, Loader2, Sparkles } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
@@ -17,10 +17,7 @@ function hasEvent(events, types) {
 }
 
 function isVertexCommand(command) {
-  let text = String(command || "").trim();
-  for (const prefix of ["cd workspace && ", "cd ./workspace && ", "cd /workspace && "]) {
-    if (text.startsWith(prefix)) text = text.slice(prefix.length).trim();
-  }
+  let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
   return text.split(/\s+/)[0] === "vertex";
 }
 
@@ -146,9 +143,10 @@ function StepIcon({ state }) {
   return <Circle size={15} />;
 }
 
-// ── Vertex Live Terminal ────────────────────────────────────────────────────
+// ── Vertex Progress ─────────────────────────────────────────────────────────
 
 const stageLabels = {
+  starting: "Iniciando",
   planning: "Planejando",
   writing_file: "Criando arquivo",
   creating: "Criando",
@@ -159,133 +157,181 @@ const stageLabels = {
   configuring: "Configurando",
   validating: "Verificando",
   done: "Concluído",
+  error: "Erro",
 };
 
-function useVertexTerminal(events) {
-  return useMemo(() => {
-    const shellLines = events
-      .filter((e) => e.type === "shell_stdout" || e.type === "shell_stderr")
-      .slice(-200);
+const stageDetails = {
+  starting: "Preparando a CLI, permissões e pasta persistente da conversa.",
+  planning: "Estimando estrutura, arquivos necessários e sequência de implementação.",
+  creating: "Montando pastas, arquivos base e pontos de entrada do projeto.",
+  writing_file: "Gravando arquivos de código, estilos, telas ou scripts.",
+  editing: "Refinando o que já foi criado e corrigindo inconsistências.",
+  installing: "Preparando dependências locais quando o projeto exige.",
+  executing: "Executando comandos internos do Vertex e acompanhando a saída.",
+  configuring: "Ajustando configuração, scripts, rotas ou integração local.",
+  reading_file: "Lendo arquivos gerados para decidir o próximo ajuste.",
+  validating: "O Vortax está testando o resultado antes de liberar a resposta.",
+  done: "Criação finalizada e validação local registrada no stream.",
+  error: "A validação encontrou algo que precisa voltar para correção.",
+};
 
+const stageOrder = [
+  "starting",
+  "planning",
+  "creating",
+  "writing_file",
+  "editing",
+  "reading_file",
+  "installing",
+  "configuring",
+  "executing",
+  "validating",
+  "done",
+];
+
+function useVertexProgress(events) {
+  return useMemo(() => {
     const progressEvents = events.filter((e) => e.type === "vertex_progress");
-    const hasShellActivity = shellLines.length > 0;
     const hasVertexActivity = progressEvents.length > 0 || events.some((e) => (
       e.type === "tool_call" &&
       e.payload?.name === "shell_run" &&
       isVertexCommand(e.payload?.params?.command)
     ));
 
-    let progress = null;
-    if (progressEvents.length > 0) {
-      const last = progressEvents[progressEvents.length - 1].payload;
-      const stagesSeen = progressEvents.map((e) => e.payload.stage);
-      progress = {
-        stage: last.stage,
-        message: last.message || "",
-        file: last.file || null,
-        done: stagesSeen.includes("done"),
-        totalSteps: new Set(stagesSeen).size,
-        interactiveRounds: last.interactive_rounds || 0,
-      };
-    }
+    const items = [];
+    const seen = new Set();
+    progressEvents.forEach((event) => {
+      const payload = event.payload || {};
+      const stage = payload.stage || "executing";
+      const message = payload.message || stageLabels[stage] || "Vertex trabalhando";
+      const file = payload.file || null;
+      const key = `${stage}:${message}:${file || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({
+        id: `${event.created_at || items.length}-${key}`,
+        stage,
+        label: stageLabels[stage] || stage,
+        message,
+        file,
+        status: payload.status || (stage === "done" ? "done" : "running"),
+      });
+    });
 
-    // Detecta se tem shell rodando (último tool_call foi shell_run sem tool_result correspondente)
-    const lastShellCall = [...events].reverse().find(
-      (e) => e.type === "tool_call" && e.payload?.name === "shell_run"
+    const lastVertexCall = [...events].reverse().find(
+      (e) => e.type === "tool_call" && e.payload?.name === "shell_run" && isVertexCommand(e.payload?.params?.command)
     );
-    const lastShellResult = [...events].reverse().find(
+    const lastVertexResult = [...events].reverse().find(
       (e) => e.type === "tool_result" && e.payload?.name === "shell_run"
     );
-    const shellRunning = lastShellCall && (!lastShellResult || lastShellResult.created_at < lastShellCall.created_at);
+    const running = Boolean(lastVertexCall && (!lastVertexResult || lastVertexResult.created_at < lastVertexCall.created_at));
+    const done = items.some((item) => item.stage === "done" || item.status === "done");
+    const latest = items[items.length - 1] || null;
 
-    return { shellLines, progress, hasShellActivity, hasVertexActivity, shellRunning };
+    return {
+      items: items.slice(-12),
+      hasVertexActivity,
+      running,
+      done,
+      currentStage: latest?.stage || (running ? "executing" : done ? "done" : "starting"),
+      currentMessage: latest?.message || "",
+      currentFile: latest?.file || null,
+    };
   }, [events]);
 }
 
-export function VertexTerminal({ events }) {
-  const endRef = useRef(null);
+function latestPayload(events, type) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].type === type) return events[index].payload || {};
+  }
+  return null;
+}
+
+function validationLegend(events) {
+  const project = latestPayload(events, "project_validation_result");
+  const web = latestPayload(events, "web_validation_result");
+  const failed = [project, web].find((item) => item?.status === "failed");
+  if (failed) {
+    const bug = Array.isArray(failed.bugs) ? failed.bugs[0] : failed.reason;
+    return { tone: "error", label: "Correção pendente", detail: bug || "A validação encontrou bugs." };
+  }
+  const blocked = [project, web].find((item) => item?.status === "blocked");
+  if (blocked) return { tone: "error", label: "Validação bloqueada", detail: blocked.reason || "Configuração necessária para testar." };
+  const passed = [project, web].find((item) => item?.status === "passed");
+  if (passed) return { tone: "ok", label: "Validação aprovada", detail: passed.reason || "Checagens locais passaram." };
+  return null;
+}
+
+export function VertexProgressPanel({ events }) {
   const [collapsed, setCollapsed] = useState(false);
-  const { shellLines, progress, hasShellActivity, hasVertexActivity, shellRunning } = useVertexTerminal(events);
+  const { currentFile, currentMessage, currentStage, items, hasVertexActivity, running, done } = useVertexProgress(events);
+  const validation = validationLegend(events);
 
-  useEffect(() => {
-    if (!collapsed) {
-      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [shellLines.length, collapsed]);
+  if (!hasVertexActivity) return null;
 
-  if (!hasShellActivity && !progress) return null;
+  const activeStage = currentStage || "executing";
+  const activeIndex = Math.max(0, stageOrder.indexOf(activeStage));
+  const activeDetail = currentFile ? `Arquivo atual: ${currentFile}` : currentMessage || stageDetails[activeStage] || "Acompanhando a criação em tempo real.";
 
   return (
-    <div className={`vertex-terminal ${progress?.done ? "done" : ""} ${collapsed ? "collapsed" : ""}`}>
+    <div className={`vertex-progress-panel ${done ? "done" : ""} ${collapsed ? "collapsed" : ""}`}>
       <button
-        className="vertex-terminal-header"
+        className="vertex-progress-header"
         onClick={() => setCollapsed((c) => !c)}
         type="button"
       >
-        <div className="vertex-terminal-title">
-          <Terminal size={13} />
-          <span>{hasVertexActivity ? "Vertex trabalhando" : "Terminal"}</span>
-          {shellRunning && <Loader2 size={11} className="spinner" />}
-          {progress && !progress.done && (
-            <span className="vertex-stage-pill">
-              {stageLabels[progress.stage] || progress.stage}
-            </span>
-          )}
-          {progress?.done && (
-            <span className="vertex-stage-pill done">Concluído</span>
-          )}
+        <div className="vertex-progress-title">
+          <Code2 size={13} />
+          <span>Vertex</span>
+          {running && <Loader2 size={11} className="spinner" />}
+          {done && <span className="vertex-stage-pill done">Concluído</span>}
         </div>
-        <div className="vertex-terminal-meta">
-          {progress && !progress.done && progress.file && (
-            <span className="vertex-current-file">
-              <FileText size={11} /> {progress.file}
-            </span>
-          )}
-          <small>{shellLines.length} linhas</small>
+        <div className="vertex-progress-meta">
+          <small>{items.length || 1} etapa(s)</small>
           {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
         </div>
       </button>
 
-      <div className="vertex-terminal-body">
-        {progress && (
-          <div className="vertex-terminal-progress">
-            <div className="vertex-progress-track">
-              {["planning", "creating", "executing", "done"].map((stage) => {
-                const reached = progress.totalSteps > 0 && (
-                  stage === "planning" ? true :
-                  stage === "creating" ? ["writing_file", "creating", "installing"].some(s =>
-                    events.some(e => e.type === "vertex_progress" && e.payload?.stage === s)
-                  ) :
-                  stage === "executing" ? ["executing", "editing", "validating", "configuring"].some(s =>
-                    events.some(e => e.type === "vertex_progress" && e.payload?.stage === s)
-                  ) :
-                  progress.done
-                );
-                return (
-                  <div
-                    key={stage}
-                    className={`vertex-progress-dot ${reached ? "reached" : ""} ${stage === "done" && progress.done ? "done" : ""}`}
-                  />
-                );
-              })}
-            </div>
-            <span className="vertex-progress-label">
-              {progress.done ? progress.message : (progress.file ? `Criando ${progress.file}` : progress.message)}
-            </span>
+      <div className="vertex-progress-body">
+        <div className="vertex-live-legend">
+          <div className="vertex-live-main">
+            <small>Agora</small>
+            <strong>{stageLabels[activeStage] || "Trabalhando"}</strong>
+            <p>{activeDetail}</p>
           </div>
-        )}
+          <div className="vertex-live-estimate">
+            <small>Estimativa</small>
+            <p>{stageDetails[activeStage] || "Inferindo etapa pelo stream do Vertex."}</p>
+          </div>
+          {validation && (
+            <div className={`vertex-live-validation ${validation.tone}`}>
+              <small>{validation.label}</small>
+              <p>{validation.detail}</p>
+            </div>
+          )}
+        </div>
 
-        <pre className="vertex-terminal-lines">
-          {shellLines.map((event, i) => (
+        <div className="vertex-stage-rail" aria-label="Etapas estimadas do Vertex">
+          {stageOrder.map((stage, index) => (
             <span
-              className={event.type === "shell_stderr" ? "stderr" : ""}
-              key={`${event.created_at}-${i}`}
-            >
-              {event.payload?.line || ""}
-            </span>
+              className={`${index <= activeIndex || done ? "reached" : ""} ${stage === activeStage ? "active" : ""}`}
+              key={stage}
+              title={stageLabels[stage]}
+            />
           ))}
-        </pre>
-        <div ref={endRef} />
+        </div>
+
+        {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
+          <div className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`} key={item.id}>
+            <div className="vertex-progress-icon">
+              {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
+            </div>
+            <div>
+              <strong>{item.label}</strong>
+              <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -349,9 +395,9 @@ export function AgentActivity({ events, status, taskDescription }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const steps = useMemo(() => buildSteps(events, status, taskDescription), [events, status, taskDescription]);
-  const { hasShellActivity } = useVertexTerminal(events);
+  const { hasVertexActivity } = useVertexProgress(events);
 
-  if (steps.length === 0 && !hasShellActivity) return null;
+  if (steps.length === 0 && !hasVertexActivity) return null;
 
   const label = currentLabel(events, status);
   const detail = currentDetail(events);
@@ -391,10 +437,9 @@ export function AgentActivity({ events, status, taskDescription }) {
           </button>
         ))}
 
-        {/* Vertex Terminal inline dentro da atividade */}
-        {hasShellActivity && (
+        {hasVertexActivity && (
           <div className="activity-vertex-slot">
-            <VertexTerminal events={events} />
+            <VertexProgressPanel events={events} />
           </div>
         )}
       </div>

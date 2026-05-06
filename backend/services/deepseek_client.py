@@ -92,7 +92,7 @@ TOOLS_SCHEMA = [
     {
         "action": "shell_run",
         "params": {"command": "echo hello"},
-        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, vertex, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, use 'vertex \"descricao da tarefa\"'. O comando roda na workspace/ do Vortax. Retorna stdout, stderr e returncode.",
+        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, vertex, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, use 'vertex \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
     },
     {
         "action": "vision_analyze",
@@ -214,8 +214,16 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
         "Na resposta final, estruture evidencias quando houver pesquisa: para cada conclusao importante, indique fonte/URL; diferencie 'confirmado em fonte aberta', 'inferido' e 'nao encontrado'. "
         "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
-        "O Vertex CLI criara todos os arquivos do projeto dentro da workspace/. Nao tente escrever codigo manualmente — delegue ao Vertex. "
-        "Depois que o vertex terminar, use finish e informe ao usuario que os arquivos estao prontos para download. "
+        "O Vertex CLI criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao Vertex. "
+        "Depois de cada execucao do Vertex, o Vortax roda validacao local automatica do projeto. Para scripts Python, APIs, apps Node e outros codigos, observe project_validation; "
+        "se project_validation.status='failed', use shell_run com vertex novamente para corrigir exatamente os bugs descritos em project_validation.bugs e aguarde nova validacao. "
+        "Depois que o vertex terminar criando site, pagina, frontend, dashboard, React/Vite/Vue/Next ou HTML/CSS, NAO finalize direto: "
+        "nao tente iniciar python -m http.server, vite ou outro servidor manualmente para HTML/CSS/JS estatico; o Vortax abre o preview interno automaticamente. "
+        "Somente para projetos que realmente exigem dev server, peca ao Vertex para imprimir LINK_LOCAL_DO_SITE com localhost/127.0.0.1. "
+        "O Vortax abrira o projeto no Chrome, testara funcionalidades de frontend, streamara screenshots, analisara o frontend com visao e rolara paginas longas ate o fim. "
+        "Se o resultado da ferramenta trouxer web_validation.status='failed', use shell_run com vertex novamente para corrigir exatamente os bugs descritos em web_validation.bugs; "
+        "so use finish quando project_validation.status='passed' para projetos de codigo e, para sites, quando web_validation.status='passed' ou web_validation.requires_validation=false. "
+        "Se web_validation.status='blocked' ou project_validation.status='blocked', informe o erro de configuracao em vez de fingir que testou. "
         "Extrair texto de paginas: prefira browser_extract_article ou browser_extract_text — eles sao mais rapidos, mais baratos e mais precisos que visao computacional. "
         "Use vision_analyze SOMENTE quando o texto extraido nao for suficiente: imagens, graficos, videos, layout visual, botoes sem texto, CAPTCHA, confirmacao visual de que algo apareceu/desapareceu na tela. "
         "Nao use vision_analyze para ler texto de paginas web comuns — browser_extract_article ou browser_extract_text resolvem melhor. "

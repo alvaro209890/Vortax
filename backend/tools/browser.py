@@ -1,8 +1,10 @@
 import asyncio
 import base64
 import os
+import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -37,10 +39,10 @@ class BrowserTool:
 
             endpoint = f"http://127.0.0.1:{settings.CHROME_DEBUG_PORT}"
             if not await self._cdp_available(endpoint):
-                await self._launch_chrome(headless=False)
+                await self._launch_chrome(headless=True)
                 if not await self._wait_for_cdp(endpoint, timeout_s=12.0):
                     await self._terminate_launched_chrome()
-                    await self._launch_chrome(headless=True)
+                    await self._launch_chrome(headless=False)
                     if not await self._wait_for_cdp(endpoint, timeout_s=12.0):
                         raise BrowserToolError(f"Chrome CDP nao respondeu em {endpoint}")
 
@@ -62,14 +64,31 @@ class BrowserTool:
         while asyncio.get_running_loop().time() < deadline:
             if await self._cdp_available(endpoint):
                 return True
+            if self._chrome_process is not None and self._chrome_process.poll() is not None:
+                return False
             await asyncio.sleep(0.25)
         return False
 
     async def _launch_chrome(self, *, headless: bool) -> None:
         chrome_binary = shutil.which(settings.CHROME_BINARY) or settings.CHROME_BINARY
+        runtime_tmp = Path("/dev/shm/vortax-tmp") if Path("/dev/shm").exists() else settings.RUNTIME_PATH / "tmp"
+        cache_dir = Path("/dev/shm/vortax-chrome-cache") if Path("/dev/shm").exists() else settings.RUNTIME_PATH / "chrome-cache"
+        crash_dir = settings.RUNTIME_PATH / "chrome-crashes"
+        runtime_tmp.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        crash_dir.mkdir(parents=True, exist_ok=True)
+        if settings.CHROME_PROFILE_PATH.exists() and self._chrome_process is None:
+            singleton = settings.CHROME_PROFILE_PATH / "SingletonLock"
+            if singleton.exists() or singleton.is_symlink():
+                shutil.rmtree(settings.CHROME_PROFILE_PATH, ignore_errors=True)
+        settings.CHROME_PROFILE_PATH.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
         env.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
+        env.setdefault("TMPDIR", str(runtime_tmp))
+        env.setdefault("TEMP", str(runtime_tmp))
+        env.setdefault("TMP", str(runtime_tmp))
+        env.setdefault("XDG_CACHE_HOME", str(settings.RUNTIME_PATH / "cache"))
 
         args = [
             chrome_binary,
@@ -78,12 +97,21 @@ class BrowserTool:
             "--no-first-run",
             "--no-default-browser-check",
             f"--user-data-dir={settings.CHROME_PROFILE_PATH}",
+            f"--disk-cache-dir={cache_dir}",
+            f"--crash-dumps-dir={crash_dir}",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions",
+            "--disable-crash-reporter",
+            "--disable-breakpad",
             "--disable-background-networking",
             "about:blank",
         ]
         if headless:
             args.insert(1, "--headless=new")
-            args.insert(2, "--disable-gpu")
             self._launch_mode = "headless"
         else:
             self._launch_mode = "visible"
@@ -254,6 +282,124 @@ class BrowserTool:
             delta = -delta
         await page.mouse.wheel(0, delta)
         return {"direction": direction, "amount": abs(int(amount)), "url": page.url}
+
+    async def scroll_to_top(self, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        await page.evaluate("() => window.scrollTo(0, 0)")
+        return await self.get_scroll_state(task_id=task_id)
+
+    async def get_scroll_state(self, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        data = await page.evaluate(
+            """
+            () => ({
+              scroll_y: Math.round(window.scrollY || document.documentElement.scrollTop || 0),
+              viewport_height: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+              scroll_height: Math.round(document.documentElement.scrollHeight || document.body.scrollHeight || 0),
+              url: window.location.href,
+              title: document.title || ''
+            })
+            """
+        )
+        scroll_y = int(data.get("scroll_y") or 0)
+        viewport_height = int(data.get("viewport_height") or 0)
+        scroll_height = int(data.get("scroll_height") or 0)
+        data["at_bottom"] = scroll_y + viewport_height >= max(scroll_height - 3, 0)
+        return data
+
+    async def frontend_smoke_test(self, max_actions: int = 8, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        errors: list[str] = []
+
+        def _record_console(message) -> None:
+            if message.type in {"error", "warning"}:
+                errors.append(f"console.{message.type}: {message.text}"[:500])
+
+        def _record_page_error(error) -> None:
+            errors.append(f"pageerror: {error}"[:500])
+
+        page.on("console", _record_console)
+        page.on("pageerror", _record_page_error)
+
+        actions: list[dict[str, Any]] = []
+        try:
+            controls = await page.evaluate(
+                """
+                () => {
+                  const selector = 'button, a[href], input, select, textarea, [role="button"], [tabindex]';
+                  return Array.from(document.querySelectorAll(selector))
+                    .map((el, index) => {
+                      const rect = el.getBoundingClientRect();
+                      const style = window.getComputedStyle(el);
+                      const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.placeholder || el.href || el.tagName || '')
+                        .replace(/\\s+/g, ' ')
+                        .trim();
+                      return {
+                        index,
+                        tag: el.tagName.toLowerCase(),
+                        type: el.getAttribute('type') || '',
+                        text: text.slice(0, 120),
+                        href: el.href || '',
+                        visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
+                        disabled: Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+                      };
+                    })
+                    .filter((item) => item.visible && !item.disabled)
+                    .slice(0, 20);
+                }
+                """
+            )
+
+            origin = await page.evaluate("() => window.location.origin")
+            start_url = page.url
+            for item in controls[: max(int(max_actions), 0)]:
+                result = await page.evaluate(
+                    """
+                    async ({ index, origin }) => {
+                      const selector = 'button, a[href], input, select, textarea, [role="button"], [tabindex]';
+                      const el = Array.from(document.querySelectorAll(selector))[index];
+                      if (!el) return { ok: false, error: 'elemento nao encontrado' };
+                      el.scrollIntoView({ block: 'center', inline: 'center' });
+                      await new Promise((resolve) => setTimeout(resolve, 120));
+                      const tag = el.tagName.toLowerCase();
+                      const type = (el.getAttribute('type') || '').toLowerCase();
+                      const href = el.href || '';
+                      if (href && !href.startsWith(origin) && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                        return { ok: true, skipped: true, reason: 'link externo ignorado', href };
+                      }
+                      if (tag === 'input' || tag === 'textarea') {
+                        if (!['checkbox', 'radio', 'button', 'submit', 'reset'].includes(type)) {
+                          el.focus();
+                          el.value = type === 'number' || type === 'range' ? '1' : 'teste';
+                          el.dispatchEvent(new Event('input', { bubbles: true }));
+                          el.dispatchEvent(new Event('change', { bubbles: true }));
+                          return { ok: true, filled: true };
+                        }
+                      }
+                      el.click();
+                      return { ok: true, clicked: true };
+                    }
+                    """,
+                    {"index": item["index"], "origin": origin},
+                )
+                await page.wait_for_timeout(300)
+                if page.url != start_url and not page.url.startswith(origin):
+                    await page.goto(start_url, wait_until="domcontentloaded", timeout=10000)
+                actions.append({"target": item, "result": result, "url": page.url})
+
+            body_text = await page.locator("body").inner_text(timeout=5000)
+            visible_error = bool(re.search(r"\b(error|erro|failed|falhou|exception|cannot|undefined|not found)\b", body_text[:3000], re.IGNORECASE))
+            return {
+                "success": not errors and not visible_error,
+                "actions": actions,
+                "errors": errors[:20],
+                "visible_error": visible_error,
+                "url": page.url,
+                "title": await page.title(),
+            }
+        finally:
+            page.remove_listener("console", _record_console)
+            page.remove_listener("pageerror", _record_page_error)
 
     async def _visible_links(self, page: Page, limit: int = 30) -> list[dict[str, Any]]:
         return await page.evaluate(

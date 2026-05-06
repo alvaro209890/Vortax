@@ -98,7 +98,9 @@ class VisionTool:
         system_prompt = (
             "Voce e o modulo de visao do Vortax. Analise a imagem enviada e responda somente "
             "com um objeto JSON valido contendo: summary, visible_text, ui_elements, objects, "
-            "suggested_action e confidence. Use confidence como low, medium ou high."
+            "suggested_action e confidence. Use confidence como low, medium ou high. "
+            "Quando a pergunta pedir revisao de frontend, seja rigoroso: descreva bugs visuais em suggested_action; "
+            "se nao houver bug aparente, diga claramente que nao ha bugs aparentes."
         )
         payload = {
             "model": settings.GROQ_VISION_MODEL,

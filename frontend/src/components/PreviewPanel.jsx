@@ -6,7 +6,7 @@ import { usePersistentState } from "../hooks/usePersistentState.js";
 import { API_BASE_URL } from "../lib/api.js";
 
 function detectPreviewType(files, events) {
-  const hasIndexHtml = files.some(
+  const indexFile = files.find(
     (f) => f.path === "index.html" || f.path.endsWith("/index.html")
   );
   // Check dev server events
@@ -20,8 +20,8 @@ function detectPreviewType(files, events) {
       port: devServerEvent.payload.port,
     };
   }
-  if (hasIndexHtml) {
-    return { type: "static_html" };
+  if (indexFile) {
+    return { type: "static_html", path: indexFile.path };
   }
   return null;
 }
@@ -39,7 +39,10 @@ export function PreviewPanel({ files, events, taskId }) {
   const previewUrl = useMemo(() => {
     if (!taskId || !preview) return null;
     if (preview.type === "dev_server") return preview.url;
-    return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId)}/`;
+    const encodedPath = preview.path === "index.html"
+      ? ""
+      : String(preview.path || "").split("/").map((part) => encodeURIComponent(part)).join("/");
+    return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId)}/${encodedPath}`;
   }, [taskId, preview]);
 
   // Check dev server status on mount and when preview changes

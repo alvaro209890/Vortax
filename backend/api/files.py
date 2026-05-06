@@ -5,15 +5,16 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from config import settings
 from services.registry import task_store
+from services.project_files import sync_task_workspace_files
 
 router = APIRouter()
 
 
 def safe_task_workspace_path(task_id: str, relative_path: str = "") -> Path:
     base = (settings.WORKSPACE_PATH / task_id).resolve()
-    workspace = settings.WORKSPACE_PATH.resolve()
-    if base != workspace and workspace not in base.parents:
-        raise HTTPException(status_code=400, detail="Conversa fora da workspace")
+    projects_root = settings.WORKSPACE_PATH.resolve()
+    if base != projects_root and projects_root not in base.parents:
+        raise HTTPException(status_code=400, detail="Conversa fora da pasta de projetos")
     target = (base / relative_path).resolve()
     if target != base and base not in target.parents:
         raise HTTPException(status_code=400, detail="Caminho fora da conversa")
@@ -22,27 +23,21 @@ def safe_task_workspace_path(task_id: str, relative_path: str = "") -> Path:
 
 def list_task_workspace_files(task_id: str) -> list[dict]:
     base = safe_task_workspace_path(task_id)
-    if not base.exists() or not base.is_dir():
-        return []
+    return sync_task_workspace_files(task_id, base)["files"]
 
-    files = []
-    for path in base.rglob("*"):
-        if path.is_file() and path.name != ".gitkeep":
-            files.append(
-                {
-                    "path": str(path.relative_to(base)),
-                    "size_bytes": path.stat().st_size,
-                    "modified_at": path.stat().st_mtime,
-                }
-            )
-    return sorted(files, key=lambda item: item["path"])
+
+def list_task_workspace_projects(task_id: str) -> list[dict]:
+    base = safe_task_workspace_path(task_id)
+    return sync_task_workspace_files(task_id, base)["projects"]
 
 
 @router.get("/task/{task_id}")
 async def list_task_files(task_id: str) -> dict:
     if not task_store.get(task_id):
         raise HTTPException(status_code=404, detail="Task nao encontrada")
-    return {"files": list_task_workspace_files(task_id)}
+    base = safe_task_workspace_path(task_id)
+    index = sync_task_workspace_files(task_id, base)
+    return {"files": index["files"], "projects": index["projects"]}
 
 
 @router.get("/task/{task_id}/{file_path:path}")
@@ -65,13 +60,16 @@ async def preview_task_index(task_id: str):
     base = safe_task_workspace_path(task_id)
     index_path = base / "index.html"
     if not index_path.exists():
+        candidates = sorted(path for path in base.rglob("index.html") if path.is_file())
+        index_path = candidates[0] if candidates else index_path
+    if not index_path.exists():
         raise HTTPException(status_code=404, detail="Nenhum index.html encontrado para preview")
     return FileResponse(index_path)
 
 
 @router.get("/preview/{task_id}/{file_path:path}")
 async def preview_task_file(task_id: str, file_path: str):
-    """Serve arquivos estaticos da workspace para preview em iframe."""
+    """Serve arquivos estaticos da pasta de projetos para preview em iframe."""
     if not task_store.get(task_id):
         raise HTTPException(status_code=404, detail="Task nao encontrada")
     target = safe_task_workspace_path(task_id, file_path)

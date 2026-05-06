@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Sparkles, User } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export function MessageList({ messages }) {
   const endRef = useRef(null);
@@ -17,7 +19,13 @@ export function MessageList({ messages }) {
           </div>
           <div className="message-content">
             <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
-            {message.content ? <p>{message.content}</p> : null}
+            {message.content ? (
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            ) : null}
             {message.images?.length > 0 && (
               <div className="message-images">
                 {message.images.map((image, index) => (

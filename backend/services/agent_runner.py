@@ -1,6 +1,8 @@
 import asyncio
 import json
+import shlex
 from typing import Any
+from pathlib import Path
 
 from config import settings
 from database import database
@@ -53,6 +55,210 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
             if content and not content.startswith("Resultado da ferramenta:") and not content.startswith("Controle automatico de pesquisa:"):
                 return content
     return ""
+
+
+def _is_vertex_shell_call(event: dict[str, Any]) -> bool:
+    return _vertex_shell_command(event) is not None
+
+
+def _vertex_shell_command(event: dict[str, Any]) -> str | None:
+    if event.get("type") != "tool_call":
+        return None
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    if payload.get("name") != "shell_run":
+        return None
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    command = str(params.get("command") or "").strip()
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
+        cd_path = Path(parts[1])
+        if cd_path.is_absolute() or ".." in cd_path.parts:
+            return None
+        parts = parts[3:]
+    return command if bool(parts) and parts[0] == "vertex" else None
+
+
+def _looks_like_creation_vertex_command(command: str) -> bool:
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return False
+    if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
+        parts = parts[3:]
+    if not parts or parts[0] != "vertex":
+        return False
+    if any(part in {"--version", "-v", "--help", "help"} for part in parts[1:]):
+        return False
+    text = " ".join(parts[1:]).lower()
+    return bool(
+        text
+        and any(
+            keyword in text
+            for keyword in (
+                "api",
+                "app",
+                "automacao",
+                "automação",
+                "backend",
+                "bug",
+                "codigo",
+                "código",
+                "corrija",
+                "crie",
+                "criar",
+                "dashboard",
+                "desenvolva",
+                "erro",
+                "faça",
+                "faca",
+                "frontend",
+                "html",
+                "implemente",
+                "interface",
+                "node",
+                "python",
+                "react",
+                "script",
+                "site",
+                "software",
+                "sistema",
+            )
+        )
+    )
+
+
+def _latest_vertex_call(events: list[dict[str, Any]]) -> tuple[int, str] | None:
+    latest: tuple[int, str] | None = None
+    for event in events:
+        command = _vertex_shell_command(event)
+        if command is not None:
+            latest = (int(event.get("event_id") or 0), command)
+    return latest
+
+
+def _latest_validation_payload(events: list[dict[str, Any]], latest_vertex_id: int, event_type: str) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for event in events:
+        event_id = int(event.get("event_id") or 0)
+        if event_id <= latest_vertex_id or event.get("type") != event_type:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        latest = payload
+    return latest
+
+
+def _latest_web_validation_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_call = _latest_vertex_call(events)
+    if latest_call is None:
+        return {"required": False, "status": "not_required"}
+    latest_vertex_id, command = latest_call
+    latest_result = _latest_validation_payload(events, latest_vertex_id, "web_validation_result")
+
+    if latest_result is None:
+        if not _looks_like_creation_vertex_command(command):
+            return {"required": False, "status": "not_required"}
+        return {"required": True, "status": "pending", "reason": "Site criado pelo Vertex ainda nao passou pela validacao visual local."}
+
+    if not latest_result.get("requires_validation"):
+        return {"required": False, "status": str(latest_result.get("status") or "skipped"), "result": latest_result}
+
+    return {
+        "required": True,
+        "status": str(latest_result.get("status") or "pending"),
+        "result": latest_result,
+        "reason": latest_result.get("reason") or "",
+        "bugs": latest_result.get("bugs") if isinstance(latest_result.get("bugs"), list) else [],
+    }
+
+
+def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_call = _latest_vertex_call(events)
+    if latest_call is None:
+        return {"required": False, "status": "not_required"}
+
+    latest_vertex_id, command = latest_call
+    web_result = _latest_validation_payload(events, latest_vertex_id, "web_validation_result")
+    project_result = _latest_validation_payload(events, latest_vertex_id, "project_validation_result")
+    creation_command = _looks_like_creation_vertex_command(command)
+
+    pending_reasons: list[str] = []
+    failed_bugs: list[str] = []
+    blocked_reasons: list[str] = []
+    passed_required = False
+
+    for label, result in (("web_validation", web_result), ("project_validation", project_result)):
+        if result is None:
+            if label == "project_validation" and creation_command:
+                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela validacao automatica local.")
+            elif label == "web_validation" and creation_command:
+                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela checagem de preview/web.")
+            continue
+
+        requires_validation = bool(result.get("requires_validation"))
+        status = str(result.get("status") or "pending")
+        if status == "blocked":
+            blocked_reasons.append(str(result.get("reason") or "Validacao bloqueada."))
+            continue
+        if not requires_validation:
+            continue
+        if status == "passed":
+            passed_required = True
+            continue
+        if status == "failed":
+            bugs = result.get("bugs") if isinstance(result.get("bugs"), list) else []
+            failed_bugs.extend(str(item) for item in bugs)
+            if not bugs and result.get("reason"):
+                failed_bugs.append(str(result["reason"]))
+            continue
+        pending_reasons.append(str(result.get("reason") or f"{label} ainda esta pendente."))
+
+    if blocked_reasons:
+        return {
+            "required": True,
+            "status": "blocked",
+            "reason": " ".join(blocked_reasons),
+            "bugs": [],
+            "web_validation": web_result,
+            "project_validation": project_result,
+        }
+    if failed_bugs:
+        return {
+            "required": True,
+            "status": "failed",
+            "reason": "Validacao local encontrou bugs.",
+            "bugs": failed_bugs[:12],
+            "web_validation": web_result,
+            "project_validation": project_result,
+        }
+    if pending_reasons:
+        return {
+            "required": True,
+            "status": "pending",
+            "reason": " ".join(pending_reasons),
+            "bugs": [],
+            "web_validation": web_result,
+            "project_validation": project_result,
+        }
+    if passed_required:
+        return {
+            "required": True,
+            "status": "passed",
+            "reason": "Validacao local aprovada.",
+            "bugs": [],
+            "web_validation": web_result,
+            "project_validation": project_result,
+        }
+    return {
+        "required": False,
+        "status": "not_required",
+        "reason": "",
+        "bugs": [],
+        "web_validation": web_result,
+        "project_validation": project_result,
+    }
 
 
 def _format_research_note(status: dict[str, Any]) -> str:
@@ -138,6 +344,39 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
             action_name = str(action.get("action", "")).strip()
             if action_name == "finish":
+                validation_gate = _latest_vertex_quality_gate(bus.history(task_id))
+                if validation_gate.get("required") and validation_gate.get("status") != "passed":
+                    status = str(validation_gate.get("status") or "pending")
+                    if status == "blocked":
+                        reason = str(validation_gate.get("reason") or "Validacao local obrigatoria indisponivel.")
+                        raise DeepSeekError(reason)
+
+                    bugs = validation_gate.get("bugs") or []
+                    bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Validacao local ainda nao foi aprovada.")
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Corrigindo bugs do projeto",
+                            "detail": "A tarefa nao pode finalizar antes da validacao local passar.",
+                        },
+                    )
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Controle automatico de validacao local: nao finalize ainda. "
+                                f"Status da validacao do projeto: {status}. "
+                                f"Problemas encontrados: {bug_text}. "
+                                "Use shell_run com vertex para corrigir exatamente esses bugs no projeto atual. "
+                                "Isso vale para sites, sistemas, APIs, scripts Python, apps Node e qualquer outro codigo criado. "
+                                "Depois da correcao, o Vortax repetira a validacao automatica e so entao podera finalizar. "
+                                "Para HTML/CSS/JS estatico, nao suba servidor manual; o Vortax abrira o preview interno."
+                            ),
+                        }
+                    )
+                    continue
+
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
                 research_prompt = _latest_user_prompt(history) or description
                 research_status = cross_check_status(research_prompt, database.list_sources(task_id))

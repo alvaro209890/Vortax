@@ -15,7 +15,7 @@ from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
 from services.registry import event_bus, runner_tasks, task_store
 from services.stream_contract import utc_now
-from api.files import list_task_workspace_files
+from api.files import list_task_workspace_files, list_task_workspace_projects
 from tools.vision import VisionError, vision_tool
 
 router = APIRouter()
@@ -236,6 +236,7 @@ async def get_task(task_id: str) -> dict:
         "sources": database.list_sources(task_id),
         "images": database.list_chat_images(task_id),
         "files": list_task_workspace_files(task_id),
+        "projects": list_task_workspace_projects(task_id),
         "context": get_context_payload(task_id, event_bus.history(task_id)),
     }
 

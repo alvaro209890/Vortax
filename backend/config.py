@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DATABASE_BASE_PATH = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados")
+DEFAULT_VORTAX_DATA_PATH = DEFAULT_DATABASE_BASE_PATH / "Vortax"
 
 
 class Settings(BaseSettings):
@@ -36,20 +38,23 @@ class Settings(BaseSettings):
     CONTEXT_COMPACT_RATIO: float = 0.88
     CONTEXT_RECENT_MESSAGES: int = 8
     CONTEXT_SUMMARY_MAX_CHARS: int = 5000
-    WORKSPACE_PATH: Path = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Vortax/workspace")
+    WORKSPACE_PATH: Path = DEFAULT_VORTAX_DATA_PATH / "projetos"
+    RUNTIME_PATH: Path = DEFAULT_VORTAX_DATA_PATH / "runtime"
     SCREENSHOT_INTERVAL: int = 5
     STREAM_SCREENSHOT_INTERVAL: int = 2
     SHELL_TIMEOUT_SECONDS: int = 30
     SHELL_VERTEX_TIMEOUT_SECONDS: int = 300
+    VERTEX_STATIC_READY_SECONDS: float = 4.0
+    PROJECT_VALIDATION_TIMEOUT_SECONDS: int = 60
 
     CHROME_BINARY: str = "/usr/bin/google-chrome"
     CHROME_DEBUG_PORT: int = 9222
-    CHROME_PROFILE_PATH: Path = Path("/tmp/vortax-chrome-profile")
+    CHROME_PROFILE_PATH: Path = Path("/dev/shm/vortax-chrome-profile")
 
     ENABLE_DESKTOP_AUTOMATION: bool = True
     REQUIRE_CONFIRMATION_FOR_DESKTOP: bool = True
 
-    DATABASE_BASE_PATH: Path = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados")
+    DATABASE_BASE_PATH: Path = DEFAULT_DATABASE_BASE_PATH
     DATABASE_EXTENSION: str = ".sqlite"
 
     class Config:
@@ -65,6 +70,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings(_env_file=PROJECT_ROOT / ".env")
     settings.WORKSPACE_PATH.mkdir(parents=True, exist_ok=True)
+    settings.RUNTIME_PATH.mkdir(parents=True, exist_ok=True)
+    settings.CHROME_PROFILE_PATH.mkdir(parents=True, exist_ok=True)
     return settings
 
 

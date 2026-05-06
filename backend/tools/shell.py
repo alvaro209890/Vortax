@@ -1,13 +1,17 @@
 import asyncio
-import contextlib
+import errno
+import fcntl
 import os
+import pty
 import re
 import signal
 import subprocess
+import termios
 from pathlib import Path
 from typing import Any
 
 from config import settings
+from services.project_files import missing_local_asset_refs
 
 # ── Dev server registry (processos em background) ──────────────────────────
 # task_id -> {"process": Popen, "port": int, "url": str, "cwd": str}
@@ -85,6 +89,14 @@ VERTEX_PROGRESS_PATTERNS = [
     (re.compile(r"\b(verificando|validando|checando|chequeando)\b", re.IGNORECASE), "validating"),
 ]
 
+VERTEX_SIMULATED_PROGRESS = [
+    ("planning", "Analisando o pedido e separando as partes do projeto."),
+    ("creating", "Montando a estrutura de pastas e arquivos."),
+    ("writing_file", "Escrevendo os arquivos principais da interface."),
+    ("editing", "Ajustando estilos, textos e interacoes."),
+    ("validating", "Preparando o projeto para validacao local."),
+]
+
 # ── Interactive prompt detection ────────────────────────────────────────────
 # Detecta quando um comando faz uma pergunta que precisa de resposta.
 # Exemplos: "Qual framework quer usar?", "Continue? [y/N]", "Digite o nome:"
@@ -131,6 +143,19 @@ PORT_DETECTION_PATTERNS = [
     re.compile(r"port\s*(\d{4,5})", re.IGNORECASE),
     re.compile(r"listening\s+on\s+.*?:(\d{4,5})", re.IGNORECASE),
 ]
+LOCAL_URL_PATTERN = re.compile(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:/[^\s\"'<>)]*)?", re.IGNORECASE)
+OSC_ESCAPE_PATTERN = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)")
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+SPINNER_CHARS = set("◔◐◑◕●○◌⠁⠂⠄⠈⠐⠠⠤⠦⠧⠇⠏⠋⠙⠹⠸⠼⠴⠦⠧⠇")
+CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+TUI_ARTIFACT_PATTERNS = [
+    re.compile(r"^\??forshortcuts", re.IGNORECASE),
+    re.compile(r"^esctointerrupt", re.IGNORECASE),
+    re.compile(r"vertex-api\.cursar\.space.*painel", re.IGNORECASE),
+    re.compile(r"^8;;", re.IGNORECASE),
+    re.compile(r"^\d+;.*vertex", re.IGNORECASE),
+    re.compile(r"^;?id=", re.IGNORECASE),
+]
 
 
 def _is_dev_server_command(command: str) -> bool:
@@ -150,6 +175,124 @@ def _extract_port_from_output(output: str) -> int | None:
             if 1024 <= port <= 65535:
                 return port
     return None
+
+
+def _extract_local_urls(output: str) -> list[str]:
+    urls = []
+    seen = set()
+    for match in LOCAL_URL_PATTERN.finditer(output):
+        url = match.group(0).rstrip(".,;").replace("://0.0.0.0:", "://127.0.0.1:")
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls[:10]
+
+
+def _clean_terminal_text(text: str) -> str:
+    cleaned = OSC_ESCAPE_PATTERN.sub("", text)
+    cleaned = ANSI_ESCAPE_PATTERN.sub("", cleaned)
+    cleaned = cleaned.replace("\x00", "").replace("\x07", "")
+    return cleaned
+
+
+def _clean_terminal_line(line: str) -> str:
+    cleaned = _clean_terminal_text(line).replace("\xa0", " ")
+    cleaned = CONTROL_CHAR_PATTERN.sub("", cleaned)
+    cleaned = cleaned.rstrip()
+    if any(pattern.search(cleaned.strip()) for pattern in TUI_ARTIFACT_PATTERNS):
+        return ""
+    return cleaned
+
+
+def _display_terminal_line(line: str) -> str:
+    cleaned = _clean_terminal_line(line)
+    if not cleaned.strip():
+        return ""
+    body = cleaned.lstrip(" ")
+    had_spinner = False
+    while body and body[0] in SPINNER_CHARS:
+        had_spinner = True
+        body = body[1:].lstrip(" ")
+    if had_spinner:
+        return body.rstrip()
+    return cleaned
+
+
+def _is_spinner_noise(line: str) -> bool:
+    stripped = _display_terminal_line(line).strip()
+    if not stripped:
+        return True
+    if all((char in SPINNER_CHARS or char.isspace()) for char in stripped):
+        return True
+    without_spinner = "".join(char for char in stripped if char not in SPINNER_CHARS).strip()
+    if not without_spinner:
+        return True
+    if len(without_spinner) <= 2 and any(char in SPINNER_CHARS for char in line):
+        return True
+    return False
+
+
+def _is_duplicate_terminal_line(lines: list[dict[str, str]], line: str) -> bool:
+    if not lines:
+        return False
+    previous = lines[-1].get("line", "")
+    if previous == line:
+        return True
+    status_line = re.compile(r"^(aplicando|pensando|carregando|processando|executando)[. …]*$", re.IGNORECASE)
+    return bool(status_line.match(previous) and status_line.match(line))
+
+
+class _TerminalTextFilter:
+    """Remove sequencias ANSI/OSC mesmo quando chegam quebradas em chunks do PTY."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def feed(self, text: str) -> str:
+        text = self._pending + text
+        self._pending = ""
+        output: list[str] = []
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char != "\x1b":
+                output.append(char)
+                index += 1
+                continue
+
+            if index + 1 >= len(text):
+                self._pending = text[index:]
+                break
+
+            next_char = text[index + 1]
+            if next_char == "]":
+                bell = text.find("\x07", index + 2)
+                st = text.find("\x1b\\", index + 2)
+                terminators = [pos for pos in (bell, st) if pos != -1]
+                if not terminators:
+                    self._pending = text[index:]
+                    break
+                end = min(terminators)
+                index = end + (2 if end == st else 1)
+                continue
+
+            if next_char == "[":
+                match = re.match(r"\x1B\[[0-?]*[ -/]*[@-~]", text[index:])
+                if not match:
+                    self._pending = text[index:]
+                    break
+                index += match.end()
+                continue
+
+            index += 2
+
+        cleaned = "".join(output)
+        return cleaned.replace("\x00", "").replace("\x07", "")
+
+
+def _terminal_frame_interval() -> float:
+    value = float(getattr(settings, "STREAM_TERMINAL_INTERVAL", 0.75) or 0.75)
+    return max(value, 0.35)
 
 
 def _build_file_summary(cwd: Path) -> dict[str, Any]:
@@ -217,11 +360,37 @@ def _shell_error(message: str) -> dict[str, Any]:
 
 def _extract_command(cmd: str) -> str:
     """Extrai o primeiro comando de uma string (o que está antes do primeiro espaço)."""
-    cmd = cmd.strip()
+    cmd = _normalize_shell_command(cmd)
     for prefix in ("cd workspace && ", "cd ./workspace && ", "cd /workspace && "):
         if cmd.startswith(prefix):
             cmd = cmd[len(prefix):]
+    cd_match = re.match(r"^cd\s+([A-Za-z0-9_./-]+)\s*&&\s*(.+)$", cmd)
+    if cd_match:
+        cd_path = Path(cd_match.group(1))
+        if not cd_path.is_absolute() and ".." not in cd_path.parts:
+            cmd = cd_match.group(2).strip()
     return cmd.split()[0] if cmd.split() else ""
+
+
+def _normalize_shell_command(cmd: str) -> str:
+    """Normaliza wrappers comuns que atrapalham o executor seguro.
+
+    O proprio run_shell mantem dev servers vivos em background. Por isso comandos
+    gerados como "nohup npm run dev &" ou "cd app && python -m http.server &"
+    devem virar processos foreground registrados pelo Vortax.
+    """
+    normalized = str(cmd or "").strip()
+    if normalized.endswith("&"):
+        normalized = normalized[:-1].rstrip()
+
+    cd_match = re.match(r"^(cd\s+[A-Za-z0-9_./-]+\s*&&\s*)nohup\s+(.+)$", normalized)
+    if cd_match:
+        return cd_match.group(1) + cd_match.group(2).strip()
+
+    if normalized.startswith("nohup "):
+        return normalized[len("nohup ") :].strip()
+
+    return normalized
 
 
 def _is_whitelisted(executable: str) -> bool:
@@ -245,8 +414,12 @@ def _is_vertex_executable(executable: str) -> bool:
     return executable == "vertex"
 
 
+def _is_noninteractive_vertex_command(command: str) -> bool:
+    return bool(re.search(r"(^|\s)(-p|--print)(\s|$)", command))
+
+
 def _project_dir(task_id: str | None) -> Path:
-    """Retorna o diretório do projeto dentro da workspace para um task_id."""
+    """Retorna o diretório persistente de projetos para um task_id."""
     if task_id:
         project = settings.WORKSPACE_PATH / task_id
     else:
@@ -292,28 +465,82 @@ async def _publish_ai_exchange(
     )
 
 
-async def _stream_vertex_screenshots(task_id: str, bus: Any, process: subprocess.Popen) -> None:
-    interval = max(float(getattr(settings, "STREAM_SCREENSHOT_INTERVAL", 2) or 2), 1.0)
-    while process.poll() is None:
-        try:
-            from tools.browser import browser_tool
+async def _publish_vertex_terminal_frame(
+    task_id: str,
+    bus: Any,
+    terminal_lines: list[dict[str, str]],
+    *,
+    status: str = "running",
+    current_stage: str | None = None,
+) -> None:
+    if not bus or not task_id:
+        return
+    await bus.publish(
+        task_id,
+        "vertex_progress",
+        {
+            "stage": current_stage or ("done" if status == "done" else "executing"),
+            "message": (
+                "Vertex concluiu a execucao."
+                if status == "done"
+                else "Vertex encontrou um erro."
+                if status == "error"
+                else "Vertex esta executando a tarefa."
+            ),
+            "status": status,
+            "current_stage": current_stage,
+            "line_count": len(terminal_lines),
+        },
+    )
 
-            frame = await browser_tool.screenshot(task_id=task_id)
-            await bus.publish(
-                task_id,
-                "screen_frame",
-                {
-                    "caption": "Vertex trabalhando - tela atual",
-                    "title": frame.get("title"),
-                    "url": frame.get("url"),
-                    "image_base64": frame.get("image_base64"),
-                },
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
+
+def _set_pty_size(fd: int, rows: int = 32, cols: int = 120) -> None:
+    try:
+        import struct
+
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    except OSError:
+        pass
+
+
+def _make_vertex_preexec(slave_fd: int):
+    def _preexec() -> None:
+        os.setsid()
+        try:
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        except OSError:
             pass
-        await asyncio.sleep(interval)
+
+    return _preexec
+
+
+def _process_group_commands(pgid: int) -> list[str]:
+    try:
+        output = subprocess.check_output(["ps", "-eo", "pid,pgid,cmd"], text=True, timeout=1.5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    commands: list[str] = []
+    for line in output.splitlines()[1:]:
+        parts = line.strip().split(maxsplit=2)
+        if len(parts) == 3 and parts[1].isdigit() and int(parts[1]) == pgid:
+            commands.append(parts[2])
+    return commands
+
+
+def _looks_like_foreground_dev_server(command: str) -> bool:
+    lowered = command.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "python3 -m http.server",
+            "python -m http.server",
+            "vite --",
+            "vite ",
+            "npm run dev",
+            "npm start",
+            "next dev",
+        )
+    )
 
 
 def _parse_vertex_progress(line: str) -> dict[str, Any] | None:
@@ -424,6 +651,362 @@ async def _ask_deepseek_for_response(
         return None
 
 
+async def _run_vertex_pty(
+    cmd: str,
+    *,
+    cwd_path: Path,
+    env: dict[str, str],
+    timeout: float,
+    task_id: str | None,
+    bus: Any,
+    max_interactive_rounds: int,
+) -> dict[str, Any]:
+    master_fd, slave_fd = pty.openpty()
+    _set_pty_size(slave_fd)
+    env = dict(env)
+    env.setdefault("TERM", "xterm-256color")
+    env.setdefault("COLORTERM", "truecolor")
+    env.setdefault("COLUMNS", "120")
+    env.setdefault("LINES", "32")
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            shell=True,
+            cwd=str(cwd_path),
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            text=False,
+            env=env,
+            preexec_fn=_make_vertex_preexec(slave_fd),
+            close_fds=True,
+        )
+    except OSError as exc:
+        os.close(master_fd)
+        os.close(slave_fd)
+        return _shell_error(f"Erro ao executar comando: {exc}")
+
+    os.close(slave_fd)
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    terminal_lines: list[dict[str, str]] = []
+    stdout_lines: list[str] = []
+    latest_vertex_stage: str | None = None
+    interactive_rounds = 0
+    current_line = ""
+    recent_text = ""
+    stopped = False
+    server_detected_success = False
+    static_project_detected_success = False
+    static_project_incomplete = False
+    static_missing_assets: list[str] = []
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    last_terminal_frame_at = 0.0
+    last_server_check_at = 0.0
+    last_simulated_progress_at = 0.0
+    simulated_progress_index = -1
+    last_output_at = loop.time()
+    static_snapshot: tuple[int, int] | None = None
+    static_snapshot_since: float | None = None
+    terminal_filter = _TerminalTextFilter()
+
+    if bus and task_id:
+        await _publish_ai_exchange(
+            task_id,
+            bus,
+            actor="vertex",
+            target="deepseek",
+            message="Vertex iniciou em uma CLI com TTY real.",
+            kind="start",
+        )
+        await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running")
+
+    def _check_stopped() -> bool:
+        nonlocal stopped
+        if stopped:
+            return True
+        if task_id:
+            from services.registry import task_store
+
+            if task_store.is_stopped(task_id):
+                stopped = True
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except OSError:
+                    pass
+                return True
+        return False
+
+    def _frame_lines() -> list[dict[str, str]]:
+        display_line = _display_terminal_line(current_line)
+        if display_line and not _is_spinner_noise(display_line):
+            return [*terminal_lines, {"stream": "stdout", "line": display_line}]
+        return terminal_lines
+
+    async def _publish_terminal_frame(*, force: bool = False, status: str = "running") -> None:
+        nonlocal last_terminal_frame_at
+        if status == "running":
+            return
+        now = loop.time()
+        if not force and now - last_terminal_frame_at < _terminal_frame_interval():
+            return
+        last_terminal_frame_at = now
+        await _publish_vertex_terminal_frame(
+            task_id or "",
+            bus,
+            _frame_lines(),
+            status=status,
+            current_stage=latest_vertex_stage,
+        )
+
+    async def _publish_terminal_line(line: str) -> None:
+        nonlocal latest_vertex_stage, last_output_at
+        stripped = _display_terminal_line(line)
+        if not stripped or _is_spinner_noise(stripped):
+            return
+        if _is_duplicate_terminal_line(terminal_lines, stripped):
+            return
+        last_output_at = loop.time()
+        stdout_lines.append(stripped + "\n")
+        terminal_lines.append({"stream": "stdout", "line": stripped})
+        if bus and task_id:
+            await bus.publish(task_id, "shell_stdout", {"line": stripped})
+            progress = _parse_vertex_progress(stripped)
+            if progress:
+                latest_vertex_stage = str(progress.get("stage") or "")
+                await bus.publish(task_id, "vertex_progress", progress)
+                await _publish_ai_exchange(
+                    task_id,
+                    bus,
+                    actor="vertex",
+                    target="deepseek",
+                    message=progress["message"],
+                    kind="progress",
+                )
+            await _publish_terminal_frame(force=False)
+
+    async def _publish_simulated_progress(*, force: bool = False) -> None:
+        nonlocal latest_vertex_stage, last_simulated_progress_at, simulated_progress_index
+        if not bus or not task_id:
+            return
+        now = loop.time()
+        if not force and now - last_simulated_progress_at < 3.0:
+            return
+        last_simulated_progress_at = now
+        elapsed = max(0, int(now - (deadline - timeout)))
+        target_index = min(elapsed // 8, len(VERTEX_SIMULATED_PROGRESS) - 1)
+        if target_index <= simulated_progress_index and not force:
+            return
+        simulated_progress_index = target_index
+        stage, message = VERTEX_SIMULATED_PROGRESS[target_index]
+        latest_vertex_stage = stage
+        await bus.publish(
+            task_id,
+            "vertex_progress",
+            {
+                "stage": stage,
+                "message": message,
+                "status": "running",
+                "simulated": True,
+            },
+        )
+
+    async def _consume_terminal_chunk(chunk: str) -> None:
+        nonlocal current_line
+        for char in chunk:
+            if char == "\r":
+                if current_line.strip():
+                    await _publish_terminal_line(current_line)
+                current_line = ""
+                continue
+            if char == "\n":
+                await _publish_terminal_line(current_line)
+                current_line = ""
+                continue
+            if char == "\b":
+                current_line = current_line[:-1]
+                continue
+            current_line += char
+            if len(current_line) > 400:
+                current_line = current_line[-400:]
+
+    async def _interrupt_vertex_group(pgid: int) -> None:
+        try:
+            os.write(master_fd, b"\x03")
+        except OSError:
+            pass
+        await asyncio.sleep(0.2)
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(pgid, signal.SIGINT)
+        except OSError:
+            pass
+
+    try:
+        while process.poll() is None:
+            if _check_stopped():
+                break
+            if loop.time() > deadline:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except OSError:
+                    process.kill()
+                break
+
+            now = loop.time()
+            await _publish_simulated_progress()
+            if now - last_server_check_at >= 1.0:
+                last_server_check_at = now
+                try:
+                    pgid = os.getpgid(process.pid)
+                except OSError:
+                    pgid = -1
+                file_summary = _build_file_summary(cwd_path)
+                if pgid > 0 and file_summary.get("has_index_html"):
+                    commands = _process_group_commands(pgid)
+                    if any(_looks_like_foreground_dev_server(command) for command in commands):
+                        server_detected_success = True
+                        await _publish_terminal_line(
+                            "Servidor local em foreground detectado; Vortax encerrou o processo e usara o preview interno."
+                        )
+                        await _interrupt_vertex_group(pgid)
+                        break
+                    if not file_summary.get("has_package_json"):
+                        snapshot = (
+                            int(file_summary.get("file_count") or 0),
+                            int(file_summary.get("total_size") or 0),
+                        )
+                        if snapshot != static_snapshot:
+                            static_snapshot = snapshot
+                            static_snapshot_since = now
+                        stable_for = now - (static_snapshot_since or now)
+                        quiet_for = now - last_output_at
+                        ready_seconds = float(getattr(settings, "VERTEX_STATIC_READY_SECONDS", 4.0) or 4.0)
+                        incomplete_seconds = float(getattr(settings, "VERTEX_STATIC_INCOMPLETE_SECONDS", 45.0) or 45.0)
+                        if stable_for >= ready_seconds and quiet_for >= min(ready_seconds, 2.0):
+                            static_missing_assets = missing_local_asset_refs(cwd_path)
+                            if static_missing_assets and stable_for < incomplete_seconds:
+                                await _publish_simulated_progress(force=True)
+                                continue
+                            if static_missing_assets:
+                                static_project_incomplete = True
+                                await _publish_terminal_line(
+                                    "Projeto estatico incompleto: ha referencias locais sem arquivo. Vortax pedira correcao ao Vertex."
+                                )
+                                await _interrupt_vertex_group(pgid)
+                                break
+                            static_project_detected_success = True
+                            await _publish_terminal_line(
+                                "Projeto estatico detectado; Vortax encerrou o Vertex e iniciara a validacao no Chrome."
+                            )
+                            await _interrupt_vertex_group(pgid)
+                            break
+
+            try:
+                data = os.read(master_fd, 4096)
+            except BlockingIOError:
+                await asyncio.sleep(0.05)
+                continue
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    break
+                raise
+
+            if not data:
+                await asyncio.sleep(0.05)
+                continue
+
+            chunk = terminal_filter.feed(data.decode("utf-8", errors="replace"))
+            if not chunk:
+                continue
+            recent_text = (recent_text + chunk)[-4000:]
+            await _consume_terminal_chunk(chunk)
+            await _publish_terminal_frame(force=False)
+
+            if interactive_rounds < max_interactive_rounds and _detect_interactive_prompt(recent_text):
+                interactive_rounds += 1
+                prompt_snapshot = "\n".join([line for line in recent_text.split("\n") if line.strip()][-5:])
+                if bus and task_id:
+                    await bus.publish(
+                        task_id,
+                        "shell_interactive_prompt",
+                        {"prompt": prompt_snapshot[:500], "round": interactive_rounds},
+                    )
+                    await _publish_ai_exchange(
+                        task_id,
+                        bus,
+                        actor="vertex",
+                        target="deepseek",
+                        message=prompt_snapshot,
+                        kind="prompt",
+                    )
+                response = await _ask_deepseek_for_response(prompt_snapshot, cmd, task_id or "", bus)
+                if response and process.poll() is None:
+                    os.write(master_fd, (response + "\n").encode("utf-8"))
+                    recent_text = ""
+
+        if current_line.strip():
+            await _publish_terminal_line(current_line)
+
+        try:
+            await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(None, process.wait), timeout=5.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await asyncio.get_event_loop().run_in_executor(None, process.wait)
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+    returncode = process.returncode if process.returncode is not None else -1
+    if bus and task_id:
+        await _publish_vertex_terminal_frame(
+            task_id,
+            bus,
+            _frame_lines(),
+            status="done" if returncode == 0 or server_detected_success or static_project_detected_success else "error",
+            current_stage=latest_vertex_stage,
+        )
+
+    stdout_full = "".join(stdout_lines)
+    file_summary = _build_file_summary(cwd_path)
+    static_missing_assets = static_missing_assets or missing_local_asset_refs(cwd_path)
+    success = (
+        not static_project_incomplete
+        and not static_missing_assets
+        and (
+            returncode == 0
+            or ((server_detected_success or static_project_detected_success) and bool(file_summary.get("has_index_html")))
+        )
+    )
+    result = {
+        "success": success,
+        "stdout": stdout_full[:3000],
+        "stderr": "",
+        "returncode": 0 if (server_detected_success or static_project_detected_success) and success else returncode,
+        "stdout_truncated": len(stdout_full) > 3000,
+        "stderr_truncated": False,
+        "local_urls": _extract_local_urls(stdout_full),
+        "file_summary": file_summary,
+        "tty": True,
+    }
+    if server_detected_success:
+        result["foreground_server_detected"] = True
+    if static_project_detected_success:
+        result["static_project_detected"] = True
+    if static_missing_assets:
+        result["missing_assets"] = static_missing_assets
+        result["stderr"] = "Referencias locais ausentes: " + ", ".join(static_missing_assets)
+    if interactive_rounds > 0:
+        result["interactive_rounds"] = interactive_rounds
+    return result
+
+
 async def run_shell(
     command: str,
     task_id: str | None = None,
@@ -443,6 +1026,7 @@ async def run_shell(
     cmd = str(command).strip()
     if not cmd:
         return _shell_error("Comando vazio.")
+    cmd = _normalize_shell_command(cmd)
 
     executable = _extract_command(cmd)
     if not executable:
@@ -460,19 +1044,24 @@ async def run_shell(
 
     is_rm = BLOCKED_RM_PATTERN.search(cmd)
     if is_rm:
-        workspace_str = str(settings.WORKSPACE_PATH.resolve())
-        if workspace_str not in cmd:
+        projects_root = str(settings.WORKSPACE_PATH.resolve())
+        if projects_root not in cmd:
             return _shell_error(
-                "rm so e permitido dentro da workspace. "
-                f"Use caminhos dentro de {workspace_str}"
+                "rm so e permitido dentro da pasta de projetos. "
+                f"Use caminhos dentro de {projects_root}"
             )
 
     cwd = str(_project_dir(task_id))
     cwd_path = _project_dir(task_id)
     is_vertex = _is_vertex_executable(executable)
-    is_dev_server = _is_dev_server_command(cmd)
+    is_dev_server = False if is_vertex else _is_dev_server_command(cmd)
 
     env = os.environ.copy()
+    runtime_tmp = settings.RUNTIME_PATH / "tmp"
+    runtime_tmp.mkdir(parents=True, exist_ok=True)
+    env.setdefault("TMPDIR", str(runtime_tmp))
+    env.setdefault("TEMP", str(runtime_tmp))
+    env.setdefault("TMP", str(runtime_tmp))
     if is_vertex:
         env["VERTEX_OUTPUT_DIR"] = cwd
     # Para dev servers, adiciona CI=true e FORCE_COLOR=0 para evitar prompts
@@ -482,6 +1071,17 @@ async def run_shell(
         env["BROWSER"] = "none"  # Evita abrir navegador automatico (create-react-app etc)
 
     timeout = _shell_timeout(cmd)
+    if is_vertex:
+        return await _run_vertex_pty(
+            cmd,
+            cwd_path=cwd_path,
+            env=env,
+            timeout=timeout,
+            task_id=task_id,
+            bus=bus,
+            max_interactive_rounds=max_interactive_rounds,
+        )
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -498,7 +1098,8 @@ async def run_shell(
     except OSError as exc:
         return _shell_error(f"Erro ao executar comando: {exc}")
 
-    screenshot_task: asyncio.Task | None = None
+    terminal_lines: list[dict[str, str]] = []
+    latest_vertex_stage: str | None = None
     if is_vertex and bus and task_id:
         await _publish_ai_exchange(
             task_id,
@@ -508,7 +1109,7 @@ async def run_shell(
             message="Vertex iniciou a execucao local da tarefa.",
             kind="start",
         )
-        screenshot_task = asyncio.create_task(_stream_vertex_screenshots(task_id, bus, process))
+        await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running")
 
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
@@ -536,13 +1137,16 @@ async def run_shell(
         return False
 
     async def _publish_line(line: str, event_type: str) -> None:
-        nonlocal detected_port
+        nonlocal detected_port, latest_vertex_stage
         stripped = line.rstrip("\n\r")
         if not stripped:
             return
         if not bus or not task_id:
             return
         await bus.publish(task_id, event_type, {"line": stripped})
+        if is_vertex:
+            stream = "stderr" if event_type == "shell_stderr" else "stdout"
+            terminal_lines.append({"stream": stream, "line": stripped})
 
         # Detecta porta do dev server
         if is_dev_server and detected_port is None and event_type == "shell_stdout":
@@ -551,6 +1155,7 @@ async def run_shell(
         if is_vertex and event_type == "shell_stdout":
             progress = _parse_vertex_progress(stripped)
             if progress:
+                latest_vertex_stage = str(progress.get("stage") or "")
                 await bus.publish(task_id, "vertex_progress", progress)
                 await _publish_ai_exchange(
                     task_id,
@@ -560,6 +1165,8 @@ async def run_shell(
                     message=progress["message"],
                     kind="progress",
                 )
+        if is_vertex:
+            await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running", current_stage=latest_vertex_stage)
 
     async def _drain_and_interact(stream, lines_list: list[str], event_type: str) -> None:
         """Le um stream com detecção de prompts interativos e auto-resposta."""
@@ -721,6 +1328,7 @@ async def run_shell(
             "is_dev_server": True,
             "dev_server_url": dev_url,
             "dev_server_port": detected_port,
+            "local_urls": _extract_local_urls("".join(stdout_lines + stderr_lines) + "\n" + dev_url),
             "file_summary": file_summary,
         }
 
@@ -749,12 +1357,15 @@ async def run_shell(
         process.kill()
         await loop.run_in_executor(None, process.wait)
 
-    if screenshot_task:
-        screenshot_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await screenshot_task
-
     returncode = process.returncode if process.returncode is not None else -1
+    if is_vertex and bus and task_id:
+        await _publish_vertex_terminal_frame(
+            task_id,
+            bus,
+            terminal_lines,
+            status="done" if returncode == 0 else "error",
+            current_stage=latest_vertex_stage,
+        )
     stdout_full = "".join(stdout_lines)
     stderr_full = "".join(stderr_lines)
     stdout_truncated = len(stdout_full) > 3000
@@ -772,6 +1383,7 @@ async def run_shell(
         "returncode": returncode,
         "stdout_truncated": stdout_truncated,
         "stderr_truncated": stderr_truncated,
+        "local_urls": _extract_local_urls(stdout_full + "\n" + stderr_full),
         "file_summary": file_summary,
     }
     if interactive_rounds > 0:

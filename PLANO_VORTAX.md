@@ -1264,6 +1264,7 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 2.9 | 06/05/2026 | Validação pós-Vertex generalizada para qualquer projeto de código (`project_validation_*`): Python com `py_compile`/`unittest`, Node/JS com `node --check`/build/test quando aplicável e checagem de assets HTML; runner bloqueia `finish` quando `web_validation` ou `project_validation` falha e manda o Vertex corrigir os bugs; prompt do DeepSeek reforçado para ciclo criar → validar → corrigir → validar; aba Atividade filtrada para mostrar só marcos úteis; stream do Vertex ganhou legenda estimada, trilha de progresso e cartão de status de validação |
 | 2.8 | 06/05/2026 | Botao de parar tarefa durante execucao com `POST /api/control/{task_id}/stop`; interrupcao de subprocessos shell/vertex/dev-server via `killpg`; checagem `is_stopped` no loop de drain do shell e entre iteracoes do runner; preview automatico no Chrome quando `index.html` e gerado (`_open_static_preview_if_available`); componente `CollapsiblePanel` reutilizavel refatorando FileList/SourceList/ScreenView/ActionTimeline; `usePersistentState` hook para lembrar estado collapsed dos paineis; favicon e apple-touch-icon no index.html |
 | 2.7 | 06/05/2026 | Preview de projetos web em iframe embutido no painel inspetor (`PreviewPanel`); servidores de desenvolvimento (`npm run dev`, `npx vite`, `python -m http.server`) executados em background com detecção de porta e proxy local; resumo estruturado de arquivos (`file_summary`) como parte do resultado do `shell_run` em vez de truncamento bruto; evento `dev_server_started` via WebSocket |
 | 2.6 | 06/05/2026 | Terminal do Vertex integrado diretamente no card AgentActivity com barra de progresso, stage pill, arquivo atual, linhas stdout/stderr e toggle collapse; download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download` com botão destacado no FileList; cache de pesquisa por conversa antes de chamar Google novamente; verificação cruzada automática para preço, versão, documentação, notícia, comparação e dados sensíveis |
@@ -1329,6 +1330,11 @@ sudo systemctl restart vortax-backend
 - [x] ShellTool com `shell_run` no TOOLS_SCHEMA do DeepSeek
 - [x] Download ZIP de arquivos por conversa via `GET /api/tasks/{task_id}/download`
 - [x] Botão de download ZIP no frontend por conversa com todos os arquivos gerados
+- [x] Validação visual obrigatória para sites criados pelo Vertex
+- [x] Validação geral pós-Vertex para Python, Node/JS, HTML estático e projetos genéricos
+- [x] Correção automática de bugs: se validação falha, o agente não finaliza e manda o Vertex corrigir
+- [x] Atividade enxuta no frontend, removendo eventos repetitivos e ruído técnico da timeline
+- [x] Stream do Vertex com legenda estimada do que está acontecendo e status de validação
 
 ### Vertex CLI — Motor de Desenvolvimento de Software
 
@@ -1340,11 +1346,13 @@ O Vertex é o motor que permite ao Vortax desenvolver software, sites e scripts 
 **Como o Vortax invoca o Vertex:**
 
 1. Usuário pede: "Crie um sistema de login em Python"
-2. Agente do Vortax usa `shell_run` com `cwd=./workspace`
-3. Executa: `vertex "Crie um sistema de login em Python com Flask e SQLite, salve em workspace/" --output-dir ./workspace/login-system`
+2. Agente do Vortax usa `shell_run` dentro de `WORKSPACE_PATH/<task_id>/`
+3. Executa: `vertex "Crie um sistema de login em Python com Flask e SQLite"`
 4. Vertex CLI processa o pedido e gera todos os arquivos do projeto
-5. Vortax captura o resultado e lista os arquivos no painel
-6. Usuário pode baixar os arquivos individualmente ou como ZIP
+5. Vortax captura o resultado, indexa arquivos e lista projetos/arquivos no painel
+6. Vortax executa `project_validation` e, para sites, também `web_validation`
+7. Se houver bug, o runner impede `finish`, descreve os problemas no histórico e manda o Vertex corrigir no projeto atual
+8. Usuário pode baixar os arquivos individualmente ou como ZIP quando a validação passa
 
 **O Vertex CLI é um comando global do sistema.** Basta abrir o terminal e digitar `vertex` para usar interativamente, ou `vertex "instrução"` para execução direta. No contexto do Vortax, o agente faz essa chamada automaticamente via `shell_run`.
 
@@ -1355,11 +1363,12 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - **Whitelist:** 45 comandos permitidos: `python3`, `node`, `npm`, `npx`, `vertex`, `git`, `curl`, `wget`, `ls`, `cat`, `mkdir`, `cp`, `mv`, `rm`, `grep`, `find`, `echo`, `pwd`, `wc`, `head`, `tail`, `sort`, `uniq`, `awk`, `sed`, `cut`, `tr`, `df`, `free`, `uname`, `which`, `whereis`, `dirname`, `basename`, `readlink`, `rmdir`, `pandoc`, `ffmpeg`, `libreoffice`, `convert`, `clear`, `date`, `tee`, `xargs`, `true`, `false`.
 - **Bloqueio de padrões perigosos:** `sudo`, `chmod`, `chown`, `systemctl`, `service`, `kill`, `shutdown`, `reboot`, `dd`, `mkfs`, `rm -rf /`, `rm -rf ~`, escrita em `/dev/`, `curl | bash`, `wget | sh`.
 - **Timeout:** 30s padrão, 300s para comandos `vertex` (configurável via `.env`).
-- **Workspace isolada:** todos os comandos rodam em `workspace/<task_id>/` — cada conversa tem seu próprio subdiretório.
+- **Workspace persistente por conversa:** todos os comandos rodam em `WORKSPACE_PATH/<task_id>/`. O padrão atual é `/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/Vortax/projetos/<task_id>/`.
 - **Streaming stdout/stderr:** usa `subprocess.Popen` e publica cada linha como evento `shell_stdout`/`shell_stderr` via WebSocket em tempo real. O frontend renderiza as linhas em um componente `ShellOutput` estilo terminal inline no chat.
 - **Evento `files_created`:** após cada `shell_run`, o backend lista os arquivos no diretório da conversa e publica o evento `files_created` com caminhos e tamanhos, atualizando instantaneamente o painel de arquivos no frontend.
 - **Shell interativo com follow-up:** detecta automaticamente prompts interativos (ex: "Qual framework?", "Continue? [y/N]", "Digite o nome:") usando 14 padrões regex. Quando detectado, o shell publica `shell_interactive_prompt` e consulta o DeepSeek para gerar uma resposta automática, que é enviada ao stdin do processo. Máximo de 3 rounds interativos por comando.
-- **Progresso estruturado do Vertex:** faz parse das linhas de stdout do Vertex CLI com 10 padrões de estágio (planning, writing_file, creating, installing, executing, editing, reading_file, configuring, validating, done). Extrai nome de arquivo quando disponível. Publica eventos `vertex_progress` que o frontend renderiza como barra de progresso com spinner e nome do arquivo sendo criado.
+- **Progresso estruturado do Vertex:** faz parse das linhas de stdout do Vertex CLI com 10 padrões de estágio (planning, writing_file, creating, installing, executing, editing, reading_file, configuring, validating, done). Extrai nome de arquivo quando disponível. Publica eventos `vertex_progress` que o frontend renderiza com etapa atual, legenda estimada, trilha de progresso e status de validação.
+- **Validação geral pós-Vertex:** `services/project_validation.py` publica `project_validation_started`, `project_validation_step` e `project_validation_result`. Checa arquivos gerados, assets locais de HTML, sintaxe Python, testes Python, sintaxe JS, build e testes Node quando aplicável.
 - **rm restrito:** só permite `rm` se o caminho contiver o diretório da workspace.
 - **Saída truncada com resumo inteligente:** stdout limitado a 3000 chars, stderr a 500 chars — mas quando truncado, o resultado inclui flags `stdout_truncated`/`stderr_truncated` e um `file_summary` estruturado contendo contagem de arquivos, tipo de projeto (static_web, react_app, python, etc.), extensões, arquivos principais e diretórios top-level. O DeepSeek recebe esse resumo como parte do `tool_result`, permitindo que ele entenda o que foi gerado mesmo quando a saída bruta foi cortada.
 - **Servidores de desenvolvimento em background:** detecta automaticamente comandos que iniciam servidores (`npm run dev`, `npx vite`, `npx serve`, `python -m http.server`, `yarn dev`, `php -S`, etc.) via 6 padrões regex. Quando detectado:
@@ -1389,14 +1398,35 @@ Implementado em 06/05/2026 no arquivo `backend/tools/shell.py`:
 - Isolamento por conversa: projetos criados em `workspace/<task_id>/`
 - Follow-up interativo: detectou pergunta "Qual nome do projeto?" e "Escolha: [a/b]" → DeepSeek respondeu automaticamente
 - Progresso do Vertex: parse correto de "Planejando...", "Criando arquivo src/main.py", "Instalando dependências...", "Tarefa concluída"
-- **Terminal integrado no AgentActivity:** o componente `VertexTerminal` é renderizado inline dentro do card de atividade do agente (`AgentActivity`), substituindo o `ShellOutput` standalone. O terminal mostra:
-  - **Barra de progresso:** 4 pontos (planning → creating → executing → done) com transições visuais.
-  - **Stage pill:** etiqueta colorida indicando o estágio atual (Planejando, Criando arquivo, Instalando, etc.).
-  - **Arquivo atual:** nome do arquivo sendo criado/editado pelo Vertex.
-  - **Linhas do terminal:** saída stdout/stderr em fonte monoespaçada com scroll automático.
-  - **Toggle collapse:** botão para expandir/recolher o terminal.
-  - **Contador de linhas:** mostra quantas linhas de output foram geradas.
-  - Integrado com `useVertexTerminal` hook que computa progresso, linhas e estado de execução a partir dos eventos WebSocket.
+- **Stream integrado no AgentActivity:** o componente `VertexProgressPanel` é renderizado inline dentro do card de atividade do agente. Ele mostra:
+  - **Etapa atual:** Planejando, Criando, Editando, Validando, Concluído ou Erro.
+  - **Legenda estimada:** texto curto explicando o que o Vertex provavelmente está fazendo naquele estágio.
+  - **Arquivo atual:** quando o parser identifica arquivo criado/editado.
+  - **Trilha de progresso:** sequência visual de estágios alcançados.
+  - **Status da validação:** aprovado, correção pendente ou bloqueado.
+  - **Lista compacta de eventos Vertex:** últimos marcos relevantes sem despejar stdout bruto na aba Atividade.
+
+### Validação Pós-Vertex e Correção Automática
+
+Implementado em 06/05/2026:
+
+- **Eventos novos:** `project_validation_started`, `project_validation_step`, `project_validation_result`.
+- **Validador geral:** `backend/services/project_validation.py` identifica perfil do projeto (`python`, `node`, `static_web`, `generic`, `empty`) a partir dos arquivos indexados.
+- **Python:** roda `python3 -m py_compile` nos arquivos `.py`; se existir `tests/`, roda `python3 -m unittest discover -s tests`.
+- **Node/JS:** roda `node --check` em arquivos `.js/.mjs/.cjs`; roda `npm run build` e `npm test` quando há scripts reais e dependências instaladas ou não necessárias.
+- **HTML estático:** reaproveita detector de assets locais ausentes (`href`/`src`) para evitar preview quebrado.
+- **Gating no runner:** `agent_runner.py` usa `_latest_vertex_quality_gate()` antes de aceitar `finish`. Se `project_validation` ou `web_validation` estiver `failed`, o runner adiciona uma instrução de controle no histórico e exige nova chamada `shell_run` com `vertex` para corrigir os bugs.
+- **Prompt do DeepSeek:** `deepseek_client.py` instrui o planner a observar `project_validation` para scripts, APIs, apps Node e outros códigos, e `web_validation` para sites.
+- **Compactação do resultado:** `tool_executor.compact_tool_result()` preserva status, motivo, bugs, warnings e perfil do projeto sem enviar logs grandes ao modelo.
+
+### Atividade e Stream
+
+Implementado em 06/05/2026:
+
+- `ActionTimeline` filtra `agent_progress`, `shell_stdout`, `shell_stderr`, `screen_frame`, `ai_exchange`, eventos de contexto e passos intermediários de validação.
+- A timeline mostra apenas marcos de alto sinal: arquivos gerados, erros, fontes, resposta final, servidor iniciado, resultado de validação e estágios importantes do Vertex.
+- Eventos repetidos consecutivos são compactados e a timeline mantém os últimos 24 marcos.
+- `ScreenView` mostra uma simulação de programação enquanto o Vertex trabalha antes do primeiro screenshot relevante, com legenda "Leitura estimada".
 
 ### BrowserTool + Planner JSON
 
@@ -1522,3 +1552,4 @@ Não reaproveitado agora:
 | 06/05/2026 | Terminal Vertex integrado no AgentActivity + Download ZIP | `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css`, `backend/api/tasks.py` | `npm run build` OK; VertexTerminal inline no card de atividade com barra de progresso, stage pill, linhas stdout/stderr; ZIP endpoint com streaming de bytes em memoria; botao de download no FileList com destaque visual |
 | 06/05/2026 | Preview iframe, dev servers em background e file_summary | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/api/files.py`, `backend/services/stream_contract.py`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; `python -m py_compile` OK; preview de index.html estatico e dev servers; 6 padroes de deteccao de dev server; 4 padroes de extracao de porta; file_summary com tipo de projeto, extensoes e arquivos principais |
 | 06/05/2026 | Interrupcao de tarefas + CollapsiblePanel + preview automatico no Chrome | `backend/api/control.py`, `backend/services/agent_runner.py`, `backend/tools/shell.py`, `backend/api/tasks.py`, `backend/tools/tool_executor.py`, `frontend/src/App.jsx`, `frontend/src/lib/api.js`, `frontend/src/index.css`, `frontend/src/components/CollapsiblePanel.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/components/SourceList.jsx`, `frontend/src/components/ScreenView.jsx`, `frontend/src/components/ActionTimeline.jsx`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/hooks/usePersistentState.js`, `frontend/index.html` | `npm run build` OK; `python -m py_compile` OK; botao Parar interrompe runner + shell + vertex + dev server; `_open_static_preview_if_available` navega Chrome para index.html gerado; CollapsiblePanel refatora 5 paineis; usePersistentState salva collapsed no localStorage; favicon adicionado |
+| 06/05/2026 | Validacao pos-Vertex geral, correcao automatica e stream refinado | `backend/services/project_validation.py`, `backend/services/agent_runner.py`, `backend/tools/tool_executor.py`, `backend/services/deepseek_client.py`, `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/ActionTimeline.jsx`, `frontend/src/components/ScreenView.jsx`, `frontend/src/index.css`, `backend/tests/test_project_validation.py`, `backend/tests/test_agent_history.py`, `backend/tests/test_vertex_stream.py` | `backend/.venv/bin/python -m unittest discover -s tests` OK (62 testes); `npm run build` OK; servicos `vortax-backend.service` e `vortax-frontend-dev.service` reiniciados e `/health` OK |

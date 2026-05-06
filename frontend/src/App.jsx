@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlus, StopCircle, Trash2 } from "lucide-react";
 
-import { AgentActivity, AiExchangePanel, VertexTerminal } from "./components/AgentActivity.jsx";
+import { AgentActivity, AiExchangePanel } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { MessageList } from "./components/MessageList.jsx";
-import { PreviewPanel } from "./components/PreviewPanel.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
@@ -328,10 +327,8 @@ export default function App() {
       inspector={
         <>
           <ScreenView events={currentEvents} connectionState={connectionState} />
-          <VertexTerminal events={currentEvents} />
           <AiExchangePanel events={currentEvents} />
           <ActionTimeline events={currentEvents} />
-          <PreviewPanel files={files} events={currentEvents} taskId={activeTaskId} />
           <SourceList error={taskError} loading={taskLoading} sources={sources} />
           <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />

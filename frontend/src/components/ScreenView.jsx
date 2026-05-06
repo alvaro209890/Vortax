@@ -1,14 +1,93 @@
-import { ChevronLeft, ChevronRight, Monitor, X } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Code2, Monitor, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
 function isVertexCommand(command) {
-  let text = String(command || "").trim();
-  for (const prefix of ["cd workspace && ", "cd ./workspace && ", "cd /workspace && "]) {
-    if (text.startsWith(prefix)) text = text.slice(prefix.length).trim();
-  }
+  let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
   return text.split(/\s+/)[0] === "vertex";
+}
+
+const stageLabels = {
+  starting: "Iniciando ambiente",
+  planning: "Planejando estrutura",
+  creating: "Criando projeto",
+  writing_file: "Escrevendo arquivos",
+  editing: "Ajustando interface",
+  installing: "Preparando dependências",
+  reading_file: "Lendo arquivos",
+  configuring: "Configurando projeto",
+  executing: "Executando Vertex",
+  validating: "Abrindo no navegador",
+  done: "Projeto pronto",
+  error: "Correção necessária",
+};
+
+const stageDescriptions = {
+  starting: "Abrindo Vertex e preparando a pasta da conversa.",
+  planning: "Estimando arquitetura, arquivos e próximos passos.",
+  creating: "Gerando estrutura inicial e entradas principais.",
+  writing_file: "Escrevendo código e recursos do projeto.",
+  editing: "Refinando implementação antes dos testes.",
+  installing: "Preparando dependências quando necessário.",
+  reading_file: "Revisando arquivos gerados para decidir ajustes.",
+  configuring: "Ajustando configurações, scripts ou integrações.",
+  executing: "Rodando comandos internos e observando a saída.",
+  validating: "Abrindo preview e executando validação local.",
+  done: "Entrega finalizada e resultado consolidado.",
+  error: "A validação encontrou problemas que precisam ser corrigidos.",
+};
+
+const simulatedFiles = ["index.html", "style.css", "script.js", "assets", "validação"];
+
+function latestEvent(events, predicate) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (predicate(events[index])) return events[index];
+  }
+  return null;
+}
+
+function ProgrammingSimulation({ progress }) {
+  const payload = progress?.payload || {};
+  const stage = payload.stage || "executing";
+  const label = stageLabels[stage] || "Programando";
+  const message = payload.message || "Organizando arquivos e preparando a entrega.";
+  const activeIndex = Math.max(0, Object.keys(stageLabels).indexOf(stage));
+
+  return (
+    <div className="programming-stream" aria-label="Vertex programando">
+      <div className="programming-stream-header">
+        <span><Code2 size={15} /> Vertex programando</span>
+        <small>{label}</small>
+      </div>
+      <div className="programming-stream-grid">
+        <div className="programming-files">
+          {simulatedFiles.map((file, index) => (
+            <div className={`programming-file ${index <= activeIndex % simulatedFiles.length ? "active" : ""}`} key={file}>
+              <CheckCircle2 size={12} />
+              <span>{file}</span>
+            </div>
+          ))}
+        </div>
+        <div className="programming-code" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <div className="programming-stream-footer">
+        <strong>{label}</strong>
+        <p>{message}</p>
+      </div>
+      <div className="programming-legend">
+        <span>Leitura estimada</span>
+        <p>{stageDescriptions[stage] || "A etapa é inferida pelos eventos emitidos pelo Vertex."}</p>
+      </div>
+    </div>
+  );
 }
 
 export function ScreenView({ events, connectionState }) {
@@ -34,16 +113,28 @@ export function ScreenView({ events, connectionState }) {
   }, [frames.length, isModalOpen]);
 
   const selectedFrame = frames[selectedIndex] || null;
-  const vertexRunning = useMemo(() => {
-    const lastVertexCall = [...events].reverse().find(
+  const latestVertexProgress = useMemo(
+    () => latestEvent(events, (event) => event.type === "vertex_progress"),
+    [events],
+  );
+  const lastVertexCall = useMemo(
+    () => latestEvent(
+      events,
       (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isVertexCommand(event.payload?.params?.command),
-    );
-    const lastVertexResult = [...events].reverse().find(
-      (event) => event.type === "tool_result" && event.payload?.name === "shell_run",
-    );
+    ),
+    [events],
+  );
+  const lastVertexResult = useMemo(
+    () => latestEvent(events, (event) => event.type === "tool_result" && event.payload?.name === "shell_run"),
+    [events],
+  );
+  const vertexRunning = useMemo(() => {
     return Boolean(lastVertexCall && (!lastVertexResult || lastVertexResult.created_at < lastVertexCall.created_at));
-  }, [events]);
+  }, [lastVertexCall, lastVertexResult]);
   const image = selectedFrame?.payload?.image_base64;
+  const imageAfterVertex = Boolean(lastVertexCall && selectedFrame?.created_at && selectedFrame.created_at > lastVertexCall.created_at);
+  const latestStage = latestVertexProgress?.payload?.stage;
+  const programmingMode = vertexRunning && !imageAfterVertex && !["validating", "done"].includes(latestStage);
   const caption = selectedFrame?.payload?.caption || selectedFrame?.payload?.title || "Tela do navegador";
   const canGoBack = selectedIndex > 0;
   const canGoForward = selectedIndex < frames.length - 1;
@@ -64,7 +155,9 @@ export function ScreenView({ events, connectionState }) {
       title="Tela"
     >
       <div className="screen-view">
-        {image ? (
+        {programmingMode ? (
+          <ProgrammingSimulation progress={latestVertexProgress} />
+        ) : image ? (
           <>
             <button className="screen-nav left" disabled={!canGoBack} onClick={goPrevious} title="Print anterior" type="button">
               <ChevronLeft size={17} />
@@ -78,7 +171,7 @@ export function ScreenView({ events, connectionState }) {
         ) : (
           <div className="screen-placeholder">
             <Monitor size={34} />
-            <p>{vertexRunning ? "Aguardando o primeiro print do Vertex." : "Os prints do stream aparecem aqui."}</p>
+            <p>{vertexRunning ? "Abrindo o navegador para testar o projeto." : "Os prints do stream aparecem aqui."}</p>
           </div>
         )}
       </div>

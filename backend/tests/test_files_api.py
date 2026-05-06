@@ -56,6 +56,20 @@ class FilesApiTests(unittest.TestCase):
         files = files_api.list_task_workspace_files(self.task_id)
 
         self.assertEqual([item["path"] for item in files], ["index.html"])
+        self.assertEqual(files[0]["project_name"], "Projeto principal")
+        self.assertEqual(files[0]["project_type"], "static_web")
+
+    def test_task_files_are_grouped_by_nested_project(self) -> None:
+        root = self.workspace / self.task_id
+        (root / "app").mkdir()
+        (root / "app" / "index.html").write_text("<!doctype html><title>App</title>", encoding="utf-8")
+        (root / "app" / "style.css").write_text("body{}", encoding="utf-8")
+
+        files = files_api.list_task_workspace_files(self.task_id)
+        nested = [item for item in files if item["path"].startswith("app/")]
+
+        self.assertEqual({item["project_root"] for item in nested}, {"app"})
+        self.assertEqual({item["project_name"] for item in nested}, {"App"})
 
     def test_task_zip_download_endpoint_builds_zip_response(self) -> None:
         response = asyncio.run(tasks_api.download_task_zip(self.task_id))

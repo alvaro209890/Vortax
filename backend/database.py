@@ -117,6 +117,40 @@ class Database:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS generated_projects (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    root_path TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    project_type TEXT NOT NULL DEFAULT 'generic',
+                    main_file TEXT,
+                    file_count INTEGER NOT NULL DEFAULT 0,
+                    total_size INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    UNIQUE(task_id, root_path)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_generated_projects_task_id_root ON generated_projects(task_id, root_path);
+
+                CREATE TABLE IF NOT EXISTS generated_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    extension TEXT NOT NULL DEFAULT '',
+                    modified_at REAL NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY(project_id) REFERENCES generated_projects(id) ON DELETE CASCADE,
+                    UNIQUE(task_id, path)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_generated_files_task_id_project ON generated_files(task_id, project_id, path);
                 """
             )
 
@@ -436,6 +470,110 @@ class Database:
             source["used"] = bool(source["used"])
             sources.append(source)
         return sources
+
+    def sync_generated_projects(self, task_id: str, projects: list[dict[str, Any]], files: list[dict[str, Any]]) -> None:
+        project_ids = {str(project["id"]) for project in projects}
+        file_paths = {str(file["path"]) for file in files}
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM generated_files WHERE task_id = ? AND path NOT IN (%s)" % ",".join("?" for _ in file_paths)
+                if file_paths
+                else "DELETE FROM generated_files WHERE task_id = ?",
+                (task_id, *file_paths) if file_paths else (task_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM generated_projects WHERE task_id = ? AND id NOT IN (%s)" % ",".join("?" for _ in project_ids)
+                if project_ids
+                else "DELETE FROM generated_projects WHERE task_id = ?",
+                (task_id, *project_ids) if project_ids else (task_id,),
+            )
+            for project in projects:
+                self._connection.execute(
+                    """
+                    INSERT INTO generated_projects (
+                        id, task_id, root_path, name, project_type, main_file,
+                        file_count, total_size, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        root_path = excluded.root_path,
+                        name = excluded.name,
+                        project_type = excluded.project_type,
+                        main_file = excluded.main_file,
+                        file_count = excluded.file_count,
+                        total_size = excluded.total_size,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        project["id"],
+                        task_id,
+                        project["root_path"],
+                        project["name"],
+                        project.get("project_type", "generic"),
+                        project.get("main_file"),
+                        int(project.get("file_count", 0)),
+                        int(project.get("total_size", 0)),
+                        project["created_at"],
+                        project["updated_at"],
+                    ),
+                )
+            for file in files:
+                self._connection.execute(
+                    """
+                    INSERT INTO generated_files (
+                        task_id, project_id, path, size_bytes, extension,
+                        modified_at, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(task_id, path) DO UPDATE SET
+                        project_id = excluded.project_id,
+                        size_bytes = excluded.size_bytes,
+                        extension = excluded.extension,
+                        modified_at = excluded.modified_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        task_id,
+                        file["project_id"],
+                        file["path"],
+                        int(file.get("size_bytes", file.get("size", 0))),
+                        file.get("extension", ""),
+                        float(file.get("modified_at", 0)),
+                        file["created_at"],
+                        file["updated_at"],
+                    ),
+                )
+
+    def list_generated_projects(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, task_id, root_path, name, project_type, main_file,
+                       file_count, total_size, created_at, updated_at
+                FROM generated_projects
+                WHERE task_id = ?
+                ORDER BY root_path ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_generated_files(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT f.id, f.task_id, f.project_id, f.path, f.size_bytes,
+                       f.extension, f.modified_at, f.created_at, f.updated_at,
+                       p.name AS project_name, p.root_path AS project_root,
+                       p.project_type AS project_type
+                FROM generated_files f
+                JOIN generated_projects p ON p.id = f.project_id
+                WHERE f.task_id = ?
+                ORDER BY p.root_path ASC, f.path ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         with self._lock:

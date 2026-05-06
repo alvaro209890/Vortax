@@ -13,9 +13,11 @@ O Vortax usa o **Vertex CLI** como motor para desenvolver software, sites, scrip
 O Vertex é um assistente de codificação por terminal que roda localmente. Ele entende linguagem natural e cria arquivos completos de código. Quando você pede "Crie um site de portfólio" ou "Faça uma API em Python", o agente do Vortax:
 
 1. Abre o terminal e executa o comando `vertex` com suas instruções
-2. O Vertex CLI desenvolve o projeto completo dentro da `workspace/`
-3. Os arquivos gerados aparecem automaticamente no chat
-4. Você pode baixar cada arquivo individualmente ou todos juntos em um arquivo **.zip**
+2. O Vertex CLI desenvolve o projeto completo dentro da pasta persistente da conversa (`WORKSPACE_PATH/<task_id>/`)
+3. O Vortax valida o projeto antes de deixar a IA finalizar
+4. Se aparecer bug, erro de build, sintaxe quebrada, asset ausente ou problema visual, o agente manda o Vertex corrigir e valida novamente
+5. Os arquivos gerados aparecem automaticamente no chat
+6. Você pode baixar cada arquivo individualmente ou todos juntos em um arquivo **.zip**
 
 ### Como usar o Vertex diretamente
 
@@ -44,7 +46,13 @@ Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e
 
 - **Download individual** — cada arquivo gerado aparece no painel "Arquivos" com link direto
 - **Download completo em ZIP** — um botão de download reúne todos os arquivos da conversa em um único `.zip`
-- **Persistência** — os arquivos ficam salvos na `workspace/` e vinculados à conversa no banco de dados
+- **Persistência** — os arquivos ficam salvos em `WORKSPACE_PATH/<task_id>/` e vinculados à conversa no banco de dados
+
+Por padrão, `WORKSPACE_PATH` aponta para:
+
+```bash
+/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/Vortax/projetos
+```
 
 ---
 
@@ -58,11 +66,14 @@ Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e
 - **Cache de pesquisa por conversa** — antes de chamar o Google, o executor reutiliza fontes boas já salvas para a mesma consulta
 - **Verificação cruzada automática** — preço, versão, documentação, notícia, comparação e dados sensíveis exigem múltiplas fontes e marcação de divergências
 - **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
-- **Painel de atividade** — timeline lateral com resumo das ações do agente
+- **Painel de atividade enxuto** — timeline lateral mostra só marcos úteis, sem ruído de stdout, status repetido ou screenshots intermediários
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
 - **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
+- **Validação pós-Vertex** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
+- **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, envia os bugs ao Vertex e repete a validação
+- **Stream detalhado do Vertex** — card com etapa atual, legenda estimada, arquivo atual, trilha de progresso e status da validação
 - **Shell seguro** — comandos com whitelist, bloqueio de padrões perigosos e workspace isolada
 - **Download em ZIP** — todos os arquivos gerados na conversa em um único arquivo
 - **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
@@ -91,7 +102,7 @@ Usuário na LAN (http://IP:5173)
                                  │                    │
                                  ▼                    ▼
             ┌───────────────────────────────────────────┐
-            │         workspace/ + SQLite               │
+            │  Banco_de_dados/Vortax/projetos + SQLite  │
             │   • Arquivos gerados → download ZIP      │
             │   • Histórico persistido por conversa    │
             └───────────────────────────────────────────┘
@@ -105,16 +116,16 @@ Usuário na LAN (http://IP:5173)
 Vortax/
 ├── backend/              # FastAPI + Uvicorn
 │   ├── api/              # REST + WebSocket
-│   ├── services/         # Agente, stream, qualidade de fontes
+│   ├── services/         # Agente, stream, validação, qualidade de fontes
 │   ├── tools/            # Browser, visão, executor
 │   └── tests/            # Testes automatizados
 ├── frontend/             # React 18 + Vite
 │   └── src/
-│       ├── components/   # 11 componentes de UI
-│       ├── hooks/        # WebSocket hook
+│       ├── components/   # Chat, stream, preview, arquivos e painéis
+│       ├── hooks/        # WebSocket, estado persistente e dados da task
 │       └── lib/          # API client
 ├── scripts/              # start-dev.sh
-└── workspace/            # Área isolada do agente — arquivos + download ZIP
+└── PLANO_VORTAX.md       # Plano técnico e log de evolução
 ```
 
 ---
@@ -172,7 +183,34 @@ Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
 | Shell | Whitelist, bloqueio de padrões perigosos, timeout |
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
+| Validação | `py_compile`, `node --check`, `npm run build`, `npm test`, Chrome/visão |
 | Segurança | Middleware LAN-only, sanitização de segredos |
+
+## Validação e Correção Automática
+
+Depois de cada execução do Vertex, o Vortax registra eventos de validação:
+
+- `web_validation_*` para sites, interfaces, dashboards e apps web;
+- `project_validation_*` para qualquer projeto de código, incluindo Python, Node/JS, scripts, APIs e sistemas locais.
+
+O runner só permite finalizar quando a validação obrigatória passa. Se houver bug, o próprio histórico enviado ao planner inclui os problemas encontrados e obriga uma nova chamada ao Vertex para correção no projeto atual.
+
+Checagens atuais:
+
+- HTML: referências locais ausentes em `href`/`src`;
+- frontend web: preview interno, smoke test de interação, screenshots e visão;
+- Python: `python3 -m py_compile` e `unittest discover` quando existir `tests/`;
+- JavaScript/Node: `node --check`, `npm run build` e `npm test` quando os scripts/dependências permitem.
+
+## Verificação Local
+
+```bash
+cd backend
+./.venv/bin/python -m unittest discover -s tests
+
+cd ../frontend
+npm run build
+```
 
 ## Contexto e Compactação
 

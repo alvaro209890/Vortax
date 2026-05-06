@@ -2,7 +2,23 @@ import { AlertTriangle, Bot, CheckCircle2, Circle, Code2, Globe2, Monitor, Searc
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
-const hiddenTypes = new Set(["task_created", "user_message", "assistant_message_delta", "agent_status"]);
+const hiddenTypes = new Set([
+  "task_created",
+  "user_message",
+  "assistant_message_delta",
+  "agent_status",
+  "agent_progress",
+  "shell_stdout",
+  "shell_stderr",
+  "screen_frame",
+  "ai_exchange",
+  "context_status",
+  "context_compacted",
+  "web_validation_step",
+  "project_validation_step",
+]);
+
+const importantVertexStages = new Set(["starting", "validating", "done", "error"]);
 
 function iconFor(event) {
   const tool = event.payload?.name || event.payload?.tool;
@@ -10,6 +26,14 @@ function iconFor(event) {
   if (event.type === "screen_frame") return <Monitor size={16} />;
   if (event.type === "vertex_progress") return <Code2 size={16} />;
   if (event.type === "ai_exchange") return event.payload?.actor === "vertex" ? <Code2 size={16} /> : <Bot size={16} />;
+  if (event.type === "web_validation_started" || event.type === "web_validation_step") return <Monitor size={16} />;
+  if (event.type === "web_validation_result") {
+    return event.payload?.status === "passed" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />;
+  }
+  if (event.type === "project_validation_started" || event.type === "project_validation_result") {
+    return event.payload?.status === "passed" ? <CheckCircle2 size={16} /> : <Terminal size={16} />;
+  }
+  if (event.type === "files_created") return <Code2 size={16} />;
   if (event.type === "source_saved") return <Globe2 size={16} />;
   if (event.type === "assistant_message_done") return <CheckCircle2 size={16} />;
   if (tool === "browser_google_search") return <Search size={16} />;
@@ -26,8 +50,14 @@ function titleFor(event) {
   if (event.type === "screen_frame") return "Tela atualizada";
   if (event.type === "vertex_progress") return "Vertex trabalhando";
   if (event.type === "ai_exchange") return "DeepSeek ↔ Vertex";
+  if (event.type === "web_validation_started") return "Validacao do site";
+  if (event.type === "web_validation_step") return payload.label || "Testando site";
+  if (event.type === "web_validation_result") return payload.status === "passed" ? "Site aprovado" : "Bugs no site";
+  if (event.type === "project_validation_started") return "Validacao do projeto";
+  if (event.type === "project_validation_result") return payload.status === "passed" ? "Projeto aprovado" : "Bugs no projeto";
   if (event.type === "shell_interactive_prompt") return "Prompt interativo";
   if (event.type === "dev_server_started") return "Servidor iniciado";
+  if (event.type === "files_created") return "Arquivos gerados";
   if (event.type === "source_saved") return "Fonte salva";
   if (event.type === "assistant_message_done") return "Resposta final";
   if (event.type === "error") return "Erro";
@@ -54,8 +84,26 @@ function labelFor(event) {
   if (event.type === "source_saved") return `${payload.title || payload.url} (${payload.quality_score || 0}/100)`;
   if (event.type === "vertex_progress") return payload.file ? `Criando ${payload.file}` : payload.message;
   if (event.type === "ai_exchange") return payload.message;
+  if (event.type === "web_validation_started") return "Executando e analisando o site localmente antes de concluir.";
+  if (event.type === "web_validation_result") {
+    if (payload.status === "passed") return `${payload.viewports_checked || 0} viewport(s) analisada(s) com visao.`;
+    return (payload.bugs || []).join("; ") || payload.reason || "Validacao visual falhou.";
+  }
+  if (event.type === "project_validation_started") {
+    const project = payload.project || {};
+    return `${project.file_count || 0} arquivo(s); tipo detectado: ${project.kind || "generico"}.`;
+  }
+  if (event.type === "project_validation_result") {
+    if (payload.status === "passed") return payload.reason || "Checagens locais aprovadas.";
+    return (payload.bugs || []).join("; ") || payload.reason || "Validacao do projeto falhou.";
+  }
   if (event.type === "shell_interactive_prompt") return payload.prompt;
   if (event.type === "dev_server_started") return payload.url;
+  if (event.type === "files_created") {
+    const fileCount = payload.files?.length || 0;
+    const projectCount = payload.projects?.length || 0;
+    return `${fileCount} arquivo(s) em ${projectCount || 1} projeto(s).`;
+  }
   if (payload.detail) return payload.detail;
   if (payload.message) return payload.message;
   if (payload.content) return payload.content;
@@ -77,8 +125,43 @@ function summarizeToolResult(result) {
   return "Concluido";
 }
 
+function isHighSignalEvent(event) {
+  if (hiddenTypes.has(event.type)) return false;
+  if (event.type === "vertex_progress") {
+    const stage = event.payload?.stage || event.payload?.current_stage;
+    return importantVertexStages.has(stage);
+  }
+  if (event.type === "tool_call") {
+    const tool = event.payload?.name;
+    return tool === "browser_google_search" || tool === "confirmation_request";
+  }
+  if (event.type === "tool_result") {
+    const result = event.payload?.result;
+    return result?.success === false || Boolean(result?.error);
+  }
+  if (event.type === "web_validation_started" || event.type === "project_validation_started") {
+    return false;
+  }
+  return true;
+}
+
+function compactOperationalEvents(events) {
+  const compacted = [];
+  for (const event of events.filter(isHighSignalEvent)) {
+    const title = titleFor(event);
+    const label = labelFor(event);
+    const previous = compacted[compacted.length - 1];
+    if (previous && titleFor(previous) === title && labelFor(previous) === label) {
+      compacted[compacted.length - 1] = event;
+    } else {
+      compacted.push(event);
+    }
+  }
+  return compacted.slice(-24);
+}
+
 export function ActionTimeline({ events }) {
-  const operationalEvents = events.filter((event) => !hiddenTypes.has(event.type));
+  const operationalEvents = compactOperationalEvents(events);
 
   return (
     <CollapsiblePanel

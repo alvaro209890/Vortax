@@ -496,6 +496,7 @@ small {
   margin: 0 auto;
   width: 100%;
   min-width: 0;
+  min-height: 0;
 }
 
 .message {
@@ -590,18 +591,68 @@ small {
   white-space: pre-wrap;
 }
 
-.message p {
-  display: block;
-  max-width: 100%;
-  margin: 0;
-  padding: 0;
+.markdown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   font-size: 15px;
   line-height: 1.6;
   color: var(--text-primary);
-  background: transparent !important;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.markdown-body p {
+  margin: 0;
   white-space: pre-wrap;
+}
+
+.markdown-body pre {
+  background: #0d1115;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+.markdown-body code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13.5px;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.markdown-body ul, .markdown-body ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.markdown-body li {
+  margin-bottom: 4px;
+}
+
+.markdown-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-body a {
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
 }
 
 .message-images {
@@ -1056,6 +1107,247 @@ small {
   transform: scale(1.02);
 }
 
+.programming-stream {
+  width: 100%;
+  height: 100%;
+  padding: 13px;
+  background:
+    linear-gradient(135deg, rgba(8, 198, 93, 0.12), transparent 34%),
+    #05090D;
+  color: var(--text-primary);
+  text-align: left;
+  overflow: hidden;
+}
+
+.programming-stream-header,
+.programming-stream-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.programming-stream-header span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.programming-stream-header svg {
+  color: var(--accent-blue);
+}
+
+.programming-stream-header small {
+  color: var(--accent-blue);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.programming-stream-grid {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 12px;
+  height: 96px;
+  margin: 10px 0;
+}
+
+.programming-files,
+.programming-code {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.programming-files {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+}
+
+.programming-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  min-width: 0;
+}
+
+.programming-file.active {
+  color: var(--text-primary);
+}
+
+.programming-file svg {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.programming-file.active svg {
+  color: var(--accent-blue);
+}
+
+.programming-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.programming-code {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 9px;
+  padding: 13px;
+}
+
+.programming-code span {
+  display: block;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(8, 198, 93, 0.9), rgba(125, 211, 252, 0.35), rgba(255, 255, 255, 0.05));
+  animation: codePulse 1.8s ease-in-out infinite;
+}
+
+.programming-code span:nth-child(2) { width: 76%; animation-delay: 0.1s; }
+.programming-code span:nth-child(3) { width: 92%; animation-delay: 0.2s; }
+.programming-code span:nth-child(4) { width: 64%; animation-delay: 0.3s; }
+.programming-code span:nth-child(5) { width: 84%; animation-delay: 0.4s; }
+.programming-code span:nth-child(6) { width: 56%; animation-delay: 0.5s; }
+
+.programming-stream-footer {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.programming-stream-footer strong {
+  font-size: 12px;
+}
+
+.programming-stream-footer p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.programming-legend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid rgba(8, 198, 93, 0.14);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 198, 93, 0.055);
+}
+
+.programming-legend span {
+  color: var(--accent-blue);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.programming-legend p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes codePulse {
+  0%, 100% { opacity: 0.45; transform: scaleX(0.96); transform-origin: left; }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+
+.screen-terminal {
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px 34px;
+  background: #05090D;
+  color: #D7E2EA;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+  text-align: left;
+  overflow: hidden;
+}
+
+.screen-terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+}
+
+.screen-terminal-header span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.screen-terminal-header i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent-blue);
+  box-shadow: 0 0 10px rgba(8, 198, 93, 0.55);
+}
+
+.screen-terminal.error .screen-terminal-header i {
+  background: var(--accent-danger);
+  box-shadow: 0 0 10px rgba(255, 77, 79, 0.45);
+}
+
+.screen-terminal.done .screen-terminal-header i {
+  background: #7dd3fc;
+  box-shadow: 0 0 10px rgba(125, 211, 252, 0.35);
+}
+
+.screen-terminal-header small {
+  color: var(--accent-blue);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-terminal pre {
+  height: calc(100% - 24px);
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1.38;
+  scrollbar-width: thin;
+}
+
+.screen-terminal pre span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.screen-terminal pre span.stderr {
+  color: var(--accent-danger);
+}
+
 .screen-nav {
   position: absolute;
   top: 50%;
@@ -1415,6 +1707,7 @@ small {
 /* Collapsible Inspector Panels */
 .collapsible-panel {
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .collapsible-toggle {
@@ -1512,6 +1805,56 @@ small {
 .zip-download-btn svg:last-child {
   color: var(--accent-blue);
   opacity: 0.7;
+}
+
+.project-file-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-file-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.project-file-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 8px;
+  color: var(--text-primary);
+}
+
+.project-file-group-header div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-file-group-header strong,
+.project-file-group-header span,
+.file-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file-group-header strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.project-file-group-header span {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: capitalize;
 }
 
 .file-item {
@@ -1810,6 +2153,197 @@ small {
   margin-top: 2px;
 }
 
+.vertex-progress-panel {
+  border: 1px solid rgba(8, 198, 93, 0.16);
+  border-radius: 10px;
+  background: #080E12;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.activity-vertex-slot .vertex-progress-panel {
+  margin-bottom: 0;
+}
+
+.vertex-progress-panel.done {
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+.vertex-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: none;
+  background: rgba(8, 198, 93, 0.04);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vertex-progress-title,
+.vertex-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.vertex-progress-title svg,
+.vertex-progress-icon svg {
+  color: var(--accent-blue);
+  flex-shrink: 0;
+}
+
+.vertex-progress-title .spinner,
+.vertex-progress-item:not(.done) .vertex-progress-icon svg {
+  animation: spin 1s linear infinite;
+}
+
+.vertex-progress-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.vertex-progress-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 340px;
+  overflow: hidden;
+  transition: max-height 0.24s ease, opacity 0.18s ease;
+}
+
+.vertex-progress-panel.collapsed .vertex-progress-body {
+  max-height: 0;
+  opacity: 0;
+}
+
+.vertex-live-legend {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 8px;
+  padding: 10px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.vertex-live-main,
+.vertex-live-estimate,
+.vertex-live-validation {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vertex-live-validation {
+  grid-column: 1 / -1;
+  border-color: rgba(251, 191, 36, 0.18);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.vertex-live-validation.ok {
+  border-color: rgba(52, 211, 153, 0.18);
+  background: rgba(52, 211, 153, 0.06);
+}
+
+.vertex-live-validation.error {
+  border-color: rgba(248, 113, 113, 0.22);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.vertex-live-legend small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--accent-blue);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.vertex-live-validation.error small {
+  color: var(--accent-danger);
+}
+
+.vertex-live-validation.ok small {
+  color: var(--accent-green);
+}
+
+.vertex-live-legend strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.vertex-live-legend p {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.vertex-stage-rail {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 5px;
+  padding: 0 11px 10px;
+}
+
+.vertex-stage-rail span {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vertex-stage-rail span.reached {
+  background: rgba(8, 198, 93, 0.5);
+}
+
+.vertex-stage-rail span.active {
+  background: var(--accent-blue);
+  box-shadow: 0 0 10px rgba(8, 198, 93, 0.35);
+}
+
+.vertex-progress-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  padding: 9px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.vertex-progress-item.done .vertex-progress-icon svg {
+  color: var(--accent-green);
+}
+
+.vertex-progress-icon {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 1px;
+}
+
+.vertex-progress-item strong {
+  display: block;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.vertex-progress-item p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .ai-exchange-list {
   display: flex;
   flex-direction: column;
@@ -1937,6 +2471,18 @@ small {
 
   .activity-steps {
     padding-bottom: 1px;
+  }
+
+  .vertex-live-legend {
+    grid-template-columns: 1fr;
+  }
+
+  .vertex-live-validation {
+    grid-column: auto;
+  }
+
+  .vertex-stage-rail {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .composer-wrapper {

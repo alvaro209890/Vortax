@@ -2,9 +2,11 @@ import asyncio
 import os
 import signal
 import subprocess
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from config import settings
 from services.registry import event_bus, runner_tasks, task_store
 
 router = APIRouter()
@@ -17,6 +19,19 @@ def _kill_process_tree(pid: int) -> None:
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, OSError):
         pass
+
+
+def _iter_process_cmdlines() -> list[tuple[int, str]]:
+    processes: list[tuple[int, str]] = []
+    for proc_dir in Path("/proc").iterdir():
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            cmdline = (proc_dir / "cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        except OSError:
+            continue
+        processes.append((int(proc_dir.name), cmdline))
+    return processes
 
 
 def _kill_runner_and_children(task_id: str) -> bool:
@@ -47,19 +62,17 @@ def _kill_runner_and_children(task_id: str) -> bool:
             except (ProcessLookupError, OSError):
                 pass
 
-    # Mata qualquer processo "vertex" ou "shell" filho do runner
-    import psutil
-    try:
-        current = psutil.Process()
-        for child in current.children(recursive=True):
-            cmdline = " ".join(child.cmdline()) if child.cmdline() else ""
-            if "vertex" in cmdline or task_id in cmdline:
-                try:
-                    child.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-    except Exception:
-        pass
+    # Mata processos associados ao task_id sem depender de psutil.
+    for pid, cmdline in _iter_process_cmdlines():
+        if pid == os.getpid():
+            continue
+        projects_root = str(settings.WORKSPACE_PATH)
+        if task_id in cmdline or ("vertex" in cmdline and projects_root in cmdline):
+            stopped = True
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     return stopped
 
