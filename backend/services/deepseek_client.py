@@ -90,6 +90,11 @@ TOOLS_SCHEMA = [
         "use": "Rolar a pagina.",
     },
     {
+        "action": "vision_analyze",
+        "params": {"question": "O que aparece nesta tela?"},
+        "use": "Tool de visao computacional. Captura screenshot automaticamente e descreve a tela. Use SOMENTE quando texto extraido nao for suficiente — prefira browser_extract_text ou browser_extract_article para ler textos.",
+    },
+    {
         "action": "finish",
         "params": {},
         "use": "Finalizar com o campo result.",
@@ -198,6 +203,12 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Use browser_get_state quando estiver incerto sobre a pagina atual. "
         "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
         "Na resposta final, diferencie informacao confirmada em fonte aberta de informacao apenas sugerida por resultado de busca. "
+        "Extrair texto de paginas: prefira browser_extract_article ou browser_extract_text — eles sao mais rapidos, mais baratos e mais precisos que visao computacional. "
+        "Use vision_analyze SOMENTE quando o texto extraido nao for suficiente: imagens, graficos, videos, layout visual, botoes sem texto, CAPTCHA, confirmacao visual de que algo apareceu/desapareceu na tela. "
+        "Nao use vision_analyze para ler texto de paginas web comuns — browser_extract_article ou browser_extract_text resolvem melhor. "
+        "vision_analyze e uma tool como as outras: o sistema captura a screenshot automaticamente, voce so precisa passar a question. "
+        "Se o vision_analyze retornar confidence baixo ou medium, refine a question e tente de novo. "
+        "Se confidence for high, use a descricao para decidir a proxima acao. "
         "Acoes disponiveis: "
         f"{json.dumps(TOOLS_SCHEMA, ensure_ascii=False)}. "
         "Formato obrigatorio: "
