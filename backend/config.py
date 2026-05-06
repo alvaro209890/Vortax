@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     WORKSPACE_PATH: Path = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Vortax/workspace")
     SCREENSHOT_INTERVAL: int = 5
     STREAM_SCREENSHOT_INTERVAL: int = 2
+    SHELL_TIMEOUT_SECONDS: int = 30
+    SHELL_VERTEX_TIMEOUT_SECONDS: int = 300
 
     CHROME_BINARY: str = "/usr/bin/google-chrome"
     CHROME_DEBUG_PORT: int = 9222

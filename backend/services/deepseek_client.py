@@ -90,6 +90,11 @@ TOOLS_SCHEMA = [
         "use": "Rolar a pagina.",
     },
     {
+        "action": "shell_run",
+        "params": {"command": "echo hello"},
+        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, vertex, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, use 'vertex \"descricao da tarefa\"'. O comando roda na workspace/ do Vortax. Retorna stdout, stderr e returncode.",
+    },
+    {
         "action": "vision_analyze",
         "params": {"question": "O que aparece nesta tela?"},
         "use": "Tool de visao computacional. Captura screenshot automaticamente e descreve a tela. Use SOMENTE quando texto extraido nao for suficiente — prefira browser_extract_text ou browser_extract_article para ler textos.",
@@ -203,6 +208,9 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Use browser_get_state quando estiver incerto sobre a pagina atual. "
         "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
         "Na resposta final, diferencie informacao confirmada em fonte aberta de informacao apenas sugerida por resultado de busca. "
+        "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
+        "O Vertex CLI criara todos os arquivos do projeto dentro da workspace/. Nao tente escrever codigo manualmente — delegue ao Vertex. "
+        "Depois que o vertex terminar, use finish e informe ao usuario que os arquivos estao prontos para download. "
         "Extrair texto de paginas: prefira browser_extract_article ou browser_extract_text — eles sao mais rapidos, mais baratos e mais precisos que visao computacional. "
         "Use vision_analyze SOMENTE quando o texto extraido nao for suficiente: imagens, graficos, videos, layout visual, botoes sem texto, CAPTCHA, confirmacao visual de que algo apareceu/desapareceu na tela. "
         "Nao use vision_analyze para ler texto de paginas web comuns — browser_extract_article ou browser_extract_text resolvem melhor. "

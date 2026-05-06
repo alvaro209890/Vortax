@@ -6,6 +6,8 @@ from services.safe_diagnostics import sanitize_payload
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
 from tools.browser import browser_tool
+from tools.shell import run_shell
+from tools.vision import vision_tool
 
 
 ToolCallable = Callable[..., Awaitable[dict[str, Any]]]
@@ -27,6 +29,8 @@ TOOLS: dict[str, ToolCallable] = {
     "browser_extract_links": browser_tool.extract_links,
     "browser_screenshot": browser_tool.screenshot,
     "browser_scroll": browser_tool.scroll,
+    "shell_run": run_shell,
+    "vision_analyze": vision_tool.analyze,
 }
 
 
@@ -79,7 +83,7 @@ async def _save_source_if_extracted(task_id: str, tool_name: str, result: dict[s
 
 
 async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bus: EventBus) -> None:
-    if not tool_name.startswith("browser_") or tool_name == "browser_screenshot":
+    if (not tool_name.startswith("browser_") and tool_name != "shell_run") or tool_name == "browser_screenshot":
         return
     try:
         frame = await browser_tool.screenshot(task_id=task_id)
