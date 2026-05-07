@@ -697,12 +697,14 @@ small {
 }
 
 .markdown-body a {
-  color: var(--accent-blue);
+  color: #08C65D;
   text-decoration: none;
+  font-weight: 500;
 }
 
 .markdown-body a:hover {
   text-decoration: underline;
+  color: #34D399;
 }
 
 .message-downloads {
@@ -938,6 +940,7 @@ small {
   width: 100%;
   max-height: 360px;
   overflow: hidden;
+  overflow-y: auto;
   transition: max-height 0.26s ease, opacity 0.2s ease, transform 0.2s ease;
 }
 

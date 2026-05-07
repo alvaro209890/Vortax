@@ -618,6 +618,186 @@ async def _inject_pre_research_if_needed(
     return _history_with_research_context(task_id, history)
 
 
+async def _inject_people_research_if_needed(
+    task_id: str,
+    description: str,
+    history: list[dict[str, str]],
+    bus: EventBus,
+) -> list[dict[str, str]]:
+    """Analisa se o pedido e sobre uma pessoa e, em caso positivo, executa
+    pesquisa web automatica com multiplas consultas em diversas plataformas."""
+    from services.research_policy import people_research_profile
+
+    profile = people_research_profile(description)
+    if not profile.get("is_people_search"):
+        return history
+
+    person_name = profile.get("person_name")
+    search_queries = profile.get("search_queries", [])
+    if not person_name or not search_queries:
+        return history
+
+    # Verifica se ja tem fontes sobre este nome
+    from services.research_policy import relevant_sources_for_query
+    existing_sources = database.list_sources(task_id)
+    if existing_sources:
+        relevant = relevant_sources_for_query(person_name, existing_sources, limit=3, min_quality=40)
+        if len(relevant) >= profile.get("required_sources", 3):
+            return _history_with_research_context(task_id, history)
+
+    await bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "thinking", "label": "Pesquisando informacoes da pessoa"},
+    )
+    await bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Pesquisando pessoa em multiplas plataformas",
+            "detail": f"Buscando informacoes sobre: {person_name}",
+        },
+    )
+
+    pesquisa_feita = False
+    categories = profile.get("categories", [])
+
+    for query in search_queries[:5]:  # Max 5 consultas
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Buscando em plataforma",
+                "detail": f"Consulta: {query[:120]}",
+                "tool": "browser_google_search",
+            },
+        )
+        try:
+            from tools.tool_executor import execute_tool
+
+            search_result = await execute_tool(
+                "browser_google_search",
+                {"query": query, "hl": "pt-BR"},
+                task_id=task_id,
+                bus=bus,
+                description=f"Pesquisa sobre pessoa: {query[:100]}",
+            )
+            if search_result.get("success"):
+                pesquisa_feita = True
+                data = search_result.get("data", {})
+                results = data.get("results", [])
+                if results:
+                    # Tenta abrir o melhor resultado que nao seja login/agregador fraco
+                    for result in results[:3]:
+                        href = str(result.get("href") or "")
+                        title = str(result.get("title") or "")
+                        # Pula paginas de login, anúncios e agregadores
+                        if any(skip in href.lower() for skip in
+                               ["accounts.google", "servicelogin", "login", "signin", "ads.",
+                                "googleadservices", "facebook.com/settings"]):
+                            continue
+                        await bus.publish(
+                            task_id,
+                            "agent_progress",
+                            {
+                                "label": "Abrindo perfil encontrado",
+                                "detail": f"Abrindo: {title[:80]}",
+                                "tool": "browser_navigate",
+                            },
+                        )
+                        await execute_tool(
+                            "browser_navigate",
+                            {"url": href},
+                            task_id=task_id,
+                            bus=bus,
+                            description="Abrindo resultado de busca sobre pessoa",
+                        )
+                        await bus.publish(
+                            task_id,
+                            "agent_progress",
+                            {
+                                "label": "Extraindo informacoes",
+                                "detail": f"Extraindo dados de: {title[:80]}",
+                                "tool": "browser_extract_article",
+                            },
+                        )
+                        await execute_tool(
+                            "browser_extract_article",
+                            {},
+                            task_id=task_id,
+                            bus=bus,
+                            description="Extraindo informacoes sobre a pessoa",
+                        )
+                        break  # Abre so um resultado por consulta
+        except Exception:
+            pass  # Falha nao bloqueia o fluxo
+
+    # Se tiver LinkedIn, GitHub ou Instagram, tenta busca direta
+    linkedin_queries = [q for q in search_queries if "linkedin" in q.lower()]
+    github_queries = [q for q in search_queries if "github" in q.lower()]
+
+    for extra_query in (linkedin_queries + github_queries)[:2]:
+        try:
+            from tools.tool_executor import execute_tool as et
+
+            result = await et(
+                "browser_google_search",
+                {"query": extra_query, "hl": "pt-BR"},
+                task_id=task_id,
+                bus=bus,
+                description=f"Busca adicional em rede profissional: {extra_query[:80]}",
+            )
+            if result.get("success"):
+                data = result.get("data", {})
+                results = data.get("results", [])
+                if results:
+                    href = str(results[0].get("href") or "")
+                    if not any(skip in href.lower() for skip in
+                               ["accounts.google", "servicelogin", "login", "signin"]):
+                        await et(
+                            "browser_navigate",
+                            {"url": href},
+                            task_id=task_id,
+                            bus=bus,
+                            description="Abrindo perfil profissional",
+                        )
+                        await et(
+                            "browser_extract_article",
+                            {},
+                            task_id=task_id,
+                            bus=bus,
+                            description="Extraindo perfil profissional",
+                        )
+        except Exception:
+            pass
+
+    if pesquisa_feita:
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Pesquisa sobre pessoa concluida",
+                "detail": f"Dados coletados sobre {person_name} em multiplas plataformas.",
+            },
+        )
+
+    # Usa o contexto enriquecido com fontes, mas com aviso de pessoa
+    research_history = _history_with_research_context(task_id, history)
+    # Adiciona instrucao especifica de pessoa no inicio
+    people_instruction = (
+        "ATENCAO: Este pedido envolve pesquisa sobre uma PESSOA. "
+        "Voce DEVE utilizar as fontes acima para montar um perfil completo. "
+        "Para CADA informacao relevante, indique de qual URL/fonte veio. "
+        "Se informacoes importantes nao foram encontradas (LinkedIn, GitHub, formacao, experiencia), "
+        "declare explicitamente o que NAO foi encontrado. "
+        "NAO resuma informacoes vagas — extraia dados concretos das fontes abertas. "
+        f"Pessoa pesquisada: {person_name}. "
+        f"Plataformas sugeridas: {', '.join(categories)}."
+    )
+    # Preserva o history original mas com people_instruction como primeiro system msg
+    return [{"role": "system", "content": people_instruction}, *research_history]
+
+
 async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
     if not deepseek_configured():
         history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
@@ -652,6 +832,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
         # Pesquisa previa automatica antes do loop ReAct
         history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
+
+        # Pesquisa automatica de pessoas antes do loop ReAct
+        history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
 
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):

@@ -57,6 +57,25 @@ SENSITIVE_PATTERNS = {
     "documentacao": (r"\bdocumenta[cç][aã]o\b", r"\bdocs?\b", r"\bapi\b", r"\bsdk\b"),
     "noticia": (r"\bnot[ií]ci[aa]s?\b", r"\bhoje\b", r"\bagora\b", r"\brecent(?:e|es)\b"),
     "comparacao": (r"\bcompar(?:ar|e|acao|a[cç][aã]o)\b", r"\bversus\b", r"\bvs\b", r"\bmelhor\b"),
+    "pessoa": (
+        r"\bnome\b",
+        r"\bpessoa\b",
+        r"\bperfil\b",
+        r"\bquem [ée]\b",
+        r"\blinkedin\b",
+        r"\bcurriculo\b",
+        r"\bcurrículo\b",
+        r"\bbiografia\b",
+        r"\bbio\b",
+        r"\binformacoes sobre\b",
+        r"\binformações sobre\b",
+        r"\bdados de\b",
+        r"\bquem sou\b",
+        r"\bquem e\b",
+        r"\bsobre\b.*\b(?:mim|voce|ele|ela|nome|pessoa)\b",
+        r"\bconhecer\b",
+        r"\bencontrar\b",
+    ),
     "alto_risco": (
         r"\bmedic[oa]\b",
         r"\bsa[uú]de\b",
@@ -343,4 +362,129 @@ def software_research_profile(text: str) -> dict:
         "research_queries": unique_queries[:3],
         "keywords": keywords,
         "project_type": project_type,
+    }
+
+
+# ─── Pesquisa de Pessoas ──────────────────────────────────────────────
+
+PEOPLE_SEARCH_QUERIES = {
+    "linkedin": "site:linkedin.com/in \"{nome}\"",
+    "github": "site:github.com \"{nome}\"",
+    "facebook": "site:facebook.com \"{nome}\"",
+    "instagram": "site:instagram.com \"{nome}\"",
+    "wikipedia": "site:wikipedia.org \"{nome}\"",
+    "google_news": "\"{nome}\" noticias",
+    "bing_news": "\"{nome}\"",
+    "curriculo": "\"{nome}\" curriculo OR currículo OR CV OR lattes",
+    "academico": "\"{nome}\" site:.edu.br OR site:.org",
+    "profissional": "\"{nome}\" linkedin OR github OR portifolio OR portfolio",
+}
+
+
+def people_research_profile(text: str) -> dict:
+    """Analisa se o pedido envolve pesquisa sobre uma pessoa e retorna
+    estrategias de busca especializadas.
+
+    Retorna dict com:
+    - is_people_search: bool
+    - person_name: str | None — nome extraido
+    - required_sources: int — numero minimo de fontes (3+ para pessoas)
+    - search_queries: list[str] — queries variadas para buscar a pessoa
+    - categories: list[str] — plataformas sugeridas
+    """
+    lowered = text.lower()
+
+    # Detecta se e uma busca por pessoa
+    people_pattern = re.compile(
+        r"(?:^|\s)(?:busque|pesquise|pesquisar|buscar|encontre|encontrar|"
+        r"procure|procurar|quem [ée]|informa[cç][õo]es sobre|"
+        r"dados de|biografia|perfil de|curriculo de|sobre\s+\w+\s+\w+)"
+        r"(?:\s+[^.,!?]{3,60})",
+        re.IGNORECASE,
+    )
+
+    # Nomes proprio (duas ou mais palavras com inicial maiuscula no pedido original)
+    name_pattern = re.compile(
+        r"[A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+){1,5}"
+    )
+
+    # Categoriza as plataformas mencionadas
+    platform_keywords = {
+        "linkedin": r"\blinkedin\b",
+        "github": r"\bgithub\b",
+        "facebook": r"\bfacebook\b",
+        "instagram": r"\binstagram\b",
+        "wikipedia": r"\bwikipedia\b",
+        "curriculo": r"\bcurriculo\b|\bcurrículo\b|\blattes\b|\bcv\b",
+        "noticias": r"\bnot[ií]cia\b|\bnews\b|\bartigo\b",
+    }
+
+    has_people_pattern = bool(people_pattern.search(text))
+    has_name_mention = bool(name_pattern.search(text))
+
+    # Se o research_profile ja detectou categoria "pessoa"
+    profile = research_profile(text)
+    is_people = has_people_pattern or has_name_mention or "pessoa" in profile.get("categories", [])
+
+    if not is_people:
+        return {
+            "is_people_search": False,
+            "person_name": None,
+            "required_sources": 0,
+            "search_queries": [],
+            "categories": [],
+        }
+
+    # Extrai nome - pega o match mais longo de nome proprio
+    names = name_pattern.findall(text)
+    person_name = max(names, key=len) if names else None
+
+    # Se nao achou nome via maiusculas, tenta extrair do padrao "sobre X"
+    if not person_name:
+        about_match = re.search(
+            r"(?:sobre|de|para)\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+){1,5})",
+            text,
+        )
+        if about_match:
+            person_name = about_match.group(1).strip()
+
+    suggested_platforms = []
+    for platform, pattern in platform_keywords.items():
+        if re.search(pattern, lowered):
+            suggested_platforms.append(platform)
+
+    # Se mencionou plataformas especificas, usa so elas; senao, algumas variadas
+    if suggested_platforms:
+        search_queries = [
+            PEOPLE_SEARCH_QUERIES[p].format(nome=person_name)
+            for p in suggested_platforms
+            if p in PEOPLE_SEARCH_QUERIES
+        ]
+    else:
+        # Query variada: nome entre aspas + variacoes
+        quoted = f'"{person_name}"' if person_name else text
+        search_queries = [
+            PEOPLE_SEARCH_QUERIES["profissional"].format(nome=person_name),
+            PEOPLE_SEARCH_QUERIES["google_news"].format(nome=person_name),
+            PEOPLE_SEARCH_QUERIES["curriculo"].format(nome=person_name),
+        ]
+
+    # Sempre inclui busca generica com nome entre aspas
+    if person_name:
+        search_queries.insert(0, f'"{person_name}"')
+
+    # Remove duplicatas
+    seen: set[str] = set()
+    unique_queries: list[str] = []
+    for q in search_queries:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+
+    return {
+        "is_people_search": True,
+        "person_name": person_name,
+        "required_sources": max(3, len(suggested_platforms) if suggested_platforms else 3),
+        "search_queries": unique_queries[:6],
+        "categories": suggested_platforms or ["linkedin", "github", "profissional", "curriculo", "noticias"],
     }
