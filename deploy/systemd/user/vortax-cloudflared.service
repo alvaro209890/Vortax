@@ -1,0 +1,15 @@
+[Unit]
+Description=Vortax Cloudflare Tunnel
+After=network-online.target vortax-backend.service
+Wants=network-online.target
+Requires=vortax-backend.service
+PartOf=vortax-backend.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cloudflared tunnel --config %h/.cloudflared/vortax-api.yml run vortax-api
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,7 @@
+tunnel: 8c063535-c3cd-427a-9546-e8d48b9e4822
+credentials-file: /home/server/.cloudflared/8c063535-c3cd-427a-9546-e8d48b9e4822.json
+
+ingress:
+  - hostname: vortax-api.cursar.space
+    service: http://127.0.0.1:8010
+  - service: http_status:404

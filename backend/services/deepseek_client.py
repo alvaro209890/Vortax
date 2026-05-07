@@ -100,6 +100,11 @@ TOOLS_SCHEMA = [
         "use": "Tool de visao computacional. Captura screenshot automaticamente e descreve a tela. Use SOMENTE quando texto extraido nao for suficiente — prefira browser_extract_text ou browser_extract_article para ler textos.",
     },
     {
+        "action": "exact_solve",
+        "params": {"problem": "Resolva 2x + 3 = 11", "context": ""},
+        "use": "Ferramenta deterministica para matematica e exatas. Use para contas, porcentagem, equacoes simples, fisica/quimica com numeros e problemas extraidos de imagem antes de finalizar.",
+    },
+    {
         "action": "finish",
         "params": {},
         "use": "Finalizar com o campo result.",
@@ -189,6 +194,60 @@ async def request_deepseek_response(description: str) -> dict[str, Any]:
     }
 
 
+async def request_direct_chat_response(
+    history: list[dict[str, str]],
+    *,
+    mode: str = "direct",
+    tool_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    if mode == "exact":
+        system_prompt = (
+            "Voce e o modo direto de matematica e exatas do Vortax. Responda sem acionar o planner e sem delegar ao Vertex. "
+            "Resolva com rigor, mostre passos curtos e confira as contas. Se o contexto trouxer resultado de exact_solve, use-o como ferramenta de calculo. "
+            "Se houver analise de imagem, use a transcricao/visible_text como enunciado; quando a imagem estiver ambigua, diga exatamente o que falta. "
+            "Nao invente dados externos e nao pesquise; se a pergunta depender de dado atual, diga que precisa de pesquisa."
+        )
+    else:
+        system_prompt = (
+            "Voce e o modo rapido do Vortax. Responda diretamente no chat, sem planejamento, sem ferramentas e sem Vertex. "
+            "Seja claro e curto. Nao diga que executou acoes no PC. Se o pedido exigir internet, arquivos, sistema, codigo, automacao ou dado atual, diga que precisa do modo com ferramentas."
+        )
+
+    messages = list(history)
+    if tool_context:
+        messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": "Contexto de ferramentas ja executadas:\n" + json.dumps(tool_context, ensure_ascii=False),
+            },
+        )
+
+    payload = {
+        "model": settings.DEEPSEEK_MODEL,
+        "temperature": settings.DEEPSEEK_TEMPERATURE if mode != "exact" else 0.0,
+        "stream": False,
+        "messages": [{"role": "system", "content": system_prompt}, *messages],
+    }
+    data = await _post_deepseek(payload)
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
+
+    result = str(content).strip()
+    return {
+        "content": result,
+        "usage": data.get("usage") or {},
+        "model": data.get("model", settings.DEEPSEEK_MODEL),
+        "output_length": text_len_hint(result),
+    }
+
+
 async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, Any]:
     if not deepseek_configured():
         raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
@@ -213,6 +272,9 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Use browser_get_state quando estiver incerto sobre a pagina atual. "
         "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
         "Na resposta final, estruture evidencias quando houver pesquisa: para cada conclusao importante, indique fonte/URL; diferencie 'confirmado em fonte aberta', 'inferido' e 'nao encontrado'. "
+        "Para perguntas de matematica, fisica, quimica, estatistica, engenharia ou outras exatas, use exact_solve antes de finalizar quando houver conta, porcentagem, equacao ou numeros para calcular. "
+        "Se o problema de exatas estiver em imagem, use vision_analyze primeiro pedindo transcricao do enunciado, depois use exact_solve com o texto extraido e finalize com passos curtos. "
+        "Perguntas simples e conceituais devem ser respondidas diretamente pelo modo rapido do backend antes de chegar aqui; se chegarem ao planner, mantenha o caminho mais curto possivel. "
         "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
         "O Vertex CLI criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao Vertex. "
         "Depois de cada execucao do Vertex, o Vortax roda validacao local automatica do projeto. Para scripts Python, APIs, apps Node e outros codigos, observe project_validation; "

@@ -3,12 +3,12 @@ import { Sparkles, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function MessageList({ messages }) {
+export function MessageList({ isTyping = false, messages }) {
   const endRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
+  }, [messages, isTyping]);
 
   return (
     <div className="message-list">
@@ -36,10 +36,14 @@ export function MessageList({ messages }) {
                     target="_blank"
                     title="Abrir imagem"
                   >
-                    <img
-                      alt={image.filename || "Imagem enviada para analise"}
-                      src={`data:${image.content_type};base64,${image.image_base64}`}
-                    />
+                    {image.image_base64 ? (
+                      <img
+                        alt={image.filename || "Imagem enviada para analise"}
+                        src={`data:${image.content_type};base64,${image.image_base64}`}
+                      />
+                    ) : (
+                      <div className="message-image-pending" />
+                    )}
                     <span>{image.filename || "Imagem"}</span>
                   </a>
                 ))}
@@ -48,6 +52,21 @@ export function MessageList({ messages }) {
           </div>
         </article>
       ))}
+      {isTyping && (
+        <article className="message assistant typing-message">
+          <div className="message-avatar">
+            <Sparkles size={18} />
+          </div>
+          <div className="message-content">
+            <div className="message-role">Vortax</div>
+            <div aria-label="Vortax esta digitando" className="typing-dots" role="status">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
+        </article>
+      )}
       <div ref={endRef} />
     </div>
   );

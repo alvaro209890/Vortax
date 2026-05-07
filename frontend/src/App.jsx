@@ -50,6 +50,20 @@ function buildMessages(task, events) {
   return [{ id: `user-${task.id}`, role: "user", content: task.description }];
 }
 
+function shouldShowTyping(task, events, agentBusy) {
+  if (!task || !agentBusy) return false;
+  if (events.length === 0) return true;
+
+  let lastUserIndex = -1;
+  let lastAssistantDoneIndex = -1;
+  events.forEach((event, index) => {
+    if (event.type === "user_message") lastUserIndex = index;
+    if (event.type === "assistant_message_done") lastAssistantDoneIndex = index;
+  });
+
+  return lastUserIndex === -1 || lastAssistantDoneIndex < lastUserIndex;
+}
+
 export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [agentStatus, setAgentStatus] = useState("idle");
@@ -87,6 +101,10 @@ export default function App() {
     return buildMessages(activeTask, currentEvents);
   }, [activeTask, currentEvents, taskError, taskLoading]);
   const agentBusy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
+  const showTyping = useMemo(
+    () => shouldShowTyping(activeTask, currentEvents, agentBusy),
+    [activeTask, agentBusy, currentEvents],
+  );
 
   useEffect(() => {
     healthcheck()
@@ -145,10 +163,26 @@ export default function App() {
     setAgentStatus("queued");
     if (files.length > 0) {
       if (activeTaskId) {
-        const result = await appendTaskImages(activeTaskId, description, files);
         const now = new Date().toISOString();
         setTaskEvents((current) => [
           ...current,
+          {
+            type: "user_message",
+            task_id: activeTaskId,
+            created_at: now,
+            payload: {
+              content: description || "Analise esta imagem.",
+              images: files.map((file) => ({
+                filename: file.name,
+                content_type: file.type,
+                image_base64: "",
+              })),
+            },
+          },
+        ]);
+        const result = await appendTaskImages(activeTaskId, description, files);
+        setTaskEvents((current) => [
+          ...current.filter((event) => !(event.type === "user_message" && event.created_at === now)),
           {
             type: "user_message",
             task_id: activeTaskId,
@@ -319,7 +353,7 @@ export default function App() {
               <StatusBadge status={agentStatus} label={agentStatus} />
             </div>
           </header>
-          <MessageList messages={messages} />
+          <MessageList isTyping={showTyping} messages={messages} />
           <AgentActivity events={currentEvents} status={agentStatus} taskDescription={activeTask?.description} />
           <Composer disabled={backendStatus !== "online" || agentBusy} onSubmit={handleSubmit} />
         </>

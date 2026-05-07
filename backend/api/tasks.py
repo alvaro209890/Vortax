@@ -13,6 +13,8 @@ from config import settings
 from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
+from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response
+from services.exact_solver import format_exact_answer, is_exact_prompt, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_store
 from services.stream_contract import utc_now
 from api.files import list_task_workspace_files, list_task_workspace_projects
@@ -36,6 +38,35 @@ MAX_IMAGE_BYTES = 6 * 1024 * 1024
 def _normalize_question(question: str | None) -> str:
     value = (question or "").strip()
     return value or "Analise esta imagem."
+
+
+def _vision_question_for_chat(question: str) -> str:
+    return (
+        f"{question.strip() or 'Analise esta imagem.'}\n\n"
+        "Se houver exercicio de matematica, fisica, quimica, estatistica ou outra area de exatas, "
+        "transcreva fielmente o enunciado, numeros, formulas, unidades e alternativas em visible_text."
+    )
+
+
+def _analysis_text(analyses: list[dict]) -> str:
+    parts: list[str] = []
+    for index, analysis in enumerate(analyses, start=1):
+        summary = str(analysis.get("summary") or "").strip()
+        visible_text = str(analysis.get("visible_text") or "").strip()
+        suggested = str(analysis.get("suggested_action") or "").strip()
+        parts.append(
+            "\n".join(
+                item
+                for item in (
+                    f"Imagem {index}:",
+                    f"Resumo: {summary}" if summary else "",
+                    f"Texto visivel: {visible_text}" if visible_text else "",
+                    f"Observacao: {suggested}" if suggested else "",
+                )
+                if item
+            )
+        )
+    return "\n\n".join(part for part in parts if part)
 
 
 async def _read_image_upload(file: UploadFile) -> dict:
@@ -113,7 +144,7 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
         )
         analysis = await vision_tool.analyze(
             image["image_base64"],
-            question=question,
+            question=_vision_question_for_chat(question),
             content_type=image["content_type"],
             task_id=task_id,
         )
@@ -122,7 +153,38 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
         if updated_saved:
             saved_images[-1] = updated_saved
 
-    if len(analyses) == 1:
+    analysis_context = _analysis_text(analyses)
+    if is_exact_prompt(f"{question}\n{analysis_context}"):
+        await event_bus.publish(
+            task_id,
+            "agent_progress",
+            {"label": "Resolvendo enunciado da imagem", "detail": "Usando tool de exatas com a transcricao visual.", "tool": "exact_solve"},
+        )
+        await event_bus.publish(
+            task_id,
+            "tool_call",
+            {
+                "name": "exact_solve",
+                "description": "Resolver pergunta de exatas extraida de imagem",
+                "params": {"problem": question, "context": analysis_context},
+            },
+        )
+        exact_result = solve_exact_problem(question, context=analysis_context)
+        await event_bus.publish(task_id, "tool_result", {"name": "exact_solve", "result": exact_result})
+        if exact_result.get("status") == "solved":
+            answer = format_exact_answer(exact_result)
+        elif deepseek_configured():
+            direct = await request_direct_chat_response(
+                [{"role": "user", "content": f"{question}\n\nAnalise da imagem:\n{analysis_context}"}],
+                mode="exact",
+                tool_context={"vision_analysis": analyses, "exact_solve": exact_result},
+            )
+            answer = direct["content"]
+        else:
+            answer = _format_vision_answer(analyses[0]) if len(analyses) == 1 else "\n\n".join(
+                f"Imagem {index}: {_format_vision_answer(analysis)}" for index, analysis in enumerate(analyses, start=1)
+            )
+    elif len(analyses) == 1:
         answer = _format_vision_answer(analyses[0])
     else:
         answer = "\n\n".join(
@@ -191,7 +253,7 @@ async def create_image_task(question: str = Form(""), files: list[UploadFile] = 
     await event_bus.publish(task["id"], "task_created", {"task": task})
     try:
         result = await _publish_and_analyze_images(task["id"], normalized_question, files)
-    except VisionError as exc:
+    except (VisionError, DeepSeekError) as exc:
         task_store.update_status(task["id"], "error", result=str(exc))
         await event_bus.publish(task["id"], "error", {"message": str(exc)})
         await event_bus.publish(task["id"], "agent_status", {"status": "error", "label": "Erro na visão"})
@@ -213,7 +275,7 @@ async def create_task_images(task_id: str, question: str = Form(""), files: list
     task_store.update_status(task_id, "running")
     try:
         return await _publish_and_analyze_images(task_id, normalized_question, files)
-    except VisionError as exc:
+    except (VisionError, DeepSeekError) as exc:
         task_store.update_status(task_id, "error", result=str(exc))
         await event_bus.publish(task_id, "error", {"message": str(exc)})
         await event_bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro na visão"})

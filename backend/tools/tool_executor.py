@@ -16,6 +16,7 @@ from services.project_files import sync_task_workspace_files
 
 from config import settings
 from tools.browser import browser_tool
+from tools.exact import exact_tool
 from tools.shell import _project_dir, run_shell
 from tools.vision import vision_tool
 
@@ -41,6 +42,7 @@ TOOLS: dict[str, ToolCallable] = {
     "browser_scroll": browser_tool.scroll,
     "shell_run": run_shell,
     "vision_analyze": vision_tool.analyze,
+    "exact_solve": exact_tool.solve,
 }
 
 

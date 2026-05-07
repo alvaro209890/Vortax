@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     FRONTEND_PORT: int = 5173
     LAN_ONLY: bool = True
     ALLOW_NO_AUTH: bool = True
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,https://notazap-2520f.web.app,https://notazap-2520f.firebaseapp.com"
+    PUBLIC_HOSTS: str = "vortax-api.cursar.space"
 
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
@@ -64,6 +65,10 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def public_hosts_list(self) -> list[str]:
+        return [host.strip().lower() for host in self.PUBLIC_HOSTS.split(",") if host.strip()]
 
 
 @lru_cache

@@ -475,12 +475,6 @@ small {
 
 .context-indicator.full .context-dot {
   color: var(--accent-danger);
-  animation: contextPulse 1.2s ease-in-out infinite;
-}
-
-@keyframes contextPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.12); }
 }
 
 /* Message List */
@@ -506,7 +500,6 @@ small {
   gap: 16px;
   max-width: 100%;
   min-width: 0;
-  animation: fadeIn 0.3s ease-out;
   width: 100%;
   padding: 24px;
   border-radius: var(--radius-lg);
@@ -523,6 +516,10 @@ small {
   background: rgba(8, 198, 93, 0.02);
   border-color: rgba(8, 198, 93, 0.1);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+.message.typing-message {
+  padding: 18px 24px;
 }
 
 .message:hover {
@@ -655,6 +652,42 @@ small {
   text-decoration: underline;
 }
 
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+
+.typing-dots span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #08C65D;
+  opacity: 0.35;
+  animation: typingDot 1.15s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes typingDot {
+  0%, 80%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
 .message-images {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 220px));
@@ -686,6 +719,26 @@ small {
   background: #050607;
 }
 
+.message-image-pending {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(8, 198, 93, 0.08), rgba(255, 255, 255, 0.03)),
+    #050607;
+  background-size: 220% 100%;
+  animation: attachmentPending 1.4s ease-in-out infinite;
+}
+
+@keyframes attachmentPending {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 .message-images span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -706,7 +759,6 @@ small {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(12px);
   color: var(--text-primary);
-  animation: activityEnter 0.28s ease-out;
 }
 
 .activity-header {
@@ -895,11 +947,6 @@ small {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
-}
-
-@keyframes activityEnter {
-  from { opacity: 0; transform: translateY(8px) scale(0.99); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes activityPulse {
@@ -1412,7 +1459,6 @@ small {
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
   border: 1px solid var(--border-light);
   cursor: default;
-  animation: modalScale 0.2s ease-out;
 }
 
 .image-modal-close,

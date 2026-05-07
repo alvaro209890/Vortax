@@ -7,8 +7,9 @@ from pathlib import Path
 from config import settings
 from database import database
 from services.context_manager import prepare_context_history
-from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action
+from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action, request_direct_chat_response
 from services.event_bus import EventBus
+from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.mock_runner import run_mock_task
 from services.research_policy import cross_check_status
 from services.task_store import TaskStore
@@ -295,6 +296,60 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
     return [{"role": "system", "content": source_context}, *history]
 
 
+async def _finish_text_response(
+    task_id: str,
+    description: str,
+    result: str,
+    store: TaskStore,
+    bus: EventBus,
+) -> None:
+    store.update_status(task_id, "done", result=result)
+    await bus.publish(task_id, "assistant_message_done", {"content": result})
+    _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+    if final_compacted:
+        await bus.publish(task_id, "context_compacted", final_context)
+    await bus.publish(task_id, "context_status", final_context)
+    await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+
+
+async def _answer_exact_prompt(
+    task_id: str,
+    description: str,
+    history: list[dict[str, str]],
+    store: TaskStore,
+    bus: EventBus,
+) -> None:
+    await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Calculando"})
+    await bus.publish(task_id, "agent_progress", {"label": "Resolvendo com tool de exatas", "detail": description, "tool": "exact_solve"})
+    await bus.publish(task_id, "tool_call", {"name": "exact_solve", "description": "Resolver pergunta de matematica/exatas", "params": {"problem": description}})
+    exact_result = solve_exact_problem(description)
+    await bus.publish(task_id, "tool_result", {"name": "exact_solve", "result": exact_result})
+
+    if exact_result.get("status") == "solved":
+        await _finish_text_response(task_id, description, format_exact_answer(exact_result), store, bus)
+        return
+
+    direct = await request_direct_chat_response(
+        history,
+        mode="exact",
+        tool_context={"exact_solve": exact_result},
+    )
+    await _finish_text_response(task_id, description, direct["content"], store, bus)
+
+
+async def _answer_simple_prompt(
+    task_id: str,
+    description: str,
+    history: list[dict[str, str]],
+    store: TaskStore,
+    bus: EventBus,
+) -> None:
+    await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Respondendo"})
+    await bus.publish(task_id, "agent_progress", {"label": "Resposta rapida", "detail": "Sem planner e sem Vertex para pergunta simples."})
+    direct = await request_direct_chat_response(history, mode="direct")
+    await _finish_text_response(task_id, description, direct["content"], store, bus)
+
+
 async def _wait_if_paused_or_stopped(task_id: str, store: TaskStore, bus: EventBus) -> bool:
     while store.is_paused(task_id):
         if store.is_stopped(task_id):
@@ -333,6 +388,14 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         await bus.publish(task_id, "context_status", context_payload)
         await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
         await bus.publish(task_id, "agent_progress", {"label": "Analisando pedido", "detail": description})
+
+        latest_prompt = _latest_user_prompt(history) or description
+        if is_exact_prompt(latest_prompt):
+            await _answer_exact_prompt(task_id, latest_prompt, history, store, bus)
+            return
+        if should_answer_directly(latest_prompt):
+            await _answer_simple_prompt(task_id, latest_prompt, history, store, bus)
+            return
 
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):
@@ -405,13 +468,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                         )
                         continue
                 result = result + _format_research_note(research_status)
-                store.update_status(task_id, "done", result=result)
-                await bus.publish(task_id, "assistant_message_done", {"content": result})
-                _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
-                if final_compacted:
-                    await bus.publish(task_id, "context_compacted", final_context)
-                await bus.publish(task_id, "context_status", final_context)
-                await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+                await _finish_text_response(task_id, description, result, store, bus)
                 return
 
             if action.get("requires_confirmation"):

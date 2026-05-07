@@ -1264,6 +1264,9 @@ sudo systemctl restart vortax-backend
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 3.2 | 06/05/2026 | Roteador de resposta rápida antes do planner: perguntas simples respondem direto no chat; perguntas de matemática/exatas usam tool `exact_solve`; imagens de exercícios passam por visão com transcrição e resolução; frontend mostra balão de digitação com três pontos animados enquanto aguarda resposta |
+| 3.1 | 06/05/2026 | Backend promovido de serviço transitório para unit systemd de usuário versionada (`deploy/systemd/user/vortax-backend.service`), com `Restart=always`, `DISPLAY=:0`, `XAUTHORITY=%h/.Xauthority` e habilitação por `systemctl --user enable --now`; `linger` do usuário `server` documentado para iniciar backend e túnel no boot mesmo sem login |
+| 3.0 | 06/05/2026 | Deploy externo do frontend no Firebase Hosting (`notazap-2520f.web.app`), configuração versionada de Firebase (`firebase.json`, `.firebaserc`, `frontend/.env.production`) e Cloudflare Tunnel dedicado para o backend Vortax (`vortax-api`, `vortax-api.cursar.space` -> `127.0.0.1:8010`); CORS atualizado para Firebase Hosting; serviço systemd de usuário `vortax-cloudflared.service` documentado |
 | 2.9 | 06/05/2026 | Validação pós-Vertex generalizada para qualquer projeto de código (`project_validation_*`): Python com `py_compile`/`unittest`, Node/JS com `node --check`/build/test quando aplicável e checagem de assets HTML; runner bloqueia `finish` quando `web_validation` ou `project_validation` falha e manda o Vertex corrigir os bugs; prompt do DeepSeek reforçado para ciclo criar → validar → corrigir → validar; aba Atividade filtrada para mostrar só marcos úteis; stream do Vertex ganhou legenda estimada, trilha de progresso e cartão de status de validação |
 | 2.8 | 06/05/2026 | Botao de parar tarefa durante execucao com `POST /api/control/{task_id}/stop`; interrupcao de subprocessos shell/vertex/dev-server via `killpg`; checagem `is_stopped` no loop de drain do shell e entre iteracoes do runner; preview automatico no Chrome quando `index.html` e gerado (`_open_static_preview_if_available`); componente `CollapsiblePanel` reutilizavel refatorando FileList/SourceList/ScreenView/ActionTimeline; `usePersistentState` hook para lembrar estado collapsed dos paineis; favicon e apple-touch-icon no index.html |
 | 2.7 | 06/05/2026 | Preview de projetos web em iframe embutido no painel inspetor (`PreviewPanel`); servidores de desenvolvimento (`npm run dev`, `npx vite`, `python -m http.server`) executados em background com detecção de porta e proxy local; resumo estruturado de arquivos (`file_summary`) como parte do resultado do `shell_run` em vez de truncamento bruto; evento `dev_server_started` via WebSocket |
@@ -1335,6 +1338,12 @@ sudo systemctl restart vortax-backend
 - [x] Correção automática de bugs: se validação falha, o agente não finaliza e manda o Vertex corrigir
 - [x] Atividade enxuta no frontend, removendo eventos repetitivos e ruído técnico da timeline
 - [x] Stream do Vertex com legenda estimada do que está acontecendo e status de validação
+- [x] Configuração Firebase Hosting para publicar `frontend/dist` no projeto `notazap-2520f`
+- [x] Configuração Cloudflare Tunnel dedicada para backend Vortax em `vortax-api.cursar.space`
+- [x] CORS atualizado para frontend Firebase (`notazap-2520f.web.app` e `notazap-2520f.firebaseapp.com`)
+- [x] Roteador de resposta rápida sem planner para perguntas simples
+- [x] Tool `exact_solve` para matemática/exatas, incluindo uso após análise de imagem
+- [x] Três pontos animados no chat enquanto o Vortax prepara resposta
 
 ### Vertex CLI — Motor de Desenvolvimento de Software
 
@@ -1427,6 +1436,48 @@ Implementado em 06/05/2026:
 - A timeline mostra apenas marcos de alto sinal: arquivos gerados, erros, fontes, resposta final, servidor iniciado, resultado de validação e estágios importantes do Vertex.
 - Eventos repetidos consecutivos são compactados e a timeline mantém os últimos 24 marcos.
 - `ScreenView` mostra uma simulação de programação enquanto o Vertex trabalha antes do primeiro screenshot relevante, com legenda "Leitura estimada".
+- `MessageList` mostra o balão do Vortax com três pontos animados sempre que há mensagem do usuário aguardando resposta.
+
+### Resposta Rápida e Exatas
+
+Implementado em 06/05/2026:
+
+- **Roteador antes do planner:** `services/exact_solver.py` detecta perguntas simples, pedidos de exatas, solicitações de software e pedidos que exigem pesquisa/dado atual.
+- **Perguntas simples:** `agent_runner.py` chama `request_direct_chat_response(mode="direct")` e finaliza no chat, sem `Planejando proximo passo`, Vertex ou ferramentas do navegador.
+- **Matemática/exatas:** `exact_solve` resolve contas, porcentagem e equações simples de forma determinística, publica `tool_call`/`tool_result` e só usa DeepSeek para explicar quando a ferramenta não fecha sozinha.
+- **Imagem com exercício:** `api/tasks.py` pede ao `vision_analyze` para transcrever enunciado, números, fórmulas, unidades e alternativas; depois tenta `exact_solve` com esse contexto e usa modo direto de exatas para finalizar se precisar.
+- **Planner atualizado:** `deepseek_client.py` também conhece `exact_solve`, então perguntas de exatas que chegarem ao ReAct ainda usam ferramenta antes do `finish`.
+
+### Deploy Externo Firebase + Cloudflare
+
+Implementado em 06/05/2026:
+
+- **Firebase Hosting:** projeto `notazap-2520f`, site `notazap-2520f`, URL `https://notazap-2520f.web.app`.
+- **Arquivos Firebase:** `.firebaserc` define o projeto default; `firebase.json` publica `frontend/dist` em modo SPA com rewrite para `index.html`.
+- **Build de produção:** `frontend/.env.production` define `VITE_API_BASE_URL=https://vortax-api.cursar.space`, portanto o bundle publicado no Firebase chama o backend pelo túnel.
+- **Cloudflare Tunnel dedicado:** túnel `vortax-api`, UUID `8c063535-c3cd-427a-9546-e8d48b9e4822`, config versionada em `deploy/cloudflared/vortax-api.yml`, ingress `vortax-api.cursar.space -> http://127.0.0.1:8010`.
+- **Serviços persistentes:** units versionadas em `deploy/systemd/user/vortax-backend.service` e `deploy/systemd/user/vortax-cloudflared.service`, instaladas localmente em `~/.config/systemd/user/` e habilitadas com `systemctl --user enable --now`.
+- **Boot automático:** `loginctl enable-linger server` mantém o gerenciador systemd do usuário ativo no boot, então backend e túnel sobem mesmo sem sessão aberta após reinício do PC.
+- **Cuidados com `cursar.space`:** não alterar `~/.cloudflared/config.yml`, `vertex-api.yml` ou services existentes. O Vortax usa config e serviço próprios para evitar quebrar `saldopro-api`, `wms`, `geoforest-api`, `ecogestor-api`, `vertex-api`, Nexus e outros serviços.
+- **CORS:** `ALLOWED_ORIGINS` inclui `https://notazap-2520f.web.app` e `https://notazap-2520f.firebaseapp.com`.
+- **Guard LAN + Cloudflare:** `LAN_ONLY=true` continua ativo; acesso público só é aceito quando `Host` pertence a `PUBLIC_HOSTS` (`vortax-api.cursar.space`) e a requisição contém headers do Cloudflare (`CF-Ray`/`CF-Connecting-IP`).
+
+Comandos de deploy:
+
+```bash
+cd frontend
+npm run build
+cd ..
+firebase deploy --project notazap-2520f --only hosting:notazap-2520f
+```
+
+Comandos de verificação:
+
+```bash
+systemctl --user is-active vortax-backend.service vortax-cloudflared.service
+curl https://vortax-api.cursar.space/health
+curl https://notazap-2520f.web.app
+```
 
 ### BrowserTool + Planner JSON
 
@@ -1553,3 +1604,6 @@ Não reaproveitado agora:
 | 06/05/2026 | Preview iframe, dev servers em background e file_summary | `backend/tools/shell.py`, `backend/tools/tool_executor.py`, `backend/api/files.py`, `backend/services/stream_contract.py`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/App.jsx`, `frontend/src/index.css` | `npm run build` OK; `python -m py_compile` OK; preview de index.html estatico e dev servers; 6 padroes de deteccao de dev server; 4 padroes de extracao de porta; file_summary com tipo de projeto, extensoes e arquivos principais |
 | 06/05/2026 | Interrupcao de tarefas + CollapsiblePanel + preview automatico no Chrome | `backend/api/control.py`, `backend/services/agent_runner.py`, `backend/tools/shell.py`, `backend/api/tasks.py`, `backend/tools/tool_executor.py`, `frontend/src/App.jsx`, `frontend/src/lib/api.js`, `frontend/src/index.css`, `frontend/src/components/CollapsiblePanel.jsx`, `frontend/src/components/FileList.jsx`, `frontend/src/components/SourceList.jsx`, `frontend/src/components/ScreenView.jsx`, `frontend/src/components/ActionTimeline.jsx`, `frontend/src/components/PreviewPanel.jsx`, `frontend/src/hooks/usePersistentState.js`, `frontend/index.html` | `npm run build` OK; `python -m py_compile` OK; botao Parar interrompe runner + shell + vertex + dev server; `_open_static_preview_if_available` navega Chrome para index.html gerado; CollapsiblePanel refatora 5 paineis; usePersistentState salva collapsed no localStorage; favicon adicionado |
 | 06/05/2026 | Validacao pos-Vertex geral, correcao automatica e stream refinado | `backend/services/project_validation.py`, `backend/services/agent_runner.py`, `backend/tools/tool_executor.py`, `backend/services/deepseek_client.py`, `frontend/src/components/AgentActivity.jsx`, `frontend/src/components/ActionTimeline.jsx`, `frontend/src/components/ScreenView.jsx`, `frontend/src/index.css`, `backend/tests/test_project_validation.py`, `backend/tests/test_agent_history.py`, `backend/tests/test_vertex_stream.py` | `backend/.venv/bin/python -m unittest discover -s tests` OK (62 testes); `npm run build` OK; servicos `vortax-backend.service` e `vortax-frontend-dev.service` reiniciados e `/health` OK |
+| 06/05/2026 | Deploy Firebase Hosting + Cloudflare Tunnel dedicado | `firebase.json`, `.firebaserc`, `frontend/.env.production`, `deploy/cloudflared/vortax-api.yml`, `deploy/systemd/user/vortax-backend.service`, `deploy/systemd/user/vortax-cloudflared.service`, `backend/config.py`, `.env.example`, `README.md`, `PLANO_VORTAX.md` | Firebase login ativo para `alvarocanaisgames@gmail.com`; site `notazap-2520f` encontrado; túnel `vortax-api` criado; serviços `vortax-backend.service` e `vortax-cloudflared.service` ativos e habilitados; `npm run build` OK; backend tests OK |
+| 06/05/2026 | Backend persistente no boot | `deploy/systemd/user/vortax-backend.service`, `README.md`, `PLANO_VORTAX.md` | Unit instalada em `~/.config/systemd/user/vortax-backend.service`; `loginctl show-user server` com `Linger=yes`; backend habilitado via `systemctl --user enable --now vortax-backend.service` |
+| 06/05/2026 | Resposta rapida, exatas com tools e typing dots | `backend/services/exact_solver.py`, `backend/tools/exact.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/api/tasks.py`, `frontend/src/App.jsx`, `frontend/src/components/MessageList.jsx`, `frontend/src/index.css`, `backend/tests/test_exact_solver.py` | `exact_solve` testado com aritmetica, porcentagem e equacao linear; perguntas simples pulam planner; imagens de exatas usam visao + tool; `npm run build` OK |

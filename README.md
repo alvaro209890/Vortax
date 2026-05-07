@@ -4,6 +4,8 @@
 
 > Versão MVP local em LAN. Sem autenticação, sem hospedagem externa.
 
+> Deploy externo atual: frontend publicado no Firebase Hosting em `https://notazap-2520f.web.app`; backend local exposto por Cloudflare Tunnel em `https://vortax-api.cursar.space`.
+
 ---
 
 ## Vertex CLI — Motor de Desenvolvimento de Software
@@ -59,6 +61,8 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 ## Funcionalidades
 
 - **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
+- **Resposta rápida sem planner** — perguntas simples são respondidas direto no chat, sem passar por Vertex ou ciclo ReAct
+- **Exatas com tools** — matemática, física, química, estatística e contas usam `exact_solve`; se o enunciado vier por imagem, o Vortax faz OCR/visão e resolve a partir da transcrição
 - **Contexto por conversa** — cada chat mantém estado de contexto, estimativa de tokens e compactação automática
 - **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
 - **Stream em tempo real** — WebSocket com eventos de ação, screenshots e resultados
@@ -69,6 +73,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Painel de atividade enxuto** — timeline lateral mostra só marcos úteis, sem ruído de stdout, status repetido ou screenshots intermediários
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
+- **Indicador de digitação** — enquanto a IA prepara a resposta, o chat mostra os três pontos animados no balão do Vortax
 - **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
 - **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
 - **Validação pós-Vertex** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
@@ -98,6 +103,7 @@ Usuário na LAN (http://IP:5173)
             │  • Chrome CDP (Playwright) │   │   (via shell_run)    │
             │  • Shell seguro + Vertex   │   │                      │
             │  • Visão (Groq/Llama 4)    │   │                      │
+            │  • Exatas (exact_solve)    │   │                      │
             └────────────────────────────┘   └──────────────────────┘
                                  │                    │
                                  ▼                    ▼
@@ -167,6 +173,77 @@ cp .env.example .env
 ```
 
 Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
+
+---
+
+## Respostas Rápidas e Exatas
+
+O runner possui um roteador antes do planner:
+
+- Perguntas simples, conceituais e curtas usam resposta direta do DeepSeek no chat, sem abrir ciclo de planejamento.
+- Pedidos de criação, correção, publicação, automação, pesquisa ou dado atual continuam no planner com ferramentas.
+- Perguntas de matemática/exatas chamam `exact_solve` antes de responder. A tool resolve contas, porcentagens e equações simples de forma determinística.
+- Imagens com exercícios passam primeiro por `vision_analyze`, que transcreve enunciado, números, fórmulas e unidades; depois o backend tenta `exact_solve` e usa o DeepSeek para explicar quando o problema exige raciocínio além da conta determinística.
+
+---
+
+## Deploy Firebase + Cloudflare
+
+O deploy externo separa frontend e backend:
+
+- **Frontend:** Firebase Hosting no projeto `notazap-2520f`, site `notazap-2520f`, URL `https://notazap-2520f.web.app`.
+- **Backend:** continua rodando neste PC em `127.0.0.1:8010`.
+- **Túnel público do backend:** Cloudflare Tunnel dedicado `vortax-api`, UUID `8c063535-c3cd-427a-9546-e8d48b9e4822`, hostname `https://vortax-api.cursar.space`.
+
+Arquivos versionados de deploy:
+
+- `firebase.json` — publica `frontend/dist` como SPA no Firebase Hosting.
+- `.firebaserc` — aponta o projeto default para `notazap-2520f`.
+- `frontend/.env.production` — define `VITE_API_BASE_URL=https://vortax-api.cursar.space`.
+- `deploy/cloudflared/vortax-api.yml` — ingress isolado do túnel Vortax para `http://127.0.0.1:8010`.
+- `deploy/systemd/user/vortax-backend.service` — serviço systemd de usuário para iniciar o backend automaticamente no boot.
+- `deploy/systemd/user/vortax-cloudflared.service` — serviço systemd de usuário para manter o túnel ativo.
+
+Comandos usados no servidor:
+
+```bash
+# Instalar config local do túnel
+install -D -m 600 deploy/cloudflared/vortax-api.yml ~/.cloudflared/vortax-api.yml
+install -D -m 644 deploy/systemd/user/vortax-backend.service ~/.config/systemd/user/vortax-backend.service
+install -D -m 644 deploy/systemd/user/vortax-cloudflared.service ~/.config/systemd/user/vortax-cloudflared.service
+
+# DNS do túnel
+cloudflared tunnel route dns --overwrite-dns 8c063535-c3cd-427a-9546-e8d48b9e4822 vortax-api.cursar.space
+
+# Serviços persistentes no boot do PC
+loginctl enable-linger server
+systemctl --user daemon-reload
+systemctl --user enable --now vortax-backend.service
+systemctl --user enable --now vortax-cloudflared.service
+
+# Build e deploy do frontend
+cd frontend
+npm run build
+cd ..
+firebase deploy --project notazap-2520f --only hosting:notazap-2520f
+```
+
+Validação esperada:
+
+```bash
+systemctl --user is-enabled vortax-backend.service vortax-cloudflared.service
+systemctl --user is-active vortax-backend.service vortax-cloudflared.service
+curl https://vortax-api.cursar.space/health
+curl https://notazap-2520f.web.app
+```
+
+O backend precisa permitir CORS para `https://notazap-2520f.web.app` e `https://notazap-2520f.firebaseapp.com`; isso já está no default de `ALLOWED_ORIGINS` e em `.env.example`.
+
+Como `LAN_ONLY=true` continua ativo, o acesso público ao backend só é aceito quando o hostname está em `PUBLIC_HOSTS` e a requisição vem com headers do Cloudflare Tunnel. O valor padrão é:
+
+```bash
+PUBLIC_HOSTS=vortax-api.cursar.space
+```
 
 ---
 
