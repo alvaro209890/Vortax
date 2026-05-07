@@ -15,7 +15,6 @@ import {
   Search,
   SkipBack,
   SkipForward,
-  Terminal,
   X,
   XCircle,
 } from "lucide-react";
@@ -54,6 +53,15 @@ function statusLabel(status) {
   return "Pronto";
 }
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 const codeAgentStageLabels = {
   starting: "Preparando ambiente",
   planning: "Planejando arquitetura",
@@ -70,7 +78,7 @@ const codeAgentStageLabels = {
 };
 
 const codeAgentStageDescriptions = {
-  starting: "Abrindo a sessao do OpenClaude na pasta da conversa.",
+  starting: "Preparando a area de trabalho da conversa.",
   planning: "Separando requisitos em arquivos, componentes e validacoes.",
   creating: "Montando a base do projeto antes de editar detalhes.",
   writing_file: "Aplicando alteracoes em arquivos reais do workspace.",
@@ -78,7 +86,7 @@ const codeAgentStageDescriptions = {
   reading_file: "Conferindo arquivos para decidir o proximo ajuste.",
   installing: "Preparando pacotes ou scripts necessarios.",
   configuring: "Ajustando configs, rotas ou comandos do projeto.",
-  executing: "Rodando comandos e acompanhando a saida do terminal.",
+  executing: "Aplicando acoes e sincronizando arquivos.",
   validating: "Abrindo o resultado e procurando problemas visuais.",
   done: "Arquivos salvos e resposta final pronta para o chat.",
   error: "A execucao retornou algo que precisa de correcao.",
@@ -90,8 +98,8 @@ function fileName(value) {
 
 function compactCommand(command = "") {
   const value = String(command).trim().replace(/^cd\s+[^&]+\s*&&\s*/, "");
-  if (!value) return "openclaude --workspace tarefa";
-  if (/^openclaude\b/.test(value)) return "openclaude --workspace tarefa";
+  if (!value) return "vortax://workspace/projeto";
+  if (/^openclaude\b/.test(value)) return "vortax://workspace/projeto";
   return value.length > 72 ? `${value.slice(0, 69)}...` : value;
 }
 
@@ -183,7 +191,7 @@ function latestPreview(events) {
     candidates.push({
       createdAt: eventTime(codeAgent),
       file: codeAgent.payload?.file,
-      label: codeAgent.payload?.message || "OpenClaude trabalhando",
+      label: publicText(codeAgent.payload?.message || "Vortax trabalhando"),
       mode: "editor",
       using: "Editor",
     });
@@ -191,9 +199,9 @@ function latestPreview(events) {
   if (shell) {
     candidates.push({
       createdAt: eventTime(shell),
-      label: isCodeAgentShell(shell) ? "OpenClaude iniciando" : shell.payload?.description || shell.payload?.params?.command || "Terminal",
+      label: isCodeAgentShell(shell) ? "Vortax preparando o workspace" : publicText(shell.payload?.description || shell.payload?.params?.command || "Terminal"),
       mode: isCodeAgentShell(shell) ? "editor" : "terminal",
-      using: isCodeAgentShell(shell) ? "Editor" : "Terminal",
+      using: isCodeAgentShell(shell) ? "Workspace" : "Terminal",
     });
   }
 
@@ -256,8 +264,8 @@ function CodingWorkspace({ snapshot }) {
           <span />
         </div>
         <span className="computer-ide-title">
-          <Code2 size={13} />
-          OpenClaude Workspace
+          <Monitor size={13} />
+          Computador do Vortax
         </span>
         <span className={`computer-ide-status ${snapshot.status === "done" ? "done" : "running"}`}>
           {snapshot.status === "done" ? "salvo" : "ao vivo"}
@@ -294,17 +302,11 @@ function CodingWorkspace({ snapshot }) {
           </div>
         </main>
       </div>
-      <div className="computer-terminal-pane">
-        <div className="computer-terminal-title">
-          <Terminal size={12} />
-          terminal
-          <small>{snapshot.stageLabel}</small>
-        </div>
-        <div className="computer-terminal-lines">
-          {snapshot.terminalLines.map((line, index) => (
-            <span className={line.tone} key={`${line.text}-${index}`}>{line.text}</span>
-          ))}
-        </div>
+      <div className="computer-editor-statusbar">
+        <span>{snapshot.stageLabel}</span>
+        <span>{snapshot.language}</span>
+        <span>UTF-8</span>
+        <span>Ln 84, Col 12</span>
       </div>
     </div>
   );
@@ -381,9 +383,6 @@ function buildCodingSnapshot(events, preview) {
   const hasCodingActivity = codeAgentEvents.length > 0 || Boolean(lastShellCall) || realFiles.length > 0;
   const activeFile = fileName(latestCodeAgent.file || realFiles[0]) || (hasCodingActivity ? "App.jsx" : "");
   const stage = hasCodingActivity ? latestCodeAgent.stage || "executing" : preview.mode || "idle";
-  const shellEvents = events
-    .filter((event) => event.type === "shell_stdout" || event.type === "shell_stderr")
-    .slice(-5);
   const validation = latestPayload(events, (event) =>
     event.type === "web_validation_result" || event.type === "project_validation_result"
   );
@@ -392,27 +391,16 @@ function buildCodingSnapshot(events, preview) {
     : ["src/App.jsx", "src/index.css", "package.json", "README.md"];
   const status = latestCodeAgent.status || (lastShellResult ? "done" : lastShellCall ? "running" : "idle");
   const stageLabel = hasCodingActivity ? codeAgentStageLabels[stage] || "Programando" : preview.label || "Computador pronto";
-  const stageDetail = latestCodeAgent.message
+  const stageDetail = publicText(latestCodeAgent.message
     || validation?.summary
     || validation?.reason
     || codeAgentStageDescriptions[stage]
-    || "Acompanhando a sessao de desenvolvimento.";
+    || "Acompanhando a sessao de desenvolvimento.");
   const command = hasCodingActivity ? compactCommand(lastShellCall?.payload?.params?.command) : "Computador do Vortax";
-  const terminalLines = shellEvents.length
-    ? shellEvents.map((event) => ({
-      tone: event.type === "shell_stderr" ? "warn" : "normal",
-      text: String(event.payload?.line || "").replace(/\s+/g, " ").slice(0, 110),
-    }))
-    : [
-      { tone: "muted", text: `$ ${command}` },
-      { tone: "normal", text: `${stageLabel.toLowerCase()}...` },
-      { tone: "normal", text: activeFile ? `editando ${activeFile}` : "sincronizando arquivos" },
-      { tone: validation?.status === "failed" ? "warn" : "ok", text: validation?.status ? `validacao: ${validation.status}` : "aguardando proximo evento" },
-    ];
 
   const codeLines = [
     "const task = await vortax.readContext();",
-    `open("${activeFile}")`,
+    `workspace.open("${activeFile}")`,
     "applyChanges({ focused: true });",
     validation?.status === "failed" ? "fixVisualIssues(report);" : "runQualityCheck();",
     "saveWorkspace();",
@@ -428,7 +416,6 @@ function buildCodingSnapshot(events, preview) {
     stageDetail,
     stageLabel,
     status,
-    terminalLines,
     codeLines,
   };
 }
@@ -491,33 +478,33 @@ function buildCodeAgentProgress(events, agentStatus) {
 
   const steps = [
     progressStep(
-      "openclaude-delegation",
-      "Delegar ao OpenClaude",
-      "DeepSeek enviou a parte de codigo para o OpenClaude.",
+      "vortax-prepare",
+      "Preparar execução",
+      "Vortax organizou a parte tecnica no workspace.",
       phaseStatus(active, hasPlanning || hasWriting || done),
     ),
     progressStep(
-      "openclaude-plan",
+      "vortax-plan",
       "Planejar projeto",
-      latestCodeAgent?.stage === "planning" ? latestCodeAgent.message : "Definir estrutura, arquivos e criterios de entrega.",
+      latestCodeAgent?.stage === "planning" ? publicText(latestCodeAgent.message) : "Definir estrutura, arquivos e criterios de entrega.",
       phaseStatus(hasPlanning, hasWriting || validationStarted || done),
     ),
     progressStep(
-      "openclaude-write",
+      "vortax-write",
       "Criar arquivos",
-      fileName ? `Trabalhando em ${String(fileName).split("/").pop()}.` : files.length ? `${files.length} arquivo(s) sincronizados.` : latestCodeAgent?.message || "Escrever e ajustar a entrega.",
+      fileName ? `Trabalhando em ${String(fileName).split("/").pop()}.` : files.length ? `${files.length} arquivo(s) sincronizados.` : publicText(latestCodeAgent?.message || "Escrever e ajustar a entrega."),
       phaseStatus(hasWriting, files.length > 0 || validationStarted || done),
     ),
     progressStep(
-      "openclaude-validate",
+      "vortax-validate",
       "Validar entrega",
       validationResult?.reason || validationResult?.summary || (validationStarted ? "Revisao automatica em andamento." : "Aguardar revisao automatica do Vortax."),
       phaseStatus(validationStarted, validationDone, validationFailed),
     ),
     progressStep(
-      "openclaude-return",
+      "vortax-return",
       "Devolver resultado",
-      done ? latestCodeAgent?.message || "OpenClaude devolveu a entrega ao Vortax." : "A resposta final sera montada apos a revisao.",
+      done ? publicText(latestCodeAgent?.message || "Vortax terminou a entrega.") : "A resposta final sera montada apos a revisao.",
       phaseStatus(done, done),
     ),
   ];
@@ -525,7 +512,7 @@ function buildCodeAgentProgress(events, agentStatus) {
   return {
     doneCount: steps.filter((step) => step.status === "passed").length,
     steps: visibleProgressSteps(steps, terminal),
-    title: "Trabalho do OpenClaude",
+    title: "Trabalho do Vortax",
     totalCount: steps.length,
   };
 }

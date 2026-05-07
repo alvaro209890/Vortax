@@ -15,6 +15,15 @@ const stageLabels = {
   done: "Entrega pronta",
 };
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 function codeAgentProgressSummary(events) {
   const progressEvents = events.filter((event) => event.type === "vertex_progress");
   if (progressEvents.length === 0) return null;
@@ -25,7 +34,7 @@ function codeAgentProgressSummary(events) {
 
   return {
     stage: last.stage,
-    message: last.message || "",
+    message: publicText(last.message || ""),
     file: last.file || null,
     done,
     totalSteps: new Set(stagesSeen).size,
@@ -111,7 +120,7 @@ export function ShellOutput({ events }) {
             className={event.type === "shell_stderr" ? "stderr" : ""}
             key={`${event.created_at}-${i}`}
           >
-            {event.payload?.line || ""}
+            {publicText(event.payload?.line || "")}
           </span>
         ))}
       </pre>

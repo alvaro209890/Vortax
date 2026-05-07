@@ -23,6 +23,15 @@ function isCodeAgentCommand(command) {
   return text.split(/\s+/)[0] === "openclaude";
 }
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 function lastUserPrompt(events, fallbackDescription) {
   const lastUserIndex = lastIndexOfType(events, "user_message");
   const content = lastUserIndex >= 0 ? events[lastUserIndex].payload?.content : "";
@@ -244,7 +253,7 @@ function StepIcon({ state }) {
   return <Circle size={15} />;
 }
 
-// ── OpenClaude Progress ─────────────────────────────────────────────────────
+// ── Code Agent Progress ─────────────────────────────────────────────────────
 
 function useCodeAgentProgress(events, taskDescription) {
   const [codeAgentPlan, setCodeAgentPlan] = useState(null);
@@ -273,7 +282,7 @@ function useCodeAgentProgress(events, taskDescription) {
     progressEvents.forEach((event) => {
       const payload = event.payload || {};
       const stage = payload.stage || "executing";
-      const message = payload.message || "OpenClaude trabalhando";
+      const message = publicText(payload.message || "Vortax trabalhando");
       const file = payload.file || null;
       const key = `${stage}:${message}:${file || ""}`;
       if (seen.has(key)) return;
@@ -303,7 +312,7 @@ function useCodeAgentProgress(events, taskDescription) {
 
     const currentIdx = steps ? Math.min(items.length, steps.length - 1) : 0;
     const dynamicTrack = steps
-      ? steps.map((s, i) => ({ label: s.label, done: i < items.length, active: i === currentIdx && running }))
+      ? steps.map((s, i) => ({ label: publicText(s.label), done: i < items.length, active: i === currentIdx && running }))
       : null;
 
     return {
@@ -354,7 +363,7 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
   const currentItem = items[items.length - 1];
   const currentLabel = codeAgentPlan && dynamicTrack
     ? (dynamicTrack.find(d => d.active)?.label || (done ? "Entrega pronta" : "Preparando..."))
-    : (currentItem?.message || "OpenClaude trabalhando");
+    : (currentItem?.message || "Vortax trabalhando");
 
   return (
     <div className={`vtx-toast ${done ? "vtx-done" : ""} ${collapsed ? "vtx-collapsed" : ""}`}>
@@ -406,7 +415,7 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
           </div>
         ) : (
           <div className="vtx-stage-track">
-            <span className="vtx-dot vtx-done" title="OpenClaude em execucao">v</span>
+            <span className="vtx-dot vtx-done" title="Vortax em execucao">v</span>
             {items.slice(1).map((_, idx) => (
               <span key={idx} className="vtx-dot vtx-active" title="..." />
             ))}
@@ -444,8 +453,8 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
                       {isItemDone ? <CheckCircle2 size={11} /> : isItemActive ? <Loader2 size={11} className="spinner" /> : <Circle size={11} />}
                     </span>
                     <div>
-                      <strong>{step.label}</strong>
-                      <p>{step.detail}</p>
+                      <strong>{publicText(step.label)}</strong>
+                      <p>{publicText(step.detail)}</p>
                     </div>
                   </motion.div>
                 );
@@ -465,8 +474,8 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
                     {isItemDone ? <CheckCircle2 size={11} /> : <Loader2 size={11} className="spinner" />}
                   </span>
                   <div>
-                    <strong>{item.message?.split(" ").slice(0, 4).join(" ") || "OpenClaude"}</strong>
-                    <p>{item.file ? item.file.split("/").pop() : item.message}</p>
+                    <strong>{item.message?.split(" ").slice(0, 4).join(" ") || "Vortax"}</strong>
+                    <p>{item.file ? item.file.split("/").pop() : publicText(item.message)}</p>
                   </div>
                 </motion.div>
               );
@@ -483,7 +492,7 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
                 </span>
                 <div>
                   <strong>Preparando execucao</strong>
-                  <p>OpenClaude iniciando ambiente de trabalho.</p>
+                  <p>Vortax preparando o ambiente de trabalho.</p>
                 </div>
               </motion.div>
             ))}
@@ -496,7 +505,7 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
 
 function actorLabel(actor) {
   if (actor === "deepseek") return "DeepSeek";
-  if (actor === "openclaude" || actor === "vertex") return "OpenClaude";
+  if (actor === "openclaude" || actor === "vertex") return "Vortax";
   return "Vortax";
 }
 
@@ -522,7 +531,7 @@ export function AiExchangePanel({ events }) {
       className="ai-exchange-panel"
       count={exchanges.length}
       storageKey="vortax.inspector.ai_exchange.collapsed"
-      title="DeepSeek ↔ OpenClaude"
+      title="Coordenação do Vortax"
     >
       <div className="ai-exchange-list">
         {exchanges.map((event, index) => {
@@ -537,7 +546,7 @@ export function AiExchangePanel({ events }) {
                   {actorLabel(actor)}
                   {payload.target ? ` → ${actorLabel(payload.target)}` : ""}
                 </strong>
-                <p>{payload.message || ""}</p>
+                <p>{publicText(payload.message || "")}</p>
               </div>
             </div>
           );

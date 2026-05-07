@@ -1,8 +1,8 @@
 # Plano Técnico — Vortax
 
-> **Versão:** 3.4 — OpenClaude como motor de desenvolvimento
+> **Versão:** 3.5 — Identidade pública Vortax no computador e no desenvolvimento
 > **Data:** 07/05/2026
-> **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software via OpenClaude, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
+> **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software pelo Computador do Vortax, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
 
 ---
 
@@ -44,7 +44,7 @@ Backend FastAPI :8010
 Runner ReAct
   |-- DeepSeek V4 Flash decide acoes
   |-- Tool executor executa browser/shell/visao/exatas
-  |-- OpenClaude cria/corrige projetos de software
+  |-- Motor interno cria/corrige projetos de software
   |-- Validadores bloqueiam finish ate passar
   |
   v
@@ -56,9 +56,10 @@ SQLite + workspace persistente
 
 Motor de software:
 
-- O Vortax delega criação/correção de software ao `openclaude` via `shell_run`.
-- O OpenClaude cria arquivos em `WORKSPACE_PATH/<task_id>/`.
-- Após cada execução OpenClaude, o Vortax indexa arquivos, roda validação e só permite finalizar quando a revisão obrigatória passar.
+- O Vortax delega criação/correção de software ao agente de código interno via `shell_run`.
+- O motor interno cria arquivos em `WORKSPACE_PATH/<task_id>/`.
+- Após cada execução do motor interno, o Vortax indexa arquivos, roda validação e só permite finalizar quando a revisão obrigatória passar.
+- A UI pública não expõe o nome do wrapper/provedor usado por baixo; tudo aparece como Vortax ou Computador do Vortax.
 
 Modelos:
 
@@ -197,7 +198,7 @@ Eventos importantes:
 - Estado: `agent_status`, `agent_progress`, `error`.
 - Tools: `tool_call`, `tool_result`, `shell_stdout`, `shell_stderr`, `shell_interactive_prompt`.
 - Navegador/tela: `screen_frame`, `source_saved`.
-- OpenClaude: `ai_exchange`, `vertex_progress` (nome legado do contrato), `files_created`.
+- Desenvolvimento: `ai_exchange`, `vertex_progress` (nome legado do contrato), `files_created`.
 - Validação: `web_validation_*`, `project_validation_*`.
 - Plano Vivo: `task_plan_created`, `task_plan_replanned`, `task_step_started`, `task_step_updated`, `task_step_completed`, `task_step_failed`.
 - Runtime web: `dev_server_started`, `dev_server_stopped`.
@@ -219,7 +220,7 @@ Todos os eventos passam por `stream_contract.py`; tipos desconhecidos viram `err
 9. Se for pesquisa sobre pessoa, roda consultas específicas e exige fontes suficientes.
 10. O planner escolhe uma tool por iteração.
 11. `tool_executor` executa a tool, publica eventos e resume resultado para o modelo.
-12. Se houver `shell_run openclaude`, o Vortax indexa arquivos e roda validações.
+12. Se houver uma chamada de desenvolvimento via `shell_run`, o Vortax indexa arquivos e roda validações.
 13. Se validação falhar, o runner impede `finish`, registra bugs e manda corrigir.
 14. Quando a entrega está validada, publica `assistant_message_done` e encerra runtimes temporários.
 
@@ -249,7 +250,7 @@ Shell:
 - Streaming stdout/stderr.
 - Detecção de prompts interativos e resposta automática limitada.
 - Detecção de servidores de desenvolvimento e cleanup por task.
-- Integração OpenClaude em TTY real.
+- Integração do agente de código interno em TTY real.
 
 Validação:
 
@@ -289,7 +290,7 @@ Stack real:
 Painéis atuais:
 
 - Chat principal com mensagens e composer.
-- `AgentActivity` com atividade dinâmica e progresso OpenClaude.
+- `AgentActivity` com atividade dinâmica e progresso apresentado como Vortax.
 - `TaskPlanPanel` com Plano Vivo persistido.
 - `ActionTimeline` com marcos técnicos enxutos.
 - `ScreenView` com galeria de screenshots.
@@ -297,7 +298,8 @@ Painéis atuais:
 - `SourceList` para fontes.
 - `FileList` para arquivos e ZIP.
 - `PreviewPanel` para projetos web.
-- `AiExchangePanel` para DeepSeek ↔ OpenClaude.
+- `AiExchangePanel` com coordenação técnica mascarada como Vortax.
+- `VortaxComputerDock` com o painel **Computador do Vortax**, workspace/editor visual, árvore de arquivos, barra de status e sem terminal bruto no quadro principal.
 
 Regras de UX:
 
@@ -395,8 +397,8 @@ Checagens mínimas antes de publicar:
 - `/health` retorna `status=ok`.
 - Nova task cria `task_plan_created`.
 - `GET /api/tasks/{task_id}` retorna `plan.steps`.
-- OpenClaude gera arquivos em `WORKSPACE_PATH/<task_id>`.
-- Validação pós-OpenClaude bloqueia `finish` se houver bug.
+- Motor interno gera arquivos em `WORKSPACE_PATH/<task_id>`.
+- Validação pós-desenvolvimento bloqueia `finish` se houver bug.
 - Download ZIP funciona.
 - Firebase chama backend via `https://vortax-api.cursar.space`.
 
@@ -408,7 +410,7 @@ Checagens mínimas antes de publicar:
 |-------|---------|-----------|
 | Backend sem autenticação exposto por túnel | Alto | Manter `PUBLIC_HOSTS` restrito e aceitar público apenas via headers Cloudflare; próxima etapa deve adicionar autenticação |
 | Chrome CDP exposto | Alto | Nunca publicar `9222`; manter bind local |
-| OpenClaude criar projeto incompleto | Médio | Validação automática + correção obrigatória antes do `finish` |
+| Motor interno criar projeto incompleto | Médio | Validação automática + correção obrigatória antes do `finish` |
 | Preview/dev server ficar órfão | Médio | Registry de processos, `stop_dev_server`, cleanup no lifespan |
 | Custos DeepSeek/Groq | Médio | `MAX_ITERATIONS=30`, cache de fontes, visão só quando necessária |
 | Informação atual com poucas fontes | Médio | `research_policy` bloqueia `finish` até atingir fontes mínimas |
@@ -445,17 +447,18 @@ Checagens mínimas antes de publicar:
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
-| 3.4 | 07/05/2026 | OpenClaude assumiu a execução de código no lugar do antigo fluxo Vertex, preservando `vertex_progress` e `vertex_steps` como nomes legados de contrato. |
+| 3.5 | 07/05/2026 | Frontend passou a apresentar o desenvolvimento como Vortax/Computador do Vortax, ocultando o nome do wrapper interno e removendo o terminal bruto do painel principal. |
+| 3.4 | 07/05/2026 | Motor interno de código assumiu a execução no lugar do antigo fluxo Vertex, preservando `vertex_progress` e `vertex_steps` como nomes legados de contrato. |
 | 3.3 | 07/05/2026 | Plano Vivo persistido com `task_steps`, eventos `task_plan_*`/`task_step_*`, integração no runner e painel `TaskPlanPanel`. |
 | 3.2 | 06/05/2026 | Resposta rápida, `exact_solve`, imagens de exercícios e typing dots. |
 | 3.1 | 06/05/2026 | Backend promovido para serviço systemd de usuário com boot persistente. |
 | 3.0 | 06/05/2026 | Deploy Firebase Hosting e Cloudflare Tunnel dedicado para backend. |
-| 2.9 | 06/05/2026 | Validação pós-OpenClaude geral e correção automática antes do `finish`. |
+| 2.9 | 06/05/2026 | Validação pós-desenvolvimento geral e correção automática antes do `finish`. |
 | 2.8 | 06/05/2026 | Botão parar, interrupção de subprocessos, preview automático e painéis colapsáveis. |
 | 2.7 | 06/05/2026 | Preview iframe, dev servers em background e `file_summary`. |
-| 2.6 | 06/05/2026 | Terminal OpenClaude integrado, ZIP por conversa, cache de pesquisa e verificação cruzada. |
-| 2.5 | 06/05/2026 | Shell seguro, OpenClaude via `shell_run`, streaming stdout/stderr e `files_created`. |
-| 2.4 | 06/05/2026 | Documentação do OpenClaude como motor de desenvolvimento. |
+| 2.6 | 06/05/2026 | Terminal de desenvolvimento integrado, ZIP por conversa, cache de pesquisa e verificação cruzada. |
+| 2.5 | 06/05/2026 | Shell seguro, motor interno via `shell_run`, streaming stdout/stderr e `files_created`. |
+| 2.4 | 06/05/2026 | Documentação inicial do motor de desenvolvimento. |
 | 2.3 | 06/05/2026 | Visão via Groq/Llama 4 Scout. |
 | 2.2 | 06/05/2026 | Chat-first estilo Manus com DeepSeek V4 Flash. |
 | 2.1 | 06/05/2026 | Adaptação para Linux Mint, Chrome CDP, SQLite e WebSocket. |

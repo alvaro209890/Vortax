@@ -968,7 +968,7 @@ small {
 
 .message.assistant .message-avatar {
   background: rgba(8, 198, 93, 0.1);
-  color: #08C65D; /* OpenClaude green */
+  color: #08C65D; /* Vortax green */
   border: 1px solid rgba(8, 198, 93, 0.25);
   box-shadow: 0 0 12px rgba(8, 198, 93, 0.15);
 }
@@ -3105,7 +3105,7 @@ small {
   background: #10D86C;
 }
 
-/* OpenClaude terminal — integrated into AgentActivity */
+/* Code-agent terminal — integrated into AgentActivity */
 .code-agent-terminal {
   border: 1px solid rgba(8, 198, 93, 0.16);
   border-radius: 12px;
@@ -3283,7 +3283,7 @@ small {
   color: var(--accent-danger);
 }
 
-/* ── OpenClaude toast (canto inferior direito) ──────────────────────── */
+/* ── Vortax work toast (canto inferior direito) ─────────────────────── */
 
 .vtx-toast {
   position: fixed;
@@ -4594,7 +4594,7 @@ small {
   z-index: 965;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  width: min(552px, calc(100vw - 24px));
+  width: min(590px, calc(100vw - 24px));
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
@@ -4672,7 +4672,9 @@ small {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  background: #070909;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 34px),
+    #070909;
 }
 
 .computer-stage-address {
@@ -4829,9 +4831,11 @@ small {
 
 .computer-coding-workspace {
   display: grid;
-  grid-template-rows: 34px minmax(0, 1fr) 112px;
+  grid-template-rows: 36px minmax(0, 1fr) 26px;
   min-height: 0;
-  background: #080b0b;
+  background:
+    linear-gradient(135deg, rgba(8, 198, 93, 0.045), transparent 42%),
+    #080b0b;
 }
 
 .computer-ide-topbar {
@@ -4841,7 +4845,8 @@ small {
   gap: 10px;
   padding: 0 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.045);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035));
 }
 
 .computer-window-dots {
@@ -4909,7 +4914,7 @@ small {
 
 .computer-ide-body {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-columns: 136px minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -4920,7 +4925,8 @@ small {
   min-width: 0;
   padding: 12px 10px;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.028);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018));
 }
 
 .computer-file-tree-head,
@@ -4963,6 +4969,9 @@ small {
   grid-template-rows: 32px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px) 0 0 / 56px 56px,
+    #07100d;
 }
 
 .computer-editor-tabs {
@@ -4994,9 +5003,9 @@ small {
 .computer-code-lines {
   display: grid;
   align-content: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 18px 18px;
   font-family: 'Fira Code', 'Cascadia Code', monospace;
 }
 
@@ -5018,7 +5027,7 @@ small {
 .computer-code-lines span {
   overflow: hidden;
   color: #dbe7df;
-  font-size: 11px;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5028,69 +5037,27 @@ small {
   color: rgba(8, 198, 93, 0.92);
 }
 
-.computer-terminal-pane {
-  min-height: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: #050707;
-  font-family: 'Fira Code', 'Cascadia Code', monospace;
-}
-
-.computer-terminal-title {
+.computer-editor-statusbar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 28px;
+  gap: 14px;
+  min-width: 0;
   padding: 0 12px;
-  color: #dbe3de;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 198, 93, 0.075);
+  color: #b9c6bf;
   font-size: 11px;
 }
 
-.computer-terminal-title svg {
-  color: var(--accent-blue);
-}
-
-.computer-terminal-title small {
-  min-width: 0;
+.computer-editor-statusbar span {
   overflow: hidden;
-  margin-left: auto;
-  color: #87928c;
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.computer-terminal-lines {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 0 12px 10px;
-}
-
-.computer-terminal-lines span {
-  overflow: hidden;
-  color: #b9c4be;
-  font-size: 10.5px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.computer-terminal-lines span::before {
-  content: ">";
-  margin-right: 7px;
-  color: rgba(8, 198, 93, 0.7);
-}
-
-.computer-terminal-lines span.ok {
-  color: #7ddf9f;
-}
-
-.computer-terminal-lines span.warn {
-  color: #f8c66d;
-}
-
-.computer-terminal-lines span.muted {
-  color: #7d8882;
+.computer-editor-statusbar span:first-child {
+  flex: 1;
+  color: #e1ece6;
 }
 
 .computer-live-controls {
@@ -5670,7 +5637,7 @@ small {
   }
 
   .computer-coding-workspace {
-    grid-template-rows: 34px minmax(0, 1fr) 104px;
+    grid-template-rows: 36px minmax(0, 1fr) 26px;
   }
 
   .computer-ide-body {

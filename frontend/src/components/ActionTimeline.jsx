@@ -28,6 +28,15 @@ const hiddenTypes = new Set([
 
 const importantCodeAgentStages = new Set(["starting", "validating", "done", "error"]);
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 function iconFor(event) {
   const tool = event.payload?.name || event.payload?.tool;
   if (event.type === "error") return <AlertTriangle size={16} />;
@@ -56,8 +65,8 @@ function titleFor(event) {
   if (event.type === "tool_call") return toolTitle(payload.name, "Executando");
   if (event.type === "tool_result") return toolTitle(payload.name, "Resultado");
   if (event.type === "screen_frame") return "Tela atualizada";
-  if (event.type === "vertex_progress") return "OpenClaude trabalhando";
-  if (event.type === "ai_exchange") return "DeepSeek ↔ OpenClaude";
+  if (event.type === "vertex_progress") return "Vortax trabalhando";
+  if (event.type === "ai_exchange") return "Vortax coordenando";
   if (event.type === "web_validation_started") return "Revisao do site";
   if (event.type === "web_validation_step") return payload.label || "Testando site";
   if (event.type === "web_validation_result") return payload.status === "passed" ? "Site revisado" : "Ajustes no site";
@@ -88,36 +97,36 @@ function toolTitle(name, fallback) {
 
 function labelFor(event) {
   const payload = event.payload || {};
-  if (event.type === "tool_result") return summarizeToolResult(payload.result);
-  if (payload.description) return payload.description;
+  if (event.type === "tool_result") return publicText(summarizeToolResult(payload.result));
+  if (payload.description) return publicText(payload.description);
   if (event.type === "source_saved") return `${payload.title || payload.url} (${payload.quality_score || 0}/100)`;
-  if (event.type === "vertex_progress") return payload.file ? `Criando ${payload.file}` : payload.message;
-  if (event.type === "ai_exchange") return payload.message;
+  if (event.type === "vertex_progress") return payload.file ? `Criando ${payload.file}` : publicText(payload.message);
+  if (event.type === "ai_exchange") return publicText(payload.message);
   if (event.type === "web_validation_started") return "Abrindo o preview e revisando o site antes de concluir.";
   if (event.type === "web_validation_result") {
     if (payload.status === "passed") return `${payload.viewports_checked || 0} viewport(s) analisada(s) com visao.`;
-    return (payload.bugs || []).join("; ") || payload.reason || "Revisao visual encontrou ajustes.";
+    return publicText((payload.bugs || []).join("; ") || payload.reason || "Revisao visual encontrou ajustes.");
   }
   if (event.type === "project_validation_started") {
     const project = payload.project || {};
     return `${project.file_count || 0} arquivo(s); tipo detectado: ${project.kind || "generico"}.`;
   }
   if (event.type === "project_validation_result") {
-    if (payload.status === "passed") return payload.reason || "Entrega revisada e pronta.";
-    return (payload.bugs || []).join("; ") || payload.reason || "Revisao do projeto encontrou ajustes.";
+    if (payload.status === "passed") return publicText(payload.reason || "Entrega revisada e pronta.");
+    return publicText((payload.bugs || []).join("; ") || payload.reason || "Revisao do projeto encontrou ajustes.");
   }
   if (event.type === "shell_interactive_prompt") return payload.prompt;
   if (event.type === "dev_server_started") return "Servidor temporario usado apenas para revisao interna.";
-  if (event.type === "dev_server_stopped") return payload.reason || "Servidor temporario encerrado.";
+  if (event.type === "dev_server_stopped") return publicText(payload.reason || "Servidor temporario encerrado.");
   if (event.type === "files_created") {
     const fileCount = payload.files?.length || 0;
     const projectCount = payload.projects?.length || 0;
     return `${fileCount} arquivo(s) em ${projectCount || 1} projeto(s).`;
   }
-  if (payload.detail) return payload.detail;
-  if (payload.message) return payload.message;
-  if (payload.content) return payload.content;
-  if (payload.caption) return payload.caption;
+  if (payload.detail) return publicText(payload.detail);
+  if (payload.message) return publicText(payload.message);
+  if (payload.content) return publicText(payload.content);
+  if (payload.caption) return publicText(payload.caption);
   return "";
 }
 

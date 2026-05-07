@@ -10,6 +10,15 @@ function isCodeAgentCommand(command) {
   return text.split(/\s+/)[0] === "openclaude";
 }
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 const stageLabels = {
   starting: "Iniciando ambiente",
   planning: "Planejando estrutura",
@@ -19,14 +28,14 @@ const stageLabels = {
   installing: "Preparando dependências",
   reading_file: "Lendo arquivos",
   configuring: "Configurando projeto",
-  executing: "Executando OpenClaude",
+  executing: "Executando Vortax",
   validating: "Abrindo no navegador",
   done: "Projeto pronto",
   error: "Correção necessária",
 };
 
 const stageDescriptions = {
-  starting: "Abrindo OpenClaude e preparando a pasta da conversa.",
+  starting: "Preparando a pasta da conversa.",
   planning: "Estimando arquitetura, arquivos e próximos passos.",
   creating: "Gerando estrutura inicial e entradas principais.",
   writing_file: "Escrevendo código e recursos do projeto.",
@@ -53,7 +62,7 @@ function ProgrammingSimulation({ progress }) {
   const payload = progress?.payload || {};
   const stage = payload.stage || "executing";
   const label = stageLabels[stage] || "Programando";
-  const message = payload.message || "Organizando arquivos e preparando a entrega.";
+  const message = publicText(payload.message || "Organizando arquivos e preparando a entrega.");
   const activeIndex = Math.max(0, Object.keys(stageLabels).indexOf(stage));
   const activeFile = payload.file;
 
@@ -72,9 +81,9 @@ function ProgrammingSimulation({ progress }) {
   }, [payload.files, activeFile]);
 
   return (
-    <div className="programming-stream" aria-label="OpenClaude programando">
+    <div className="programming-stream" aria-label="Vortax programando">
       <div className="programming-stream-header">
-        <span><Code2 size={15} /> OpenClaude programando</span>
+        <span><Code2 size={15} /> Vortax programando</span>
         <small>{label}</small>
       </div>
       <div className="programming-stream-grid">
@@ -107,7 +116,7 @@ function ProgrammingSimulation({ progress }) {
       </div>
       <div className="programming-legend">
         <span>Leitura estimada</span>
-        <p>{stageDescriptions[stage] || "A etapa é inferida pelos eventos emitidos pelo OpenClaude."}</p>
+        <p>{stageDescriptions[stage] || "A etapa é inferida pelos eventos do Vortax."}</p>
       </div>
     </div>
   );
