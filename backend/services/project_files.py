@@ -22,7 +22,7 @@ def _file_type_for(path: str) -> str:
         return "source"
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico"}:
         return "asset"
-    if suffix in {".md", ".txt", ".json"}:
+    if suffix in {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx"}:
         return "document"
     return "file"
 
@@ -40,6 +40,8 @@ def _project_type(files: list[dict[str, Any]]) -> str:
         return "static_web"
     if ".py" in suffixes:
         return "python"
+    if suffixes and suffixes <= {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx"}:
+        return "document"
     return "generic"
 
 

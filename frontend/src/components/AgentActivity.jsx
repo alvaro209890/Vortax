@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, Loader2, Sparkles } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
-import { staggerContainer, fadeInUp } from "../animations/variants.js";
 
 const busyStatuses = new Set(["queued", "thinking", "executing", "running"]);
 
@@ -432,12 +431,7 @@ export function AgentActivity({ events, status, taskDescription }) {
   const completedCount = steps.filter((step) => step.state === "done").length;
 
   return (
-    <motion.section
-      className={`agent-activity ${collapsed ? "collapsed" : ""}`}
-      initial={{ opacity: 0, y: 8, scale: 0.99 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 180, damping: 22 }}
-    >
+    <section className={`agent-activity ${collapsed ? "collapsed" : ""}`}>
       <button className="activity-header" onClick={() => setCollapsed((current) => !current)} type="button">
         <div className="activity-summary">
           <div className="activity-mark">
@@ -457,23 +451,11 @@ export function AgentActivity({ events, status, taskDescription }) {
         </motion.div>
       </button>
 
-      <motion.div
-        className="activity-steps"
-        aria-label="Tasks da atividade"
-        initial={false}
-        animate={{ opacity: collapsed ? 0 : 1 }}
-        transition={{ duration: 0.18 }}
-      >
+      <div className="activity-steps" aria-label="Tasks da atividade">
         {steps.map((step) => (
-          <motion.button
+          <button
             className={`activity-step ${step.state} ${expandedTaskId === step.id ? "expanded" : ""}`}
             key={step.id}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", stiffness: 200, damping: 22 }}
-            layout
-            whileHover={{ x: 2 }}
-            whileTap={{ scale: 0.995 }}
             onClick={() => setExpandedTaskId((current) => (current === step.id ? null : step.id))}
             type="button"
           >
@@ -483,7 +465,7 @@ export function AgentActivity({ events, status, taskDescription }) {
               {expandedTaskId === step.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </div>
             <p>{step.detail}</p>
-          </motion.button>
+          </button>
         ))}
 
         {hasVertexActivity && (
@@ -491,7 +473,7 @@ export function AgentActivity({ events, status, taskDescription }) {
             <VertexProgressPanel events={events} />
           </div>
         )}
-      </motion.div>
-    </motion.section>
+      </div>
+    </section>
   );
 }

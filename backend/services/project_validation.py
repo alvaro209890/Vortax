@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
+from services.document_intent import document_extensions_from_text
 from services.project_files import missing_local_asset_refs, scan_task_workspace
+from services.web_validation import web_intent_from_command
 
 
 CODE_SUFFIXES = {
@@ -134,6 +136,24 @@ def _js_files(project_dir: Path) -> list[str]:
     return sorted(set(files))
 
 
+def _nonempty_files_with_suffix(project_dir: Path, suffix: str) -> list[str]:
+    ignored = {"__pycache__", ".git", "node_modules", "dist", "build"}
+    matches: list[str] = []
+    normalized_suffix = suffix.lower()
+    for path in sorted(project_dir.rglob(f"*{normalized_suffix}")):
+        if any(part in ignored for part in path.parts):
+            continue
+        if path.is_file() and path.stat().st_size > 0:
+            matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
+    return matches
+
+
+def _nonempty_markdown_files(project_dir: Path) -> list[str]:
+    files = _nonempty_files_with_suffix(project_dir, ".md")
+    files.extend(_nonempty_files_with_suffix(project_dir, ".markdown"))
+    return sorted(set(files))
+
+
 def _load_package_json(project_dir: Path) -> tuple[dict[str, Any] | None, Path, str | None]:
     package_paths = sorted(project_dir.rglob("package.json"), key=lambda path: len(path.parts))
     if not package_paths:
@@ -191,6 +211,18 @@ async def validate_project_after_vertex(
     missing_assets = missing_local_asset_refs(project_dir)
     if missing_assets:
         bugs.append("Referencias locais ausentes no HTML: " + ", ".join(missing_assets))
+
+    if web_intent_from_command(command) and not _nonempty_markdown_files(project_dir):
+        bugs.append(
+            "Site criado pelo Vertex precisa incluir um arquivo DOCUMENTACAO.md em Markdown, claro e nao vazio."
+        )
+
+    for extension in document_extensions_from_text(command):
+        matches = _nonempty_files_with_suffix(project_dir, extension)
+        if not matches:
+            bugs.append(
+                f"Pedido de documento/arquivo exige um arquivo {extension} nao vazio no diretorio da conversa."
+            )
 
     timeout = float(getattr(settings, "PROJECT_VALIDATION_TIMEOUT_SECONDS", 60) or 60)
 

@@ -4,6 +4,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from database import database
+from services.document_intent import document_extensions_from_text, document_intent_from_text
 from services.event_bus import EventBus
 from services.project_validation import validate_project_after_vertex
 from services.research_policy import cached_search_result
@@ -160,6 +161,7 @@ def _vertex_creation_intent(command: str) -> bool:
     text = " ".join(parts[1:]).lower()
     return bool(
         web_intent_from_command(command)
+        or document_intent_from_text(text)
         or re.search(
             r"\b(crie|criar|faca|faça|desenvolva|implemente|gere|corrija|bug|erro|falha|"
             r"software|sistema|script|api|backend|python|node|cli|automacao|automação|app)\b",
@@ -234,16 +236,27 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
         prompt_parts.append(part)
 
     prompt = " ".join(prompt_parts).strip()
-    instruction = "" if "LINK_LOCAL_DO_SITE" in prompt else (
-        "\n\nObrigatorio para o Vortax: crie os arquivos do site dentro do diretorio atual. "
+    instructions = [
+        "Obrigatorio para o Vortax: crie os arquivos do site dentro do diretorio atual. "
         "Para HTML/CSS/JavaScript estatico, NAO inicie servidor local e NAO rode modulo de servidor HTTP do Python; "
         "quando o pedido mencionar HTML, CSS e JavaScript/JS, crie obrigatoriamente arquivos separados index.html, style.css e script.js. "
         "Nao deixe href/src apontando para arquivos locais inexistentes. "
         "Garanta que exista um index.html funcional, pois o Vortax abrira o preview local automaticamente. "
-        "Revise responsividade, estados de botoes, erros no console, textos cortados e arquivos vazios antes de finalizar. "
-        "Somente se o projeto realmente exigir dev server, imprima uma linha exatamente no formato "
-        "LINK_LOCAL_DO_SITE: http://127.0.0.1:PORTA ou LINK_LOCAL_DO_SITE: http://localhost:PORTA e finalize."
-    )
+        "Revise responsividade, estados de botoes, erros no console, textos cortados e arquivos vazios antes de finalizar."
+    ]
+    prompt_upper = prompt.upper()
+    if "DOCUMENTACAO.MD" not in prompt_upper and "DOCUMENTAÇÃO.MD" not in prompt_upper:
+        instructions.append(
+            "Tambem crie obrigatoriamente um arquivo DOCUMENTACAO.md em Markdown explicando o que foi criado, "
+            "estrutura dos arquivos, funcionalidades, como testar/abrir o site e proximos ajustes sugeridos. "
+            "Esse Markdown sera aberto pelo Vortax em um card de documentacao e precisa ser claro, bem formatado e nao vazio."
+        )
+    if "LINK_LOCAL_DO_SITE" not in prompt:
+        instructions.append(
+            "Somente se o projeto realmente exigir dev server, imprima uma linha exatamente no formato "
+            "LINK_LOCAL_DO_SITE: http://127.0.0.1:PORTA ou LINK_LOCAL_DO_SITE: http://localhost:PORTA e finalize."
+        )
+    instruction = "\n\n" + " ".join(instructions)
     return (
         cd_prefix
         + "vertex -p --permission-mode bypassPermissions --dangerously-skip-permissions --no-session-persistence "
@@ -275,6 +288,7 @@ def _augment_vertex_command_for_quality(command: str) -> str:
         prompt_parts.append(part)
 
     prompt = " ".join(prompt_parts).strip()
+    requested_extensions = document_extensions_from_text(prompt)
     if "VALIDACAO_AUTOMATICA_VORTAX" in prompt:
         instruction = ""
     else:
@@ -285,6 +299,14 @@ def _augment_vertex_command_for_quality(command: str) -> str:
             "Se estiver corrigindo uma falha anterior, preserve o projeto existente e corrija exatamente os bugs descritos. "
             "Nao finalize deixando TODO, arquivo vazio, dependencia quebrada, caminho inexistente ou instrucao que impeca a validacao local."
         )
+        if requested_extensions:
+            extensions = ", ".join(requested_extensions)
+            instruction += (
+                f" Como o usuario pediu arquivo/documento final ({extensions}), crie pelo menos um arquivo nao vazio "
+                "com essa(s) extensao(oes) diretamente no diretorio atual ou em subpasta clara. "
+                "Use nome descritivo, conteudo completo e pronto para download pelo Vortax. "
+                "Se gerar PDF, entregue o .pdf final e, quando fizer sentido, tambem deixe a fonte editavel em Markdown."
+            )
 
     return (
         cd_prefix
