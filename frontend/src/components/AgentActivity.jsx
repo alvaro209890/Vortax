@@ -303,7 +303,7 @@ export function VertexProgressPanel({ events }) {
       <motion.div
         className="vertex-progress-body"
         animate={{
-          height: collapsed ? 0 : "auto",
+          maxHeight: collapsed ? 0 : 600,
           opacity: collapsed ? 0 : 1,
         }}
         transition={{ duration: 0.24, ease: "easeInOut" }}
@@ -338,27 +338,28 @@ export function VertexProgressPanel({ events }) {
           ))}
         </div>
 
-        <AnimatePresence initial={false}>
-          {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
-            <motion.div
-              className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`}
-              key={item.id}
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, height: 0 }}
-              layout
-              transition={{ type: "spring", stiffness: 200, damping: 22 }}
-            >
-              <div className="vertex-progress-icon">
-                {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
-              </div>
-              <div>
-                <strong>{item.label}</strong>
-                <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+        <div className="vertex-progress-list">
+          <AnimatePresence initial={false}>
+            {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
+              <motion.div
+                className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`}
+                key={item.id}
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0, borderTopWidth: 0 }}
+                transition={{ type: "spring", stiffness: 200, damping: 22 }}
+              >
+                <div className="vertex-progress-icon">
+                  {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
+                </div>
+                <div>
+                  <strong>{item.label}</strong>
+                  <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
       </motion.div>
     </div>
   );

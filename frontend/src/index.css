@@ -2248,7 +2248,6 @@ small {
   gap: 0;
   max-height: 340px;
   overflow: hidden;
-  transition: max-height 0.24s ease, opacity 0.18s ease;
 }
 
 .vertex-progress-panel.collapsed .vertex-progress-body {
@@ -2355,6 +2354,21 @@ small {
 
 .vertex-progress-item.done .vertex-progress-icon svg {
   color: var(--accent-green);
+}
+
+.vertex-progress-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 300px;
+}
+
+.vertex-progress-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.vertex-progress-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
 .vertex-progress-icon {
