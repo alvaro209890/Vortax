@@ -84,7 +84,7 @@ function titleFor(event) {
 
 function toolTitle(name, fallback) {
   const labels = {
-    browser_google_search: "Pesquisa no Google",
+    browser_google_search: "Pesquisa na web",
     browser_click_link_by_index: "Abrindo resultado",
     browser_extract_text: "Lendo pagina",
     browser_extract_links: "Extraindo links",

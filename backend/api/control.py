@@ -100,6 +100,9 @@ async def stop_task(task_id: str, current_user: AuthUser = Depends(require_auth)
 
     # Forca cancelamento do runner + kill de processos
     _kill_runner_and_children(task_id)
+    from tools.browser_pool import browser_pool
+
+    await browser_pool.release(task_id)
 
     # Publica status final
     await event_bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})

@@ -25,7 +25,7 @@ from pathlib import Path
 from services.project_files import sync_task_workspace_files
 
 from config import settings
-from tools.browser import browser_tool
+from tools.browser_pool import BrowserPoolError, browser_pool
 from tools.exact import exact_tool
 from tools.shell import _project_dir, run_shell
 from tools.vision import vision_tool
@@ -58,26 +58,43 @@ def _redact_local_preview(value: Any) -> Any:
     return value
 
 
+_BROWSER_METHOD_MAP: dict[str, str] = {
+    "browser_navigate": "navigate",
+    "browser_get_state": "get_state",
+    "browser_click_text": "click_text",
+    "browser_click_selector": "click_selector",
+    "browser_click_link_by_index": "click_link_by_index",
+    "browser_type": "type_text",
+    "browser_press_key": "press_key",
+    "browser_wait_for_text": "wait_for_text",
+    "browser_go_back": "go_back",
+    "browser_google_search": "google_search",
+    "browser_extract_text": "extract_text",
+    "browser_extract_article": "extract_article",
+    "browser_extract_links": "extract_links",
+    "browser_screenshot": "screenshot",
+    "browser_scroll": "scroll",
+}
+
 TOOLS: dict[str, ToolCallable] = {
-    "browser_navigate": browser_tool.navigate,
-    "browser_get_state": browser_tool.get_state,
-    "browser_click_text": browser_tool.click_text,
-    "browser_click_selector": browser_tool.click_selector,
-    "browser_click_link_by_index": browser_tool.click_link_by_index,
-    "browser_type": browser_tool.type_text,
-    "browser_press_key": browser_tool.press_key,
-    "browser_wait_for_text": browser_tool.wait_for_text,
-    "browser_go_back": browser_tool.go_back,
-    "browser_google_search": browser_tool.google_search,
-    "browser_extract_text": browser_tool.extract_text,
-    "browser_extract_article": browser_tool.extract_article,
-    "browser_extract_links": browser_tool.extract_links,
-    "browser_screenshot": browser_tool.screenshot,
-    "browser_scroll": browser_tool.scroll,
     "shell_run": run_shell,
     "vision_analyze": vision_tool.analyze,
     "exact_solve": exact_tool.solve,
 }
+
+
+def _is_known_tool(tool_name: str) -> bool:
+    return tool_name in _BROWSER_METHOD_MAP or tool_name in TOOLS
+
+
+async def _resolve_tool(tool_name: str, task_id: str) -> ToolCallable:
+    browser_method = _BROWSER_METHOD_MAP.get(tool_name)
+    if browser_method:
+        return await browser_pool.get_tool_method(task_id, browser_method)
+    tool = TOOLS.get(tool_name)
+    if tool is None:
+        raise KeyError(tool_name)
+    return tool
 
 
 def compact_tool_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -168,7 +185,11 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
     if (not tool_name.startswith("browser_") and tool_name != "shell_run") or tool_name == "browser_screenshot":
         return
     try:
-        frame = await browser_tool.screenshot(task_id=task_id)
+        try:
+            bt = await browser_pool.get_existing(task_id)
+        except BrowserPoolError:
+            return
+        frame = await bt.screenshot(task_id=task_id)
         await bus.publish(
             task_id,
             "screen_frame",
@@ -478,7 +499,8 @@ async def _open_static_preview_if_available(task_id: str, files: list[dict[str, 
                 "tool": "browser_navigate",
             },
         )
-        await browser_tool.navigate(preview_url, task_id=task_id)
+        bt = await browser_pool.acquire(task_id)
+        await bt.navigate(preview_url, task_id=task_id)
     except Exception as exc:
         await bus.publish(task_id, "error", {"message": f"Preview automatico falhou: {type(exc).__name__}: {exc}"})
 
@@ -498,8 +520,7 @@ async def execute_tool(
         {"name": tool_name, "description": description or tool_name, "params": safe_params},
     )
 
-    tool = TOOLS.get(tool_name)
-    if tool is None:
+    if not _is_known_tool(tool_name):
         error = {"success": False, "error": f"Ferramenta desconhecida: {tool_name}"}
         await bus.publish(task_id, "error", {"message": error["error"]})
         return error
@@ -521,6 +542,8 @@ async def execute_tool(
                 compact = compact_tool_result(cached)
                 await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
                 return {"success": True, "data": cached}
+
+        tool = await _resolve_tool(tool_name, task_id)
 
         # shell_run recebe o bus para streaming de stdout
         if tool_name == "shell_run":

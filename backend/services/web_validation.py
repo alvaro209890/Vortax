@@ -6,7 +6,8 @@ from urllib.parse import quote
 
 from config import settings
 from services.project_files import missing_local_asset_refs
-from tools.browser import browser_tool
+from tools.browser import BrowserTool
+from tools.browser_pool import browser_pool
 from tools.vision import vision_configured, vision_tool
 
 
@@ -149,8 +150,8 @@ async def _publish_step(task_id: str, bus: Any, label: str, detail: str = "", **
     await bus.publish(task_id, "agent_progress", {"label": label, "detail": detail, "tool": "web_validation"})
 
 
-async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int) -> dict[str, Any]:
-    frame = await browser_tool.screenshot(task_id=task_id)
+async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int, bt: BrowserTool) -> dict[str, Any]:
+    frame = await bt.screenshot(task_id=task_id)
     await bus.publish(
         task_id,
         "screen_frame",
@@ -182,8 +183,8 @@ async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int) -> d
     }
 
 
-async def _scroll_state() -> dict[str, Any]:
-    return await browser_tool.get_scroll_state()
+async def _scroll_state(bt: BrowserTool) -> dict[str, Any]:
+    return await bt.get_scroll_state()
 
 
 async def validate_web_project_after_code_agent(
@@ -241,6 +242,7 @@ async def validate_web_project_after_code_agent(
         await bus.publish(task_id, "web_validation_result", result)
         return result
 
+    bt = await browser_pool.acquire(task_id)
     internal_server_started = False
     try:
         if detected["type"] == "static_html":
@@ -284,43 +286,43 @@ async def validate_web_project_after_code_agent(
             return result
 
         await _publish_step(task_id, bus, "Abrindo site no Chrome", "Preview interno para revisao visual.")
-        await browser_tool.navigate(url, task_id=task_id)
-        await browser_tool.scroll_to_top(task_id=task_id)
+        await bt.navigate(url, task_id=task_id)
+        await bt.scroll_to_top(task_id=task_id)
 
         analyses: list[dict[str, Any]] = []
         bugs: list[str] = []
         await _publish_step(task_id, bus, "Testando funcionalidades do frontend", "Clicando controles, preenchendo campos e observando erros.")
-        smoke = await browser_tool.frontend_smoke_test(task_id=task_id)
+        smoke = await bt.frontend_smoke_test(task_id=task_id)
         if not smoke.get("success"):
             bugs.append(
                 "Smoke test do frontend encontrou erro: "
                 + "; ".join(str(item) for item in smoke.get("errors", [])[:5])
                 + ("; texto de erro visivel na pagina" if smoke.get("visible_error") else "")
             )
-        await browser_tool.scroll_to_top(task_id=task_id)
+        await bt.scroll_to_top(task_id=task_id)
         seen_positions: set[int] = set()
 
         for viewport_index in range(1, max_viewports + 1):
-            state = await _scroll_state()
+            state = await _scroll_state(bt)
             y = int(state.get("scroll_y") or 0)
             if y in seen_positions and viewport_index > 1:
                 break
             seen_positions.add(y)
 
             await _publish_step(task_id, bus, f"Analisando viewport {viewport_index}", "Revisando a tela renderizada.")
-            analysis = await _capture_and_analyze(task_id, bus, viewport_index)
+            analysis = await _capture_and_analyze(task_id, bus, viewport_index, bt)
             analyses.append(analysis)
             if analysis["has_bug"]:
                 vision = analysis["vision"]
                 bugs.append(str(vision.get("suggested_action") or vision.get("summary") or "Bug visual detectado."))
 
-            state = await _scroll_state()
+            state = await _scroll_state(bt)
             if bool(state.get("at_bottom")):
                 break
             await _publish_step(task_id, bus, "Rolando pagina", "Testando a proxima parte da pagina.")
-            await browser_tool.scroll(direction="down", amount=int(state.get("viewport_height") or 700), task_id=task_id)
+            await bt.scroll(direction="down", amount=int(state.get("viewport_height") or 700), task_id=task_id)
 
-        await browser_tool.scroll_to_top(task_id=task_id)
+        await bt.scroll_to_top(task_id=task_id)
 
         status = "failed" if bugs else "passed"
         result = {

@@ -55,17 +55,33 @@ class FakeBus(EventBus):
         self.published.append((task_id, event_type, payload or {}))
 
 
+class FakeBrowserPool:
+    def __init__(self, tool) -> None:
+        self.tool = tool
+        self.called = False
+        self.method_name = ""
+        self.task_id = ""
+
+    async def get_tool_method(self, task_id: str, method_name: str):
+        self.called = True
+        self.task_id = task_id
+        self.method_name = method_name
+        return self.tool
+
+
 class ToolExecutorResearchCacheTests(unittest.IsolatedAsyncioTestCase):
     async def test_google_search_uses_conversation_cache_before_browser(self) -> None:
         original_database = tool_executor.database
-        original_tool = tool_executor.TOOLS["browser_google_search"]
+        original_pool = tool_executor.browser_pool
 
         async def fail_if_called(**kwargs):
             raise AssertionError("browser search should not be called on cache hit")
 
+        fake_pool = FakeBrowserPool(fail_if_called)
+
         try:
             tool_executor.database = FakeDatabase()  # type: ignore[assignment]
-            tool_executor.TOOLS["browser_google_search"] = fail_if_called
+            tool_executor.browser_pool = fake_pool  # type: ignore[assignment]
 
             result = await tool_executor.execute_tool(
                 "browser_google_search",
@@ -75,14 +91,15 @@ class ToolExecutorResearchCacheTests(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             tool_executor.database = original_database
-            tool_executor.TOOLS["browser_google_search"] = original_tool
+            tool_executor.browser_pool = original_pool
 
         self.assertTrue(result["success"])
         self.assertTrue(result["data"]["from_conversation_cache"])
+        self.assertFalse(fake_pool.called)
 
     async def test_google_search_skips_weak_cache_for_economic_comparison(self) -> None:
         original_database = tool_executor.database
-        original_tool = tool_executor.TOOLS["browser_google_search"]
+        original_pool = tool_executor.browser_pool
         called = False
 
         async def fake_search(**kwargs):
@@ -96,9 +113,11 @@ class ToolExecutorResearchCacheTests(unittest.IsolatedAsyncioTestCase):
                 "result_count": 0,
             }
 
+        fake_pool = FakeBrowserPool(fake_search)
+
         try:
             tool_executor.database = FakeWeakEconomicDatabase()  # type: ignore[assignment]
-            tool_executor.TOOLS["browser_google_search"] = fake_search
+            tool_executor.browser_pool = fake_pool  # type: ignore[assignment]
 
             result = await tool_executor.execute_tool(
                 "browser_google_search",
@@ -108,9 +127,11 @@ class ToolExecutorResearchCacheTests(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             tool_executor.database = original_database
-            tool_executor.TOOLS["browser_google_search"] = original_tool
+            tool_executor.browser_pool = original_pool
 
         self.assertTrue(called)
+        self.assertTrue(fake_pool.called)
+        self.assertEqual(fake_pool.method_name, "google_search")
         self.assertFalse(result["success"])
         self.assertNotIn("from_conversation_cache", result["data"])
 

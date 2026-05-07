@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     CHROME_BINARY: str = "/usr/bin/google-chrome"
     CHROME_DEBUG_PORT: int = 9222
     CHROME_PROFILE_PATH: Path = DEFAULT_VORTAX_DATA_PATH / "chrome-profile"
+    BROWSER_POOL_MAX_INSTANCES: int = 4
 
     ENABLE_DESKTOP_AUTOMATION: bool = True
     REQUIRE_CONFIRMATION_FOR_DESKTOP: bool = True

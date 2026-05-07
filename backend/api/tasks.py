@@ -442,6 +442,9 @@ async def delete_task(task_id: str, current_user: AuthUser = Depends(require_aut
     from tools.shell import stop_dev_server
 
     await stop_dev_server(task_id)
+    from tools.browser_pool import browser_pool
+
+    await browser_pool.release(task_id)
 
     await event_bus.close_task_connections(task_id)
     deleted = task_store.delete(task_id)

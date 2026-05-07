@@ -34,6 +34,7 @@ from services.stream_contract import utc_now
 from services.task_store import TaskStore
 from services.task_plan_store import direct_response_steps, fallback_steps, task_plan_store
 from tools.tool_executor import CODE_AGENT_COMMAND, CODE_AGENT_LABEL, compact_tool_result, execute_tool
+from tools.browser_pool import browser_pool
 from services.web_validation import web_intent_from_command
 
 
@@ -68,7 +69,7 @@ def _message_history_from_events(events: list[dict[str, Any]], fallback_descript
 
 def _progress_label(action_name: str, description: str) -> str:
     if action_name == "browser_google_search":
-        return "Pesquisando no Google"
+        return "Pesquisando na web"
     if action_name == "browser_click_link_by_index":
         return "Abrindo resultado"
     if action_name in {"browser_extract_text", "browser_extract_links"}:
@@ -980,9 +981,8 @@ async def _inject_pre_research_if_needed(
     """Analisa o pedido e, se for criacao de software viavel para pesquisa, executa
     pesquisa web automatica e alimenta o historico para o DeepSeek usar ao planejar.
     IMPORTANTE: Nao usa execute_tool para nao poluir o historico do DeepSeek com
-    tool_results indesejados. Usa o browser_tool diretamente."""
+    tool_results indesejados. Usa o navegador isolado da task diretamente."""
     from services.research_policy import relevant_sources_for_query, software_research_profile
-    from tools.browser import browser_tool
 
     profile = software_research_profile(description)
     if not profile.get("is_software_request") or not profile.get("requires_pre_research"):
@@ -1012,6 +1012,7 @@ async def _inject_pre_research_if_needed(
     )
 
     pesquisa_feita = False
+    bt = await browser_pool.acquire(task_id)
     for query in research_queries[:1]:  # So 1 consulta — 1 e suficiente
         await bus.publish(
             task_id,
@@ -1023,7 +1024,7 @@ async def _inject_pre_research_if_needed(
             },
         )
         try:
-            search_result = await browser_tool.google_search(query, hl="pt-BR")
+            search_result = await bt.google_search(query, hl="pt-BR")
             results = search_result.get("results", [])
             if not results:
                 continue
@@ -1038,7 +1039,7 @@ async def _inject_pre_research_if_needed(
                     "tool": "browser_navigate",
                 },
             )
-            await browser_tool.navigate(best.get("href"), task_id=task_id)
+            await bt.navigate(best.get("href"), task_id=task_id)
             await bus.publish(
                 task_id,
                 "agent_progress",
@@ -1048,7 +1049,7 @@ async def _inject_pre_research_if_needed(
                     "tool": "browser_extract_article",
                 },
             )
-            article = await browser_tool.extract_article()
+            article = await bt.extract_article()
             # Salva fonte diretamente no banco
             if article.get("url") and article.get("text"):
                 database.upsert_source(
@@ -1119,8 +1120,6 @@ async def _inject_document_research_if_needed(
     bus: EventBus,
 ) -> list[dict[str, str]]:
     """Pesquisa automaticamente quando o usuario pediu PDF/MD factual."""
-    from tools.browser import browser_tool
-
     profile = document_research_profile(description)
     if not profile.get("requires_research"):
         return history
@@ -1138,6 +1137,7 @@ async def _inject_document_research_if_needed(
     )
     queries = [str(query) for query in profile.get("research_queries") or [] if str(query).strip()]
     seen_urls: set[str] = set()
+    bt = await browser_pool.acquire(task_id)
 
     for query in queries[:5]:
         current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50)
@@ -1153,7 +1153,7 @@ async def _inject_document_research_if_needed(
             },
         )
         try:
-            search = await browser_tool.google_search(query, hl="pt-BR", task_id=task_id)
+            search = await bt.google_search(query, hl="pt-BR", task_id=task_id)
         except Exception:
             continue
         for result in list(search.get("results") or [])[:4]:
@@ -1174,11 +1174,11 @@ async def _inject_document_research_if_needed(
                 },
             )
             try:
-                navigate_result = await browser_tool.navigate(href, task_id=task_id)
+                navigate_result = await bt.navigate(href, task_id=task_id)
                 if isinstance(navigate_result, dict) and navigate_result.get("blocked"):
-                    article = await browser_tool.extract_article(task_id=task_id)
+                    article = await bt.extract_article(task_id=task_id)
                 else:
-                    article = await browser_tool.extract_article(task_id=task_id)
+                    article = await bt.extract_article(task_id=task_id)
             except Exception:
                 continue
             await _save_extracted_source(task_id, bus, article, str(result.get("title") or ""))
@@ -1202,10 +1202,9 @@ async def _inject_people_research_if_needed(
     bus: EventBus,
 ) -> list[dict[str, str]]:
     """Analisa se o pedido e sobre uma pessoa. Se for, pesquisa diretamente com
-    browser_tool (sem execute_tool) para evitar poluir o historico do DeepSeek.
+    navegador isolado da task (sem execute_tool) para evitar poluir o historico do DeepSeek.
     Maximo 2 consultas, com fallback silencioso."""
     from services.research_policy import people_research_profile, relevant_sources_for_query
-    from tools.browser import browser_tool
 
     profile = people_research_profile(description)
     if not profile.get("is_people_search"):
@@ -1245,11 +1244,12 @@ async def _inject_people_research_if_needed(
 
     pesquisa_feita = False
     categories = profile.get("categories", [])
+    bt = await browser_pool.acquire(task_id)
 
     # Usa so 2 consultas principais (max 3)
     for query in search_queries[:2]:
         try:
-            search_result = await browser_tool.google_search(query, hl="pt-BR")
+            search_result = await bt.google_search(query, hl="pt-BR")
             results = search_result.get("results", [])
             if not results:
                 continue
@@ -1261,8 +1261,8 @@ async def _inject_people_research_if_needed(
                        ["accounts.google", "servicelogin", "login", "signin", "ads.",
                         "googleadservices"]):
                     continue
-                await browser_tool.navigate(href, task_id=task_id)
-                article = await browser_tool.extract_article()
+                await bt.navigate(href, task_id=task_id)
+                article = await bt.extract_article()
                 if article.get("url") and article.get("text"):
                     database.upsert_source(
                         task_id,
@@ -1284,15 +1284,15 @@ async def _inject_people_research_if_needed(
     if not pesquisa_feita:
         # Se nao achou com queries especificas, tenta uma busca generica por nome
         try:
-            generic = await browser_tool.google_search(f'"{person_name}"', hl="pt-BR")
+            generic = await bt.google_search(f'"{person_name}"', hl="pt-BR")
             results = generic.get("results", [])
             if results:
                 pesquisa_feita = True
                 href = str(results[0].get("href") or "")
                 if not any(skip in href.lower() for skip in
                            ["accounts.google", "servicelogin", "login", "signin", "ads."]):
-                    await browser_tool.navigate(href, task_id=task_id)
-                    article = await browser_tool.extract_article()
+                    await bt.navigate(href, task_id=task_id)
+                    article = await bt.extract_article()
                     if article.get("url") and article.get("text"):
                         database.upsert_source(
                             task_id,
@@ -1334,7 +1334,7 @@ async def _inject_people_research_if_needed(
     return [{"role": "system", "content": people_instruction}, *research_history]
 
 
-async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
     await _ensure_plan(task_id, description, bus)
     if not deepseek_configured():
         await _start_plan_step(task_id, "understand", bus)
@@ -1655,3 +1655,10 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro"})
+
+
+async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+    try:
+        await _run_agent_task_inner(task_id, description, store, bus)
+    finally:
+        await browser_pool.release(task_id)

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from tools.browser import BrowserTool
 
@@ -44,7 +45,7 @@ class FakePage:
 class BrowserSearchToolTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.page = FakePage()
-        self.tool = BrowserTool()
+        self.tool = BrowserTool(cdp_port=9999, profile_dir=Path("/tmp/vortax-browser-test"))
 
         async def ensure_page():
             return self.page
@@ -57,12 +58,14 @@ class BrowserSearchToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.tool._http_search_fallback = empty_fallback  # type: ignore[method-assign]
 
-    async def test_google_search_opens_encoded_google_url(self) -> None:
+    async def test_google_search_uses_non_google_browser_fallback(self) -> None:
         result = await self.tool.google_search("deepseek v4 flash", hl="pt-BR")
 
-        self.assertIn("https://www.google.com/search?q=deepseek+v4+flash", self.page.goto_calls[0])
+        self.assertIn("https://html.duckduckgo.com/html/?q=deepseek+v4+flash", self.page.goto_calls[0])
+        self.assertNotIn("google.com/search", self.page.goto_calls[0])
         self.assertEqual(result["query"], "deepseek v4 flash")
         self.assertEqual(result["result_count"], 2)
+        self.assertEqual(result["engine"], "duckduckgo_browser")
 
     async def test_extract_links_returns_visible_links(self) -> None:
         result = await self.tool.extract_links(limit=2, prefer_google_results=False)

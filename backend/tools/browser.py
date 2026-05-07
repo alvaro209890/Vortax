@@ -79,14 +79,23 @@ CAPTCHA_PATTERNS = (
 
 
 class BrowserTool:
-    def __init__(self) -> None:
+    def __init__(self, cdp_port: int, profile_dir: Path) -> None:
+        self._cdp_port = int(cdp_port)
+        self._profile_dir = Path(profile_dir)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._page: Page | None = None
         self._chrome_process: subprocess.Popen | None = None
         self._launch_mode: str = "external"
         self._lock = asyncio.Lock()
-        self._warmed_up: bool = False
+
+    @property
+    def cdp_port(self) -> int:
+        return self._cdp_port
+
+    @property
+    def profile_dir(self) -> Path:
+        return self._profile_dir
 
     async def _ensure_page(self) -> Page:
         async with self._lock:
@@ -96,8 +105,12 @@ class BrowserTool:
             if self._playwright is None:
                 self._playwright = await async_playwright().start()
 
-            endpoint = f"http://127.0.0.1:{settings.CHROME_DEBUG_PORT}"
-            if not await self._cdp_available(endpoint):
+            endpoint = f"http://127.0.0.1:{self._cdp_port}"
+            cdp_ready = await self._cdp_available(endpoint)
+            if cdp_ready and self._chrome_process is None:
+                raise BrowserToolError(f"Porta CDP {self._cdp_port} ja esta em uso por outro Chrome")
+            if not cdp_ready:
+                await self._terminate_launched_chrome()
                 await self._launch_chrome(headless=True)
                 if not await self._wait_for_cdp(endpoint, timeout_s=12.0):
                     await self._terminate_launched_chrome()
@@ -114,38 +127,12 @@ class BrowserTool:
             )
             self._page = context.pages[0] if context.pages else await context.new_page()
             await self._inject_stealth(self._page)
-            if not self._warmed_up:
-                await self._warmup_google(self._page)
-                self._warmed_up = True
             return self._page
 
     async def _inject_stealth(self, page: Page) -> None:
         """Inject stealth JS to mask automation signals."""
         try:
             await page.add_init_script(_STEALTH_JS)
-        except Exception:
-            pass
-
-    async def _warmup_google(self, page: Page) -> None:
-        """Visit Google homepage to generate session cookies on first launch."""
-        try:
-            cookies = await page.context.cookies()
-            has_google_cookies = any(
-                c.get("domain", "").endswith(".google.com") for c in cookies
-            )
-            if has_google_cookies:
-                return
-            await page.goto("https://www.google.com/", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(random.uniform(1.0, 2.0))
-            # Try to accept cookies consent if present
-            try:
-                accept_btn = page.locator('button:has-text("Aceitar"), button:has-text("Accept"), button:has-text("Concordo"), button[id="L2AGLb"]').first
-                if await accept_btn.is_visible(timeout=2000):
-                    await accept_btn.click()
-                    await asyncio.sleep(0.5)
-            except Exception:
-                pass
-            await page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
         except Exception:
             pass
 
@@ -169,36 +156,30 @@ class BrowserTool:
 
     async def _launch_chrome(self, *, headless: bool) -> None:
         chrome_binary = shutil.which(settings.CHROME_BINARY) or settings.CHROME_BINARY
-        runtime_tmp = Path("/dev/shm/vortax-tmp") if Path("/dev/shm").exists() else settings.RUNTIME_PATH / "tmp"
-        cache_dir = Path("/dev/shm/vortax-chrome-cache") if Path("/dev/shm").exists() else settings.RUNTIME_PATH / "chrome-cache"
-        crash_dir = settings.RUNTIME_PATH / "chrome-crashes"
+        runtime_tmp = self._profile_dir / "tmp"
+        cache_dir = self._profile_dir / "disk-cache"
+        crash_dir = self._profile_dir / "crashes"
+        xdg_cache_dir = self._profile_dir / "xdg-cache"
+        self._profile_dir.mkdir(parents=True, exist_ok=True)
         runtime_tmp.mkdir(parents=True, exist_ok=True)
         cache_dir.mkdir(parents=True, exist_ok=True)
         crash_dir.mkdir(parents=True, exist_ok=True)
-        # Only remove SingletonLock — preserve cookies and profile data
-        if settings.CHROME_PROFILE_PATH.exists() and self._chrome_process is None:
-            singleton = settings.CHROME_PROFILE_PATH / "SingletonLock"
-            if singleton.exists() or singleton.is_symlink():
-                try:
-                    singleton.unlink(missing_ok=True)
-                except Exception:
-                    pass
-        settings.CHROME_PROFILE_PATH.mkdir(parents=True, exist_ok=True)
+        xdg_cache_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
         env.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
         env.setdefault("TMPDIR", str(runtime_tmp))
         env.setdefault("TEMP", str(runtime_tmp))
         env.setdefault("TMP", str(runtime_tmp))
-        env.setdefault("XDG_CACHE_HOME", str(settings.RUNTIME_PATH / "cache"))
+        env.setdefault("XDG_CACHE_HOME", str(xdg_cache_dir))
 
         args = [
             chrome_binary,
-            f"--remote-debugging-port={settings.CHROME_DEBUG_PORT}",
+            f"--remote-debugging-port={self._cdp_port}",
             "--remote-debugging-address=127.0.0.1",
             "--no-first-run",
             "--no-default-browser-check",
-            f"--user-data-dir={settings.CHROME_PROFILE_PATH}",
+            f"--user-data-dir={self._profile_dir}",
             f"--disk-cache-dir={cache_dir}",
             f"--crash-dumps-dir={crash_dir}",
             "--no-sandbox",
@@ -326,39 +307,25 @@ class BrowserTool:
         }
 
     async def google_search(self, query: str, hl: str = "pt-BR", task_id: str | None = None) -> dict[str, Any]:
-        # Try pure HTTP search first - zero CAPTCHA risk
+        # Compat name: this tool intentionally avoids Google browser search to prevent CAPTCHA loops.
         http_result = await self._http_search_fallback(query, hl=hl, task_id=task_id)
         if http_result.get("result_count", 0) > 0:
             return http_result
-
-        # HTTP found nothing - try Google browser as last resort
-        page = await self._ensure_page()
-        await asyncio.sleep(random.uniform(0.8, 2.5))
-        search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl={quote_plus(hl)}"
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-
-        body_text = ""
         try:
-            body_text = await page.locator("body").inner_text(timeout=3000)
-        except Exception:
-            pass
-        blocked = self._blocked_text_reason(body_text, page.url)
-        if blocked:
-            if http_result.get("result_count", 0) > 0:
-                return http_result
-            raise BrowserToolError(f"{blocked}. Busca por navegador bloqueada; tente outra consulta ou fonte direta.")
-
-        results = rank_search_results(query, await self._google_results(page, limit=20), limit=10)
-        return {
-            "query": query,
-            "url": page.url,
-            "title": await page.title(),
-            "results": results,
-            "result_count": len(results),
-        }
+            return await self._duckduckgo_browser_search(query, hl=hl, task_id=task_id)
+        except BrowserToolError as exc:
+            return {
+                "query": query,
+                "url": http_result.get("url") or "",
+                "title": f"Search - {query}",
+                "results": [],
+                "result_count": 0,
+                "engine": "non_google_search_failed",
+                "error": str(exc),
+            }
 
     async def _http_search_fallback(self, query: str, hl: str = "pt-BR", task_id: str | None = None) -> dict[str, Any]:
-        """Pure HTTP search — no browser, no fingerprint, no CAPTCHA."""
+        """Pure HTTP search using non-Google engines — no browser, no Google CAPTCHA."""
         ua = random.choice(_USER_AGENTS)
         headers = {
             "User-Agent": ua,
@@ -369,6 +336,7 @@ class BrowserTool:
         }
         ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl=br-pt"
         results: list[dict[str, Any]] = []
+        engine = "duckduckgo_http"
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
                 resp = await client.get(ddg_url)
@@ -383,12 +351,18 @@ class BrowserTool:
                     resp = await client.get(brave_url)
                     if resp.status_code == 200:
                         results = self._parse_brave_html(resp.text)
+                        engine = "brave_http"
             except Exception:
                 pass
-        if not results:
-            return await self._duckduckgo_browser_search(query, hl=hl, task_id=task_id)
         ranked = rank_search_results(query, results, limit=10)
-        return {"query": query, "url": ddg_url, "title": f"Search - {query}", "results": ranked, "result_count": len(ranked), "engine": "http_fallback"}
+        return {
+            "query": query,
+            "url": ddg_url,
+            "title": f"Search - {query}",
+            "results": ranked,
+            "result_count": len(ranked),
+            "engine": engine if ranked else "http_fallback_empty",
+        }
 
     @staticmethod
     def _parse_ddg_html(html: str) -> list[dict[str, Any]]:
@@ -865,6 +839,3 @@ class BrowserTool:
             self._playwright = None
         await self._terminate_launched_chrome()
         self._page = None
-
-
-browser_tool = BrowserTool()

@@ -22,7 +22,7 @@ TOOLS_SCHEMA = [
     {
         "action": "browser_google_search",
         "params": {"query": "consulta de pesquisa", "hl": "pt-BR"},
-        "use": "Pesquisar no Google e retornar resultados estruturados.",
+        "use": "Pesquisar na web sem abrir o Google no navegador e retornar resultados estruturados.",
     },
     {
         "action": "browser_extract_links",

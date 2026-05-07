@@ -85,8 +85,13 @@ class VisionTool:
 
         # Se nenhuma imagem foi passada, tenta capturar screenshot automaticamente.
         if not image_base64 or not image_base64.strip():
-            from tools.browser import browser_tool
-            frame = await browser_tool.screenshot(task_id=task_id or "vision")
+            from tools.browser_pool import BrowserPoolError, browser_pool
+
+            try:
+                bt = await browser_pool.get_existing(task_id or "")
+            except BrowserPoolError as exc:
+                raise VisionError("Nenhum navegador ativo para capturar screenshot desta tarefa.") from exc
+            frame = await bt.screenshot(task_id=task_id or "vision")
             image_base64 = (frame or {}).get("image_base64") or ""
             content_type = "image/jpeg"
             if not image_base64.strip():

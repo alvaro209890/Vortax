@@ -326,10 +326,10 @@ function ComputerStage({ preview, snapshot }) {
     return (
       <div className="computer-stage search-live">
         <div className="computer-stage-address">
-          {preview.query ? `https://www.google.com/search?q=${encodeURIComponent(preview.query)}` : "https://www.google.com/search"}
+          {preview.query ? `https://duckduckgo.com/?q=${encodeURIComponent(preview.query)}` : "https://duckduckgo.com"}
         </div>
         <div className="computer-search-page">
-          <div className="computer-search-logo">Google</div>
+          <div className="computer-search-logo">Web</div>
           <div className="computer-search-box">
             <Search size={16} />
             <span>{preview.query || "Pesquisando na web"}</span>

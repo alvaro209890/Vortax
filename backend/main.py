@@ -7,15 +7,18 @@ from api import control, files, providers, tasks, ws
 from config import settings
 from database import database
 from services.process_registry import kill_all_best_effort
-from tools.browser import browser_tool
+from tools.browser_pool import browser_pool
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    await browser_tool.close()
-    database.close()
-    kill_all_best_effort()
+    await browser_pool.initialize()
+    try:
+        yield
+    finally:
+        await browser_pool.shutdown()
+        database.close()
+        kill_all_best_effort()
 
 
 app = FastAPI(title="Vortax", version="0.1.2-local", lifespan=lifespan)
