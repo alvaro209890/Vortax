@@ -12,7 +12,10 @@ from services.deepseek_client import DeepSeekError, deepseek_configured, request
 from services.document_intent import (
     document_extensions_from_text,
     downloadable_document_files,
+    is_markdown_document,
+    is_previewable_document,
     markdown_documentation_files,
+    report_artifact_profile,
 )
 from services.event_bus import EventBus
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
@@ -137,6 +140,126 @@ async def _complete_plan_step(
     return step
 
 
+def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _tool_result_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = _event_payload(event)
+    result = payload.get("result")
+    return result if isinstance(result, dict) else payload
+
+
+def _result_succeeded(result: dict[str, Any]) -> bool:
+    status = str(result.get("status") or "").lower()
+    return result.get("success") is not False and not result.get("error") and status not in {"failed", "error", "blocked"}
+
+
+def _has_successful_tool(events: list[dict[str, Any]], predicate) -> bool:
+    for event in events:
+        if event.get("type") != "tool_result":
+            continue
+        payload = _event_payload(event)
+        name = str(payload.get("name") or "")
+        result = _tool_result_payload(event)
+        if predicate(name, result) and _result_succeeded(result):
+            return True
+    return False
+
+
+def _latest_research_prompt(events: list[dict[str, Any]], fallback: str) -> str:
+    return _latest_user_prompt(_message_history_from_events(events, fallback)) or fallback
+
+
+def _real_completion_evidence(
+    task_id: str,
+    step: dict[str, Any],
+    events: list[dict[str, Any]],
+    description: str,
+    final_content: str,
+) -> dict[str, Any] | None:
+    hint = str(step.get("tool_hint") or "")
+    if hint == "understand":
+        return {"status": "ok", "summary": "Pedido analisado e contexto preparado."}
+
+    if hint == "research":
+        prompt = _latest_research_prompt(events, description)
+        research_status = cross_check_status(prompt, database.list_sources(task_id))
+        if research_status.get("satisfied"):
+            count = int(research_status.get("source_count") or 0)
+            return {"status": "ok", "summary": f"Checagem de pesquisa satisfeita com {count} fonte(s) relevante(s)."}
+        if _has_successful_tool(events, lambda name, _result: name.startswith("browser_")):
+            return {"status": "ok", "summary": "Pesquisa ou navegacao registrada por ferramenta."}
+        return None
+
+    if hint == "execute":
+        if _has_successful_tool(events, lambda name, _result: not name.startswith("browser_")):
+            return {"status": "ok", "summary": "Ferramenta de execucao concluiu sem erro."}
+        if final_content.strip():
+            return {"status": "ok", "summary": "Informacoes processadas na resposta final."}
+        return None
+
+    if hint == "validate":
+        validation_events = [
+            _event_payload(event)
+            for event in events
+            if event.get("type") in {"web_validation_result", "project_validation_result"}
+        ]
+        required = [item for item in validation_events if item.get("requires_validation")]
+        if required:
+            if all(item.get("status") == "passed" for item in required):
+                return {"status": "ok", "summary": "Validacao automatica obrigatoria aprovada."}
+            return None
+
+        prompt = _latest_research_prompt(events, description)
+        research_status = cross_check_status(prompt, database.list_sources(task_id))
+        profile = research_status.get("profile") if isinstance(research_status.get("profile"), dict) else {}
+        if profile.get("requires_cross_check"):
+            if research_status.get("satisfied"):
+                return {"status": "ok", "summary": "Fontes suficientes para a checagem cruzada exigida."}
+            return None
+
+        if validation_events:
+            return {"status": "ok", "summary": "Validacao automatica registrada como nao obrigatoria."}
+        if final_content.strip():
+            return {"status": "ok", "summary": "Resultado revisado sem validacao automatica obrigatoria."}
+        return None
+
+    return None
+
+
+async def _complete_supported_steps_before_delivery(
+    task_id: str,
+    bus: EventBus,
+    description: str,
+    final_content: str,
+) -> None:
+    events = bus.history(task_id)
+    steps = task_plan_store.list_steps(task_id)
+    deliver_positions = [
+        int(step.get("position") or 0)
+        for step in steps
+        if step.get("tool_hint") == "deliver"
+    ]
+    deliver_position = min(deliver_positions) if deliver_positions else None
+    for step in steps:
+        status = step.get("status")
+        if status in {"passed", "skipped", "failed"} or step.get("tool_hint") == "deliver":
+            continue
+        if deliver_position is not None and int(step.get("position") or 0) > deliver_position:
+            continue
+        evidence = _real_completion_evidence(task_id, step, events, description, final_content)
+        if not evidence:
+            continue
+        completed = task_plan_store.complete_step_by_id(
+            step["id"],
+            evidence=evidence,
+        )
+        if completed:
+            await bus.publish(task_id, "task_step_completed", {"step": completed})
+
+
 async def _append_plan_evidence(
     task_id: str,
     hint: str,
@@ -206,6 +329,7 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
                 content
                 and not content.startswith("Resultado da ferramenta:")
                 and not content.startswith("Controle automatico de pesquisa:")
+                and not content.startswith("Controle automatico de relatorio:")
                 and not content.startswith("Controle automatico de revisao")
                 and not content.startswith("Controle automatico de validacao")
             ):
@@ -422,11 +546,42 @@ def _format_research_note(status: dict[str, Any]) -> str:
     if required <= 1:
         return ""
     source_count = int(status.get("source_count") or 0)
+    topic_coverage = status.get("topic_coverage") if isinstance(status.get("topic_coverage"), dict) else {}
+    covered_topics = [str(topic) for topic, count in topic_coverage.items() if int(count or 0) > 0]
+    data_source_count = int(status.get("data_source_count") or 0)
     divergence = status.get("divergence") if isinstance(status.get("divergence"), dict) else {}
+    details = []
+    if covered_topics:
+        details.append(f"indicadores cobertos: {', '.join(covered_topics)}")
+    if data_source_count:
+        details.append(f"{data_source_count} fonte(s) de dados/oficiais")
+    detail_text = f" ({'; '.join(details)})" if details else ""
     if divergence.get("has_divergence"):
         categories = ", ".join(str(item.get("category")) for item in divergence.get("signals", []) if isinstance(item, dict))
-        return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas. Possivel divergencia detectada em: {categories or 'dados extraidos'}."
-    return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas; nenhuma divergencia automatica evidente foi detectada."
+        return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas{detail_text}. Possivel divergencia detectada em: {categories or 'dados extraidos'}."
+    return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas{detail_text}; nenhuma divergencia automatica evidente foi detectada."
+
+
+def _format_research_gate_instruction(status: dict[str, Any], required: int, found: int) -> str:
+    pieces = [
+        "Controle automatico de pesquisa: nao finalize ainda.",
+        f"A pergunta exige pelo menos {required} fonte(s) relevante(s) e ha {found}.",
+    ]
+    missing_topics = [str(item) for item in status.get("missing_topics") or []]
+    if missing_topics:
+        pieces.append("Faltam fontes que cubram: " + ", ".join(missing_topics) + ".")
+    if status.get("requires_data_source") and int(status.get("data_source_count") or 0) <= 0:
+        pieces.append("Inclua pelo menos uma fonte de dados/oficial, como IBGE, Ipea, Banco Central, World Bank, OECD ou IMF.")
+    unique_host_count = int(status.get("unique_host_count") or 0)
+    min_unique_hosts = int(status.get("min_unique_hosts") or 0)
+    if min_unique_hosts and unique_host_count < min_unique_hosts:
+        pieces.append(f"Use fontes de pelo menos {min_unique_hosts} dominios diferentes; ha {unique_host_count}.")
+    suggested = [str(item) for item in status.get("suggested_queries") or [] if str(item).strip()]
+    if suggested:
+        pieces.append("Tente consultas especificas: " + " | ".join(suggested[:4]) + ".")
+    pieces.append("Abra as paginas encontradas e use browser_extract_article ou browser_extract_text para salvar evidencias antes de finalizar.")
+    pieces.append("Para preco, versao, documentacao, noticia, dado sensivel ou comparacao, faca verificacao cruzada e marque divergencias na resposta final.")
+    return " ".join(pieces)
 
 
 def _sanitize_chat_content(content: str) -> str:
@@ -472,28 +627,130 @@ def _file_payload(file: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _document_kind(path: str) -> str:
+    extension = Path(str(path or "")).suffix.lower()
+    if extension in {".md", ".markdown"}:
+        return "markdown"
+    if extension == ".pdf":
+        return "pdf"
+    return "document"
+
+
+def _title_from_filename(path: str) -> str:
+    stem = Path(str(path or "documento")).stem
+    title = stem.replace("_", " ").replace("-", " ").strip()
+    if not title:
+        return "Documento"
+    return " ".join(word.capitalize() for word in title.split())
+
+
+def _document_title(task_id: str, file: dict[str, Any]) -> str:
+    path = str(file.get("path") or "")
+    if is_markdown_document(path):
+        target = (settings.WORKSPACE_PATH / task_id / path).resolve()
+        base = (settings.WORKSPACE_PATH / task_id).resolve()
+        try:
+            if target.is_file() and (target == base or base in target.parents):
+                for line in target.read_text(encoding="utf-8", errors="replace").splitlines()[:40]:
+                    match = re.match(r"^\s{0,3}#{1,3}\s+(.+?)\s*$", line)
+                    if match:
+                        return match.group(1).strip()[:120]
+        except OSError:
+            pass
+    return _title_from_filename(path)
+
+
+def _document_payload(task_id: str, file: dict[str, Any], *, primary: bool = False, source: str = "generated") -> dict[str, Any]:
+    payload = _file_payload(file)
+    path = str(payload.get("path") or "")
+    payload.update(
+        {
+            "title": _document_title(task_id, file),
+            "kind": _document_kind(path),
+            "primary": primary,
+            "previewable": is_previewable_document(path),
+            "source": source,
+        }
+    )
+    return payload
+
+
+def _append_unique_file(files: list[dict[str, Any]], file: dict[str, Any]) -> None:
+    path = str(file.get("path") or "")
+    if path and all(str(existing.get("path") or "") != path for existing in files):
+        files.append(file)
+
+
+def _has_markdown_artifact(task_id: str) -> bool:
+    return bool(markdown_documentation_files(database.list_generated_files(task_id)))
+
+
+def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -> str:
+    filename = str(profile.get("preferred_filename") or "RELATORIO_TECNICO.md")
+    return (
+        "Controle automatico de relatorio: nao finalize ainda. "
+        "Este pedido tecnico deve anexar um Markdown bonito e legivel no chat. "
+        f"Use shell_run com vertex para criar {filename} no diretorio atual. "
+        "O arquivo deve conter titulo claro, resumo executivo, contexto do pedido, achados/decisoes principais, "
+        "estrutura tecnica ou arquivos relevantes, como executar/testar quando houver software, validacao feita, limites e proximos passos. "
+        "Depois observe a validacao e so finalize quando o Markdown existir e estiver nao vazio. "
+        f"Pedido original: {description}"
+    )
+
+
 def _generated_file_response_payload(task_id: str, result: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     latest_call = _latest_vertex_call(events)
-    if latest_call is None:
-        return {"content": result}
-
-    _, command = latest_call
+    command = latest_call[1] if latest_call else ""
     files = database.list_generated_files(task_id)
+    if not files:
+        return {"content": result}
     requested_extensions = document_extensions_from_text(command)
     docs = markdown_documentation_files(files)
     requested_downloads = downloadable_document_files(files, requested_extensions)
     is_web_project = web_intent_from_command(command)
+    report_profile = report_artifact_profile(command)
 
-    downloads: list[dict[str, Any]] = []
-    for file in [*requested_downloads, *(docs if is_web_project else [])]:
-        payload = _file_payload(file)
-        if payload["path"] and all(existing.get("path") != payload["path"] for existing in downloads):
-            downloads.append(payload)
+    download_files: list[dict[str, Any]] = []
+    for file in [*requested_downloads, *docs]:
+        _append_unique_file(download_files, file)
 
-    if not downloads and not docs:
+    document_files: list[tuple[dict[str, Any], str]] = []
+    pdf_requested = ".pdf" in requested_extensions
+    if pdf_requested:
+        for file in requested_downloads:
+            if Path(str(file.get("path") or "")).suffix.lower() == ".pdf":
+                document_files.append((file, "requested"))
+    include_markdown = bool(docs) and (
+        is_web_project
+        or bool(report_profile.get("requires_markdown"))
+        or _looks_like_creation_vertex_command(command)
+        or ".md" in requested_extensions
+        or pdf_requested
+        or not requested_extensions
+    )
+    if include_markdown:
+        document_files.extend((file, "documentation") for file in docs)
+    if not pdf_requested:
+        for file in requested_downloads:
+            if is_previewable_document(str(file.get("path") or "")):
+                document_files.append((file, "requested"))
+
+    documents: list[dict[str, Any]] = []
+    seen_documents: set[str] = set()
+    for file, source in document_files:
+        path = str(file.get("path") or "")
+        if not path or path in seen_documents:
+            continue
+        seen_documents.add(path)
+        documents.append(_document_payload(task_id, file, primary=len(documents) == 0, source=source))
+
+    downloads = [_file_payload(file) for file in download_files]
+    if not downloads and not documents:
         return {"content": result}
 
     payload: dict[str, Any] = {"content": result, "downloads": downloads[:8]}
+    if documents:
+        payload["documents"] = documents[:8]
     if docs:
         payload["documentation"] = _file_payload(docs[0])
 
@@ -504,11 +761,11 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
 
     if is_web_project and docs and (is_short or not has_code):
         payload["content"] = (
-            "Pronto. Criei o site solicitado, revisei o projeto e gerei a documentacao em Markdown. "
-            "Abra o card Documentacao para ler no Vortax ou use o botao abaixo para baixar."
+            "Pronto. Criei o site solicitado, revisei o projeto e anexei a documentacao em Markdown. "
+            "Abra o card no chat para ler ou baixar."
         )
     elif requested_downloads and (is_short or not has_code):
-        payload["content"] = "Pronto. Gerei o arquivo solicitado. Use o botao abaixo para baixar."
+        payload["content"] = "Pronto. Gerei o arquivo solicitado e anexei no chat para leitura ou download."
 
     return payload
 
@@ -550,6 +807,7 @@ async def _finish_text_response(
     store: TaskStore,
     bus: EventBus,
 ) -> None:
+    await _complete_supported_steps_before_delivery(task_id, bus, description, result)
     await _start_plan_step(task_id, "deliver", bus)
     payload = _generated_file_response_payload(task_id, result, bus.history(task_id))
     final_content = _sanitize_chat_content(str(payload.get("content") or result))
@@ -985,6 +1243,23 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                     continue
 
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
+                report_profile = report_artifact_profile(description)
+                if report_profile.get("requires_markdown") and not _has_markdown_artifact(task_id):
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Preparando relatorio",
+                            "detail": "A resposta tecnica precisa anexar um Markdown legivel antes de finalizar.",
+                        },
+                    )
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": _format_report_gate_instruction(description, report_profile),
+                        }
+                    )
+                    continue
                 research_prompt = _latest_user_prompt(history) or description
                 research_status = cross_check_status(research_prompt, database.list_sources(task_id))
                 if not research_status.get("satisfied"):
@@ -1002,12 +1277,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                         history.append(
                             {
                                 "role": "user",
-                                "content": (
-                                    "Controle automatico de pesquisa: nao finalize ainda. "
-                                    f"A pergunta exige pelo menos {required} fonte(s) relevante(s) e ha {found}. "
-                                    "Use fontes ja salvas se forem suficientes para o mesmo assunto; caso contrario, pesquise/abra/extrai outra fonte. "
-                                    "Para preco, versao, documentacao, noticia, dado sensivel ou comparacao, faca verificacao cruzada e marque divergencias na resposta final."
-                                ),
+                                "content": _format_research_gate_instruction(research_status, required, found),
                             }
                         )
                         continue

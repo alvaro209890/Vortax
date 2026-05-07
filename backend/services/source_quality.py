@@ -2,6 +2,20 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 
+DATA_HINTS = (
+    "ibge.gov.br",
+    "sidra.ibge.gov.br",
+    "ipea.gov.br",
+    "ipeadata.gov.br",
+    "bcb.gov.br",
+    "sgs.bcb.gov.br",
+    "dados.gov.br",
+    "data.worldbank.org",
+    "worldbank.org",
+    "oecd.org",
+    "imf.org",
+    "cepal.org",
+)
 OFFICIAL_HINTS = ("gov.", ".gov", "edu.", ".edu", "hyundai.com", "openai.com", "deepseek.com")
 NEWS_HINTS = ("g1.globo.com", "uol.com.br", "estadao.com.br", "folha.uol.com.br", "autoesporte.globo.com", "motor1.com")
 LOW_VALUE_HINTS = (
@@ -20,6 +34,8 @@ MAX_RESULTS_PER_HOST = 2
 
 def source_type_for_url(url: str) -> str:
     host = urlparse(url).netloc.lower()
+    if any(hint in host for hint in DATA_HINTS):
+        return "data"
     if any(hint in host for hint in OFFICIAL_HINTS):
         return "official"
     if any(hint in host for hint in NEWS_HINTS):
@@ -36,6 +52,8 @@ def source_type_for_url(url: str) -> str:
 def source_quality_score(url: str, title: str = "", text: str = "") -> int:
     host = urlparse(url).netloc.lower()
     score = 50
+    if any(hint in host for hint in DATA_HINTS):
+        score += 35
     if any(hint in host for hint in OFFICIAL_HINTS):
         score += 30
     if any(hint in host for hint in NEWS_HINTS):

@@ -33,6 +33,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-python-ok"
                 task_dir.mkdir()
                 (task_dir / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\nDocumentacao do script.", encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -55,6 +56,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-python-bug"
                 task_dir.mkdir()
                 (task_dir / "main.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\nDocumentacao do script.", encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -105,6 +107,28 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 result = await validate_project_after_vertex(
                     "task-site-no-doc",
                     "vertex 'crie um site html'",
+                    bus,
+                    vertex_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("DOCUMENTACAO.md" in bug for bug in result["bugs"]))
+
+    async def test_python_project_requires_markdown_documentation(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-python-no-doc"
+                task_dir.mkdir()
+                (task_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_vertex(
+                    "task-python-no-doc",
+                    "vertex 'crie um script python'",
                     bus,
                     vertex_result={"success": True},
                 )

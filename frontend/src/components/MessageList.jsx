@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, Copy, Download, FileText, Globe2, Sparkles, User } from "lucide-react";
+import { BookOpen, Check, Copy, Download, ExternalLink, FileText, Globe2, Sparkles, User, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -109,7 +109,238 @@ const markdownComponents = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
 };
 
-function MessageArticle({ message }) {
+function fileExtension(path = "") {
+  const match = String(path).toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? `.${match[1]}` : "";
+}
+
+function documentKind(document) {
+  const extension = String(document?.extension || fileExtension(document?.path)).toLowerCase();
+  if (document?.kind === "markdown" || extension === ".md" || extension === ".markdown") return "markdown";
+  if (document?.kind === "pdf" || extension === ".pdf") return "pdf";
+  return "document";
+}
+
+function documentLabel(document) {
+  const kind = documentKind(document);
+  if (kind === "markdown") return "Markdown";
+  if (kind === "pdf") return "PDF";
+  return "Documento";
+}
+
+function formatBytes(value) {
+  const size = Number(value || 0);
+  if (!Number.isFinite(size) || size <= 0) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10240 ? 1 : 0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function useMarkdownFile(taskId, document, enabled) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const path = document?.path || "";
+
+  useEffect(() => {
+    if (!enabled || !taskId || !path) {
+      setContent("");
+      setLoading(false);
+      setError(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    fetch(fileDownloadUrl(taskId, path))
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((text) => {
+        if (!cancelled) setContent(text);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, taskId, path]);
+
+  return { content, loading, error };
+}
+
+function DocumentAttachmentCard({ document, onOpen, taskId }) {
+  if (!document?.path || !taskId) return null;
+  const kind = documentKind(document);
+  const isMarkdown = kind === "markdown";
+  const { content, loading, error } = useMarkdownFile(taskId, document, isMarkdown);
+  const title = document.title || document.name || document.path;
+  const size = formatBytes(document.size_bytes);
+  const downloadUrl = fileDownloadUrl(taskId, document.path);
+
+  const handleOpen = () => onOpen?.({ ...document, taskId });
+  const handleKeyDown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleOpen();
+    }
+  };
+
+  return (
+    <article
+      className={`document-attachment-card ${kind}`}
+      onClick={handleOpen}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      title={`Abrir ${title}`}
+    >
+      <div className="document-card-header">
+        <span className="document-card-icon">
+          {isMarkdown ? <BookOpen size={17} /> : <FileText size={17} />}
+        </span>
+        <div className="document-card-title">
+          <strong>{title}</strong>
+          <span>
+            {documentLabel(document)}
+            {size ? ` · ${size}` : ""}
+            {document.project_name ? ` · ${document.project_name}` : ""}
+          </span>
+        </div>
+        <a
+          className="document-card-download"
+          download
+          href={downloadUrl}
+          onClick={(event) => event.stopPropagation()}
+          title={`Baixar ${document.name || document.path}`}
+        >
+          <Download size={15} />
+        </a>
+      </div>
+
+      <div className="document-card-preview markdown-body">
+        {isMarkdown ? (
+          loading ? (
+            <p>Carregando prévia...</p>
+          ) : error ? (
+            <p>Não foi possível carregar a prévia deste Markdown.</p>
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || "Documento Markdown pronto para leitura."}</ReactMarkdown>
+          )
+        ) : (
+          <p>PDF pronto para leitura no visualizador interno e download.</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function MessageDocuments({ documents = [], onOpenDocument, taskId }) {
+  const items = documents.filter((item) => item?.path && item?.previewable !== false);
+  if (!taskId || items.length === 0) return null;
+
+  return (
+    <div className="message-documents">
+      {items.map((document) => (
+        <DocumentAttachmentCard
+          document={document}
+          key={document.path}
+          onOpen={onOpenDocument}
+          taskId={taskId}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DocumentViewerOverlay({ document, onClose, taskId }) {
+  const kind = documentKind(document);
+  const isMarkdown = kind === "markdown";
+  const { content, loading, error } = useMarkdownFile(taskId, document, isMarkdown && Boolean(document?.path));
+  const title = document?.title || document?.name || document?.path || "Documento";
+  const fileUrl = document?.path && taskId ? fileDownloadUrl(taskId, document.path) : "";
+
+  useEffect(() => {
+    if (!document) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [document, onClose]);
+
+  if (!document || !taskId || !fileUrl) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        className="document-viewer-overlay"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <motion.section
+          className={`document-viewer ${kind}`}
+          initial={{ opacity: 0, y: 18, scale: 0.985 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 12, scale: 0.985 }}
+          transition={{ type: "spring", stiffness: 240, damping: 28 }}
+        >
+          <header className="document-viewer-header">
+            <div className="document-viewer-title">
+              <span className="document-card-icon">
+                {isMarkdown ? <BookOpen size={18} /> : <FileText size={18} />}
+              </span>
+              <div>
+                <strong>{title}</strong>
+                <span>{documentLabel(document)}{document.path ? ` · ${document.path}` : ""}</span>
+              </div>
+            </div>
+            <div className="document-viewer-actions">
+              <a href={fileUrl} target="_blank" rel="noreferrer" title="Abrir em nova aba">
+                <ExternalLink size={16} />
+              </a>
+              <a href={fileUrl} download title="Baixar documento">
+                <Download size={16} />
+              </a>
+              <button onClick={onClose} title="Fechar documento" type="button">
+                <X size={18} />
+              </button>
+            </div>
+          </header>
+
+          <div className="document-viewer-body">
+            {isMarkdown ? (
+              <div className="document-viewer-markdown markdown-body">
+                {loading ? (
+                  <p>Carregando documento...</p>
+                ) : error ? (
+                  <p>Não foi possível abrir este Markdown.</p>
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {content || "Documento vazio."}
+                  </ReactMarkdown>
+                )}
+              </div>
+            ) : (
+              <iframe className="document-viewer-frame" src={fileUrl} title={title} />
+            )}
+          </div>
+        </motion.section>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+function MessageArticle({ message, onOpenDocument }) {
+  const documentPaths = new Set((message.documents || []).map((item) => item?.path).filter(Boolean));
   return (
     <motion.article
       className={`message ${message.role}`}
@@ -129,7 +360,8 @@ function MessageArticle({ message }) {
             </ReactMarkdown>
           </div>
         ) : null}
-        <MessageDownloads downloads={message.downloads} taskId={message.taskId} />
+        <MessageDocuments documents={message.documents} onOpenDocument={onOpenDocument} taskId={message.taskId} />
+        <MessageDownloads downloads={message.downloads} excludedPaths={documentPaths} taskId={message.taskId} />
         {message.images?.length > 0 && (
           <div className="message-images">
             {message.images.map((image, index) => (
@@ -200,8 +432,8 @@ function SearchActivityArticle({ activeSearch }) {
 
 /* ── Downloads ───────────────────────────────────────────────────── */
 
-function MessageDownloads({ downloads = [], taskId }) {
-  const items = downloads.filter((item) => item?.path);
+function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId }) {
+  const items = downloads.filter((item) => item?.path && !excludedPaths.has(item.path));
   if (!taskId || items.length === 0) return null;
 
   return (
@@ -227,6 +459,7 @@ function MessageDownloads({ downloads = [], taskId }) {
 
 export function MessageList({ activity, activityVersion, isTyping = false, messages, activeSearch }) {
   const endRef = useRef(null);
+  const [selectedDocument, setSelectedDocument] = useState(null);
   const lastUserIndex = messages.reduce(
     (latest, message, index) => (message.role === "user" ? index : latest),
     -1,
@@ -248,12 +481,12 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
       <div className="message-list-inner">
         <AnimatePresence mode="popLayout">
           {beforeActivity.map((message) => (
-            <MessageArticle key={message.id} message={message} />
+            <MessageArticle key={message.id} message={message} onOpenDocument={setSelectedDocument} />
           ))}
         </AnimatePresence>
         <AnimatePresence mode="popLayout">
           {activity ? (
-            <ActivityArticle key="activity">
+            <ActivityArticle key={`activity-${activityVersion || "current"}`}>
               {activity}
             </ActivityArticle>
           ) : null}
@@ -263,7 +496,7 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
         </AnimatePresence>
         <AnimatePresence mode="popLayout">
           {afterActivity.map((message) => (
-            <MessageArticle key={message.id} message={message} />
+            <MessageArticle key={message.id} message={message} onOpenDocument={setSelectedDocument} />
           ))}
         </AnimatePresence>
         {isTyping && (
@@ -277,17 +510,24 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
               <Sparkles size={18} />
             </div>
             <div className="message-content">
-              <div className="message-role">Vortax</div>
-              <div aria-label="Vortax esta digitando" className="typing-dots" role="status">
-                <span />
-                <span />
-                <span />
+              <div aria-label="Vortax esta pensando" className="typing-status" role="status">
+                <span>Vortax está pensando</span>
+                <span className="typing-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
               </div>
             </div>
           </motion.article>
         )}
         <div ref={endRef} />
       </div>
+      <DocumentViewerOverlay
+        document={selectedDocument}
+        onClose={() => setSelectedDocument(null)}
+        taskId={selectedDocument?.taskId}
+      />
     </motion.div>
   );
 }

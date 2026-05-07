@@ -43,16 +43,20 @@ const welcomeMessage = {
 function buildMessages(task, events, responseReady = true) {
   if (!task) return [welcomeMessage];
 
-  // So mostra mensagens do assistant apos o agente comecar a executar de fato
-  // (evita resposta vazia aparecer antes das tasks carregarem)
+  // Durante uma nova execucao, preserva respostas anteriores da IA e esconde
+  // apenas deltas/respostas gerados depois da ultima mensagem do usuario.
   const firstProgressIndex = events.findIndex(
     (e) => e.type === "agent_progress" || e.type === "tool_call",
+  );
+  const lastUserIndex = events.reduce(
+    (latest, event, index) => (event.type === "user_message" ? index : latest),
+    -1,
   );
 
   const assistantOk = (event, index) => {
     if (event.type === "user_message") return true;
     if (event.type === "assistant_message_done" || event.type === "assistant_message_delta") {
-      if (!responseReady) return false;
+      if (!responseReady && index > lastUserIndex) return false;
       // So mostra se veio depois do agente comecar a trabalhar; conversas antigas
       // sem eventos de progresso continuam exibindo a resposta normalmente.
       return firstProgressIndex < 0 || index > firstProgressIndex;
@@ -68,6 +72,13 @@ function buildMessages(task, events, responseReady = true) {
       content: event.payload.content,
       downloads: event.payload.downloads || [],
       documentation: event.payload.documentation || null,
+      documents: event.payload.documents || (event.payload.documentation ? [{
+        ...event.payload.documentation,
+        kind: "markdown",
+        previewable: true,
+        primary: true,
+        source: "documentation",
+      }] : []),
       images: event.payload.images || [],
       taskId: event.task_id || task.id,
     }));
@@ -94,6 +105,73 @@ function isAuthError(error) {
   return /autenticacao obrigatoria|token firebase|unauthorized|401/i.test(error?.message || "");
 }
 
+function agentStatusLabel(status) {
+  const labels = {
+    done: "Pronto",
+    error: "Erro",
+    executing: "Executando",
+    idle: "Parado",
+    paused: "Pausado",
+    queued: "Na fila",
+    running: "Rodando",
+    stopped: "Pausado",
+    thinking: "Pensando",
+  };
+  return labels[status] || status;
+}
+
+function latestEventIndex(events, predicate) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (predicate(events[index])) return index;
+  }
+  return -1;
+}
+
+const emptyDisplayPlan = {
+  currentStep: null,
+  doneCount: 0,
+  failedCount: 0,
+  hasSteps: false,
+  isDirect: true,
+  isTerminal: false,
+  latestProgress: "",
+  percent: 0,
+  planKey: "empty",
+  screenCount: 0,
+  sourceCount: 0,
+  steps: [],
+  totalCount: 0,
+  visibleSteps: [],
+};
+
+function likelyTaskPrompt(prompt = "") {
+  const value = String(prompt || "").trim().toLowerCase();
+  if (value.length >= 28) return true;
+  return /(pesquis|busc|procure|not[ií]cia|crie|criar|gere|gerar|desenvolva|implemente|fa[cç]a|calcule|analise|compare|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf)/i.test(value);
+}
+
+function buildPendingPlan(prompt = "") {
+  const now = new Date().toISOString();
+  const detail = String(prompt || "").trim();
+  return {
+    currentStep: null,
+    doneCount: 0,
+    failedCount: 0,
+    hasSteps: true,
+    isGeneratingPlan: true,
+    isDirect: false,
+    isTerminal: false,
+    latestProgress: "Criando plano de tarefas",
+    percent: 0,
+    planKey: `pending:${now}:${detail}`,
+    screenCount: 0,
+    sourceCount: 0,
+    steps: [],
+    totalCount: 0,
+    visibleSteps: [],
+  };
+}
+
 export default function App() {
   const { loading: authLoading, signOut, user } = useAuth();
   const [activeTaskId, setActiveTaskId] = useState(null);
@@ -104,6 +182,7 @@ export default function App() {
   const [tasksError, setTasksError] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [optimisticMessages, setOptimisticMessages] = useState([]);
   const {
     activeTask,
     contextState,
@@ -125,34 +204,68 @@ export default function App() {
   const { sources } = useTaskSources(activeTaskId, currentEvents, initialSources);
   const livePlan = useLiveTaskPlan(initialPlan, currentEvents);
   const agentBusy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
+  const lastUserIndex = useMemo(
+    () => latestEventIndex(currentEvents, (event) => event.type === "user_message"),
+    [currentEvents],
+  );
+  const lastPlanIndex = useMemo(
+    () => latestEventIndex(currentEvents, (event) => event.type === "task_plan_created" || event.type === "task_plan_replanned"),
+    [currentEvents],
+  );
+  const latestUserEvent = lastUserIndex >= 0 ? currentEvents[lastUserIndex] : null;
+  const hasPendingPlanForLatestUser = agentBusy && lastUserIndex > lastPlanIndex;
+  const latestUserText = latestUserEvent?.payload?.content || "";
+  const shouldShowPlanGeneration = hasPendingPlanForLatestUser && likelyTaskPrompt(latestUserText);
+  const displayPlan = useMemo(
+    () => (
+      hasPendingPlanForLatestUser
+        ? shouldShowPlanGeneration
+          ? buildPendingPlan(latestUserText)
+          : emptyDisplayPlan
+        : livePlan
+    ),
+    [hasPendingPlanForLatestUser, latestUserText, livePlan, shouldShowPlanGeneration],
+  );
 
   const messages = useMemo(() => {
+    const pendingMessages = optimisticMessages.filter(
+      (message) => !activeTaskId || message.taskId === activeTaskId || message.taskId === "new",
+    );
     if (taskLoading) {
-      return [{ id: "task-loading", role: "assistant", content: "Carregando conversa..." }];
+      return pendingMessages.length > 0
+        ? pendingMessages
+        : [{ id: "task-loading", role: "assistant", content: "Carregando conversa..." }];
     }
     if (taskError) {
       return [{ id: "task-error", role: "assistant", content: "Nao foi possivel carregar esta conversa." }];
     }
-    const responseReady = !agentBusy || livePlan.percent >= 100 || livePlan.isTerminal;
-    return buildMessages(activeTask, currentEvents, responseReady);
-  }, [activeTask, agentBusy, currentEvents, livePlan.isTerminal, livePlan.percent, taskError, taskLoading]);
+    const responseReady = !agentBusy || displayPlan.percent >= 100 || displayPlan.isTerminal;
+    const builtMessages = buildMessages(activeTask, currentEvents, responseReady);
+    if (pendingMessages.length === 0) return builtMessages;
+    return builtMessages
+      .filter((message) => message.id !== "welcome")
+      .concat(pendingMessages.filter((pending) => !builtMessages.some((message) => (
+        message.role === "user" && message.content === pending.content
+      ))));
+  }, [activeTask, activeTaskId, agentBusy, currentEvents, displayPlan.isTerminal, displayPlan.percent, optimisticMessages, taskError, taskLoading]);
   const showTyping = useMemo(
     () => shouldShowTyping(activeTask, currentEvents, agentBusy),
     [activeTask, agentBusy, currentEvents],
   );
 
   const activeSearch = useMemo(() => {
-    const reversed = [...currentEvents].reverse();
-    const lastSearchCall = reversed.find(e => e.type === "tool_call" && e.payload?.name === "browser_google_search");
+    const scopedEvents = lastUserIndex >= 0 ? currentEvents.slice(lastUserIndex + 1) : currentEvents;
+    const reversed = [...scopedEvents].reverse();
+    const lastSearchCall = reversed.find((e) => e.type === "tool_call" && e.payload?.name === "browser_google_search");
     if (!lastSearchCall) return null;
-    const lastSearchResult = reversed.find(e => e.type === "tool_result" && e.payload?.name === "browser_google_search");
+    const lastSearchResult = reversed.find((e) => e.type === "tool_result" && e.payload?.name === "browser_google_search");
     if (!lastSearchResult || lastSearchResult.created_at < lastSearchCall.created_at) {
       return {
         query: lastSearchCall.payload?.params?.query || "Buscando informações...",
       };
     }
     return null;
-  }, [currentEvents]);
+  }, [currentEvents, lastUserIndex]);
 
   useEffect(() => {
     if (authLoading || !user) return undefined;
@@ -243,11 +356,35 @@ export default function App() {
 
   }, [activeTaskId, currentEvents]);
 
+  useEffect(() => {
+    if (!activeTaskId || optimisticMessages.length === 0 || currentEvents.length === 0) return;
+    setOptimisticMessages((current) => current.filter((message) => {
+      if (message.taskId !== activeTaskId) return true;
+      return !currentEvents.some((event) => (
+        event.type === "user_message" && event.payload?.content === message.content
+      ));
+    }));
+  }, [activeTaskId, currentEvents, optimisticMessages.length]);
+
   async function handleSubmit(description, files = []) {
     setAgentStatus("queued");
+    const now = new Date().toISOString();
+    const optimisticId = `optimistic-user-${now}`;
+    const optimisticTaskId = activeTaskId || "new";
+    const optimisticContent = description || (files.length > 0 ? "Analise esta imagem." : "");
+    if (optimisticContent) {
+      setOptimisticMessages((current) => [
+        ...current,
+        {
+          id: optimisticId,
+          role: "user",
+          content: optimisticContent,
+          taskId: optimisticTaskId,
+        },
+      ]);
+    }
     if (files.length > 0) {
       if (activeTaskId) {
-        const now = new Date().toISOString();
         setTaskEvents((current) => [
           ...current,
           {
@@ -265,6 +402,7 @@ export default function App() {
           },
         ]);
         const result = await appendTaskImages(activeTaskId, description, files);
+        setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
         setTaskEvents((current) => [
           ...current.filter((event) => !(event.type === "user_message" && event.created_at === now)),
           {
@@ -292,6 +430,7 @@ export default function App() {
       }
 
       const result = await createImageTask(description, files);
+      setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
       setTasks((current) => [result.task, ...current]);
       setActiveTask(result.task);
       setTaskEvents([]);
@@ -302,7 +441,6 @@ export default function App() {
     }
 
     if (activeTaskId) {
-      await appendTaskMessage(activeTaskId, description);
       setTaskEvents((current) => [
         ...current,
         {
@@ -312,10 +450,18 @@ export default function App() {
           payload: { content: description },
         },
       ]);
+      try {
+        await appendTaskMessage(activeTaskId, description);
+      } finally {
+        setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
+      }
       return;
     }
 
     const result = await createTask(description);
+    setOptimisticMessages((current) => current.map((message) => (
+      message.id === optimisticId ? { ...message, taskId: result.task_id } : message
+    )));
     setTasks((current) => [result.task, ...current]);
     setActiveTask(result.task);
     setTaskEvents([]);
@@ -431,7 +577,9 @@ export default function App() {
           <>
             <header className="chat-header">
               <div className="chat-header-left">
-                <img className="chat-brand-logo" src="/vortax-logo.png" alt="Vortax" />
+                <div className="chat-brand-mark">
+                  <img className="chat-brand-logo" src="/vortax-logo.png" alt="Vortax" />
+                </div>
                 <div className="chat-header-text">
                   <div className="chat-brand-line">
                     <strong>Vortax</strong>
@@ -450,8 +598,10 @@ export default function App() {
                   <PanelRightOpen size={16} />
                   <span>Detalhes</span>
                 </button>
-                <ContextIndicator context={contextState} />
-                <StatusBadge status={agentStatus} label={agentStatus} />
+                <div className="chat-health-group">
+                  <ContextIndicator context={contextState} />
+                  <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
+                </div>
                 <button className="user-menu-btn" onClick={signOut} title="Sair" type="button">
                   <span>{user.displayName || user.email || "Usuario"}</span>
                   <LogOut size={15} />
@@ -460,13 +610,13 @@ export default function App() {
             </header>
             <MessageList
               activeSearch={activeSearch}
-              activity={livePlan.hasSteps ? (
+              activity={displayPlan.hasSteps && !displayPlan.isDirect ? (
                 <InlineTaskTimeline
-                  livePlan={livePlan}
+                  livePlan={displayPlan}
                   showEmpty={false}
                 />
               ) : null}
-              activityVersion={livePlan.planKey}
+              activityVersion={displayPlan.planKey}
               isTyping={showTyping}
               messages={messages}
             />
@@ -475,7 +625,7 @@ export default function App() {
               agentStatus={agentStatus}
               connectionState={connectionState}
               events={currentEvents}
-              livePlan={livePlan}
+              livePlan={displayPlan}
               onOpenDetails={() => setDetailsOpen(true)}
             />
             <Composer

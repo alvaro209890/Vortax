@@ -12,6 +12,7 @@ class SourceQualityTests(unittest.TestCase):
 
     def test_classifies_common_source_types(self) -> None:
         self.assertEqual(source_type_for_url("https://www.hyundai.com/br/pt"), "official")
+        self.assertEqual(source_type_for_url("https://sidra.ibge.gov.br/tabela/5932"), "data")
         self.assertEqual(source_type_for_url("https://motor1.com/news/example"), "news")
         self.assertEqual(source_type_for_url("https://www.youtube.com/watch?v=abc"), "video")
         self.assertEqual(source_type_for_url("https://www.reddit.com/r/test"), "forum")

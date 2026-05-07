@@ -20,6 +20,32 @@ class FakeDatabase:
         ]
 
 
+class FakeWeakEconomicDatabase:
+    def list_sources(self, task_id: str) -> list[dict]:
+        return [
+            {
+                "id": 1,
+                "task_id": task_id,
+                "url": "https://pt.wikipedia.org/wiki/Luiz_Inacio_Lula_da_Silva",
+                "title": "Lula biografia",
+                "snippet": "Presidente do Brasil de 2003 a 2010.",
+                "extracted_text": "Biografia de Lula.",
+                "source_type": "web",
+                "quality_score": 82,
+            },
+            {
+                "id": 2,
+                "task_id": task_id,
+                "url": "https://www.gov.br/planalto/pt-br/conheca-a-presidencia/ex-presidentes/jair-bolsonaro",
+                "title": "Jair Bolsonaro",
+                "snippet": "Presidente do Brasil de 2019 a 2022.",
+                "extracted_text": "Biografia institucional de Jair Bolsonaro.",
+                "source_type": "official",
+                "quality_score": 86,
+            },
+        ]
+
+
 class FakeBus(EventBus):
     def __init__(self) -> None:
         super().__init__()
@@ -53,6 +79,40 @@ class ToolExecutorResearchCacheTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["success"])
         self.assertTrue(result["data"]["from_conversation_cache"])
+
+    async def test_google_search_skips_weak_cache_for_economic_comparison(self) -> None:
+        original_database = tool_executor.database
+        original_tool = tool_executor.TOOLS["browser_google_search"]
+        called = False
+
+        async def fake_search(**kwargs):
+            nonlocal called
+            called = True
+            return {
+                "blocked": True,
+                "error": "fake browser called",
+                "query": kwargs.get("query"),
+                "results": [],
+                "result_count": 0,
+            }
+
+        try:
+            tool_executor.database = FakeWeakEconomicDatabase()  # type: ignore[assignment]
+            tool_executor.TOOLS["browser_google_search"] = fake_search
+
+            result = await tool_executor.execute_tool(
+                "browser_google_search",
+                {"query": "comparacao Lula Bolsonaro PIB inflacao desemprego 2003 2010 2019 2022"},
+                task_id="task-1",
+                bus=FakeBus(),
+            )
+        finally:
+            tool_executor.database = original_database
+            tool_executor.TOOLS["browser_google_search"] = original_tool
+
+        self.assertTrue(called)
+        self.assertFalse(result["success"])
+        self.assertNotIn("from_conversation_cache", result["data"])
 
 
 if __name__ == "__main__":

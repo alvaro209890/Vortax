@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
-from services.document_intent import document_extensions_from_text
+from services.document_intent import document_extensions_from_text, report_artifact_profile
 from services.project_files import missing_local_asset_refs, scan_task_workspace
 from services.web_validation import web_intent_from_command
 
@@ -212,9 +212,10 @@ async def validate_project_after_vertex(
     if missing_assets:
         bugs.append("Referencias locais ausentes no HTML: " + ", ".join(missing_assets))
 
-    if web_intent_from_command(command) and not _nonempty_markdown_files(project_dir):
+    report_profile = report_artifact_profile(command)
+    if (web_intent_from_command(command) or report_profile.get("requires_markdown")) and not _nonempty_markdown_files(project_dir):
         bugs.append(
-            "Site criado pelo Vertex precisa incluir um arquivo DOCUMENTACAO.md em Markdown, claro e nao vazio."
+            "Entrega tecnica criada pelo Vertex precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado e nao vazio."
         )
 
     for extension in document_extensions_from_text(command):

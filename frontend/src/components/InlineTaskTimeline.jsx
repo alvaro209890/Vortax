@@ -54,6 +54,25 @@ export function InlineTaskTimeline({ livePlan, showEmpty = false }) {
   const steps = livePlan.visibleSteps || livePlan.steps || [];
   const allSteps = livePlan.steps || [];
 
+  if (livePlan.isGeneratingPlan) {
+    return (
+      <section className="inline-task-timeline generating" aria-label="Gerando plano de tarefas">
+        <span className="inline-generating-node">
+          <Loader2 size={14} className="spinner" />
+        </span>
+        <div>
+          <strong>Gerando plano de tarefas</strong>
+          <small>As etapas aparecem aqui assim que ficarem prontas.</small>
+        </div>
+        <span className="typing-dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      </section>
+    );
+  }
+
   if (!allSteps.length) {
     if (!showEmpty) return null;
     return (
@@ -68,18 +87,7 @@ export function InlineTaskTimeline({ livePlan, showEmpty = false }) {
   }
 
   if (isDirect) {
-    const step = allSteps[0];
-    const done = step?.status === "passed" || step?.status === "skipped";
-    const running = step?.status === "running";
-    return (
-      <section className={`inline-task-timeline direct ${done ? "done" : running ? "running" : "pending"}`} aria-label="Resposta rapida">
-        <span className="inline-direct-node">{done ? <Check size={13} /> : running ? <Loader2 size={13} className="spinner" /> : <Circle size={13} />}</span>
-        <div>
-          <strong>{done ? "Resposta pronta" : running ? "Respondendo" : "Preparando resposta"}</strong>
-          <small>{done ? "A resposta vem logo abaixo." : livePlan.latestProgress || "Sem pesquisa, sem Vertex."}</small>
-        </div>
-      </section>
-    );
+    return null;
   }
 
   return (

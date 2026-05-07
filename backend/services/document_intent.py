@@ -33,6 +33,24 @@ _DOCUMENT_REQUEST_RE = re.compile(
     r"gere|gerar|crie|criar|fa[cç]a|exporte|baixar|download)\b",
     re.IGNORECASE,
 )
+_SOFTWARE_REPORT_RE = re.compile(
+    r"\b(site|pagina|p[aá]gina|landing|frontend|backend|fullstack|api|app|aplicativo|"
+    r"software|sistema|dashboard|script|codigo|c[oó]digo|repositorio|reposit[oó]rio|"
+    r"projeto|arquitetura|componente|banco\s+de\s+dados|database)\b",
+    re.IGNORECASE,
+)
+_TECHNICAL_REPORT_RE = re.compile(
+    r"\b(analis(?:e|ar|ando)|auditor(?:ia|ar)|rev(?:ise|isar|isao|isão)|"
+    r"diagn[oó]stico|relat[oó]rio|documenta[cç][aã]o|explica[cç][aã]o\s+t[eé]cnica|"
+    r"map(?:ear|eamento)|arquitetura|fluxo|estrutura|depend[eê]ncias|vulnerabilidade|"
+    r"performance|qualidade\s+do\s+c[oó]digo|code\s+review)\b",
+    re.IGNORECASE,
+)
+_CREATE_SOFTWARE_RE = re.compile(
+    r"\b(crie|criar|gere|gerar|desenvolva|implemente|construa|fa[cç]a|corrija|"
+    r"bug|erro|falha)\b",
+    re.IGNORECASE,
+)
 
 
 def _normalize_extension(value: str) -> str | None:
@@ -70,8 +88,51 @@ def document_intent_from_text(text: str) -> bool:
     return bool(document_extensions_from_text(text))
 
 
+def report_artifact_profile(text: str) -> dict[str, Any]:
+    """Return whether a task should produce a previewable report artifact."""
+    value = str(text or "")
+    lowered = value.lower()
+    requested_extensions = document_extensions_from_text(value)
+    wants_markdown = ".md" in requested_extensions or bool(re.search(r"\b(markdown|documenta[cç][aã]o)\b", lowered))
+    wants_pdf = ".pdf" in requested_extensions
+    software_context = bool(_SOFTWARE_REPORT_RE.search(value))
+    technical_context = bool(_TECHNICAL_REPORT_RE.search(value))
+    creation_context = bool(_CREATE_SOFTWARE_RE.search(value)) and software_context
+    analysis_context = technical_context and software_context
+    should_generate_markdown = wants_markdown or creation_context or analysis_context
+
+    if wants_markdown:
+        reason = "requested_markdown"
+    elif analysis_context:
+        reason = "technical_analysis"
+    elif creation_context:
+        reason = "software_documentation"
+    elif wants_pdf:
+        reason = "requested_pdf"
+    else:
+        reason = "none"
+
+    preferred_filename = "DOCUMENTACAO.md" if creation_context and not analysis_context else "RELATORIO_TECNICO.md"
+    return {
+        "should_generate_markdown": should_generate_markdown,
+        "requires_markdown": should_generate_markdown,
+        "wants_pdf": wants_pdf,
+        "wants_markdown": wants_markdown,
+        "is_technical": technical_context or software_context,
+        "is_software": software_context,
+        "is_analysis": analysis_context,
+        "reason": reason,
+        "preferred_filename": preferred_filename,
+        "requested_extensions": requested_extensions,
+    }
+
+
 def is_markdown_document(path: str) -> bool:
     return Path(str(path or "")).suffix.lower() in {".md", ".markdown"}
+
+
+def is_previewable_document(path: str) -> bool:
+    return Path(str(path or "")).suffix.lower() in {".md", ".markdown", ".pdf"}
 
 
 def file_is_nonempty(file: dict[str, Any]) -> bool:

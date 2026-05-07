@@ -1,6 +1,24 @@
+import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 
-from services.agent_runner import _latest_vertex_quality_gate, _latest_web_validation_gate, _message_history_from_events
+import database as database_module
+import services.agent_runner as agent_runner_module
+import services.event_bus as event_bus_module
+import services.task_plan_store as task_plan_store_module
+from config import settings
+from database import Database
+from services.agent_runner import (
+    _complete_supported_steps_before_delivery,
+    _generated_file_response_payload,
+    _latest_vertex_quality_gate,
+    _latest_web_validation_gate,
+    _message_history_from_events,
+)
+from services.event_bus import EventBus
+from services.task_plan_store import TaskPlanStore
+from services.task_store import utc_now
 
 
 class AgentHistoryTests(unittest.TestCase):
@@ -122,3 +140,218 @@ class AgentHistoryTests(unittest.TestCase):
 
         self.assertFalse(gate["required"])
         self.assertEqual(gate["status"], "not_required")
+
+
+class GeneratedFilePayloadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_base = database_module.settings.DATABASE_BASE_PATH
+        self.original_workspace = settings.WORKSPACE_PATH
+        database_module.settings.DATABASE_BASE_PATH = Path(self.tmp.name) / "db"
+        settings.WORKSPACE_PATH = Path(self.tmp.name) / "workspace"
+        settings.WORKSPACE_PATH.mkdir(parents=True, exist_ok=True)
+        self.db = Database()
+        self.original_database = database_module.database
+        self.original_runner_database = agent_runner_module.database
+        database_module.database = self.db
+        agent_runner_module.database = self.db
+        self.task_id = "task-documents"
+        now = utc_now()
+        self.db.create_task(
+            {
+                "id": self.task_id,
+                "description": "crie um site",
+                "status": "running",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    def tearDown(self) -> None:
+        database_module.database = self.original_database
+        agent_runner_module.database = self.original_runner_database
+        database_module.settings.DATABASE_BASE_PATH = self.original_base
+        settings.WORKSPACE_PATH = self.original_workspace
+        self.db.close()
+        self.tmp.cleanup()
+
+    def _sync_files(self, files: list[dict]) -> None:
+        now = utc_now()
+        project = {
+            "id": f"{self.task_id}:__root__",
+            "task_id": self.task_id,
+            "root_path": "",
+            "name": "Projeto principal",
+            "project_type": "static_web",
+            "main_file": "index.html",
+            "file_count": len(files),
+            "total_size": sum(int(file.get("size_bytes", 0)) for file in files),
+            "created_at": now,
+            "updated_at": now,
+        }
+        indexed = [
+            {
+                **file,
+                "task_id": self.task_id,
+                "project_id": project["id"],
+                "created_at": now,
+                "updated_at": now,
+            }
+            for file in files
+        ]
+        self.db.sync_generated_projects(self.task_id, [project], indexed)
+
+    def test_payload_attaches_markdown_document_card_for_site(self) -> None:
+        task_dir = settings.WORKSPACE_PATH / self.task_id
+        task_dir.mkdir(parents=True)
+        (task_dir / "DOCUMENTACAO.md").write_text("# Guia do Site\n\nConteudo.", encoding="utf-8")
+        self._sync_files(
+            [
+                {"path": "index.html", "size_bytes": 20, "extension": ".html", "modified_at": 1},
+                {"path": "DOCUMENTACAO.md", "size_bytes": 26, "extension": ".md", "modified_at": 1},
+            ]
+        )
+        events = [
+            {
+                "event_id": 1,
+                "type": "tool_call",
+                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie um site html'"}},
+            }
+        ]
+
+        payload = _generated_file_response_payload(self.task_id, "ok", events)
+
+        self.assertEqual(payload["documents"][0]["path"], "DOCUMENTACAO.md")
+        self.assertEqual(payload["documents"][0]["title"], "Guia do Site")
+        self.assertTrue(payload["documents"][0]["previewable"])
+        self.assertEqual(payload["documents"][0]["kind"], "markdown")
+        self.assertEqual(payload["documentation"]["path"], "DOCUMENTACAO.md")
+
+    def test_payload_attaches_pdf_as_primary_and_markdown_as_secondary(self) -> None:
+        task_dir = settings.WORKSPACE_PATH / self.task_id
+        task_dir.mkdir(parents=True)
+        (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4")
+        (task_dir / "relatorio.md").write_text("# Fonte do Relatorio\n\nConteudo.", encoding="utf-8")
+        self._sync_files(
+            [
+                {"path": "relatorio.pdf", "size_bytes": 8, "extension": ".pdf", "modified_at": 1},
+                {"path": "relatorio.md", "size_bytes": 31, "extension": ".md", "modified_at": 1},
+            ]
+        )
+        events = [
+            {
+                "event_id": 1,
+                "type": "tool_call",
+                "payload": {"name": "shell_run", "params": {"command": "vertex 'gere um relatorio em PDF'"}},
+            }
+        ]
+
+        payload = _generated_file_response_payload(self.task_id, "ok", events)
+
+        self.assertEqual([item["path"] for item in payload["documents"]], ["relatorio.pdf", "relatorio.md"])
+        self.assertTrue(payload["documents"][0]["primary"])
+        self.assertEqual(payload["documents"][0]["kind"], "pdf")
+
+
+class SupportedStepCompletionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_base = database_module.settings.DATABASE_BASE_PATH
+        database_module.settings.DATABASE_BASE_PATH = Path(self.tmp.name)
+        self.db = Database()
+        self.original_database = database_module.database
+        self.original_runner_database = agent_runner_module.database
+        self.original_event_bus_database = event_bus_module.database
+        self.original_plan_database = task_plan_store_module.database
+        database_module.database = self.db
+        agent_runner_module.database = self.db
+        event_bus_module.database = self.db
+        task_plan_store_module.database = self.db
+        self.store = TaskPlanStore()
+        self.original_runner_plan_store = agent_runner_module.task_plan_store
+        agent_runner_module.task_plan_store = self.store
+        self.task_id = "task-supported-steps"
+        now = utc_now()
+        self.db.create_task(
+            {
+                "id": self.task_id,
+                "description": "pesquise sobre o Corinthians agora",
+                "status": "running",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    def tearDown(self) -> None:
+        agent_runner_module.task_plan_store = self.original_runner_plan_store
+        database_module.database = self.original_database
+        agent_runner_module.database = self.original_runner_database
+        event_bus_module.database = self.original_event_bus_database
+        task_plan_store_module.database = self.original_plan_database
+        database_module.settings.DATABASE_BASE_PATH = self.original_base
+        self.db.close()
+        self.tmp.cleanup()
+
+    def _replace_plan(self) -> None:
+        self.store.replace_plan(
+            self.task_id,
+            [
+                {"label": "Entender", "tool_hint": "understand"},
+                {"label": "Pesquisar", "tool_hint": "research"},
+                {"label": "Compilar", "tool_hint": "execute"},
+                {"label": "Validar", "tool_hint": "validate"},
+                {"label": "Entregar", "tool_hint": "deliver"},
+            ],
+            "pesquise sobre o Corinthians agora",
+        )
+
+    def test_completes_only_steps_supported_by_real_events(self) -> None:
+        self._replace_plan()
+        now = utc_now()
+        self.db.insert_event(self.task_id, "user_message", now, {"content": "pesquise sobre o Corinthians agora"})
+        self.db.upsert_source(
+            self.task_id,
+            {
+                "url": "https://ge.globo.com/futebol/times/corinthians/",
+                "title": "Corinthians noticias recentes",
+                "source_type": "web",
+                "quality_score": 80,
+                "snippet": "Corinthians noticias recentes agora futebol",
+                "extracted_text": "Corinthians noticias recentes agora futebol",
+                "created_at": now,
+            }
+        )
+        self.db.upsert_source(
+            self.task_id,
+            {
+                "url": "https://www.corinthians.com.br/",
+                "title": "Corinthians site oficial noticias",
+                "source_type": "web",
+                "quality_score": 78,
+                "snippet": "Corinthians noticias recentes agora clube oficial",
+                "extracted_text": "Corinthians noticias recentes agora clube oficial",
+                "created_at": now,
+            }
+        )
+        self.db.insert_event(self.task_id, "tool_result", now, {"name": "browser_google_search", "result": {"query": "Corinthians noticias", "results": [1, 2]}})
+
+        asyncio.run(_complete_supported_steps_before_delivery(self.task_id, EventBus(), "pesquise sobre o Corinthians agora", "Resumo final."))
+
+        statuses = {step["tool_hint"]: step["status"] for step in self.store.list_steps(self.task_id)}
+        self.assertEqual(statuses["understand"], "passed")
+        self.assertEqual(statuses["research"], "passed")
+        self.assertEqual(statuses["execute"], "passed")
+        self.assertEqual(statuses["validate"], "passed")
+        self.assertEqual(statuses["deliver"], "pending")
+
+    def test_keeps_validation_pending_without_required_evidence(self) -> None:
+        self._replace_plan()
+
+        asyncio.run(_complete_supported_steps_before_delivery(self.task_id, EventBus(), "preco atual do Corolla", "Resumo final."))
+
+        statuses = {step["tool_hint"]: step["status"] for step in self.store.list_steps(self.task_id)}
+        self.assertEqual(statuses["understand"], "passed")
+        self.assertEqual(statuses["execute"], "passed")
+        self.assertEqual(statuses["research"], "pending")
+        self.assertEqual(statuses["validate"], "pending")
+        self.assertEqual(statuses["deliver"], "pending")

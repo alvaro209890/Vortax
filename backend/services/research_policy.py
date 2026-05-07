@@ -56,7 +56,27 @@ SENSITIVE_PATTERNS = {
     "versao": (r"\bvers(?:[aã]o|oes|ões)\b", r"\brelease\b", r"\bchangelog\b", r"\bmodelo\b"),
     "documentacao": (r"\bdocumenta[cç][aã]o\b", r"\bdocs?\b", r"\bapi\b", r"\bsdk\b"),
     "noticia": (r"\bnot[ií]ci[aa]s?\b", r"\bhoje\b", r"\bagora\b", r"\brecent(?:e|es)\b"),
-    "comparacao": (r"\bcompar(?:ar|e|acao|a[cç][aã]o)\b", r"\bversus\b", r"\bvs\b", r"\bmelhor\b"),
+    "comparacao": (
+        r"\bcompar(?:ar|e|acao|a[cç][aã]o)\b",
+        r"\bcomparativ[oa]s?\b",
+        r"\bversus\b",
+        r"\bvs\b",
+        r"\bmelhor\b",
+    ),
+    "dados_economicos": (
+        r"\bpib\b",
+        r"\bproduto\s+interno\s+bruto\b",
+        r"\binfla[cç][aã]o\b",
+        r"\bipca\b",
+        r"\bdesemprego\b",
+        r"\btaxa\s+de\s+desocupa[cç][aã]o\b",
+        r"\bpnad\b",
+        r"\bselic\b",
+        r"\bjuros\b",
+        r"\bc[aâ]mbio\b",
+        r"\beconomia\b.*\b(?:governo|mandato|presidente|lula|bolsonaro)\b",
+        r"\b(?:governo|mandato|presidente|lula|bolsonaro)\b.*\beconomia\b",
+    ),
     "pessoa": (
         r"\bnome\b",
         r"\bpessoa\b",
@@ -88,6 +108,50 @@ SENSITIVE_PATTERNS = {
     ),
 }
 
+ECONOMIC_TOPIC_PATTERNS = {
+    "PIB": (
+        r"\bpib\b",
+        r"\bproduto\s+interno\s+bruto\b",
+        r"\bcrescimento\s+(?:do\s+)?pib\b",
+        r"\bcrescimento\s+econ[oô]mico\b",
+    ),
+    "inflacao/IPCA": (
+        r"\binfla[cç][aã]o\b",
+        r"\bipca\b",
+        r"\b[ií]ndice\s+de\s+pre[cç]os\b",
+    ),
+    "desemprego": (
+        r"\bdesemprego\b",
+        r"\btaxa\s+de\s+desocupa[cç][aã]o\b",
+        r"\bpnad\b",
+    ),
+    "juros/Selic": (
+        r"\bselic\b",
+        r"\bjuros\b",
+        r"\btaxa\s+b[aá]sica\b",
+    ),
+    "cambio": (
+        r"\bc[aâ]mbio\b",
+        r"\bd[oó]lar\b",
+        r"\btaxa\s+de\s+c[aâ]mbio\b",
+    ),
+}
+
+DATA_SOURCE_HINTS = (
+    "ibge.gov.br",
+    "sidra.ibge.gov.br",
+    "ipea.gov.br",
+    "ipeadata.gov.br",
+    "bcb.gov.br",
+    "sgs.bcb.gov.br",
+    "dados.gov.br",
+    "data.worldbank.org",
+    "worldbank.org",
+    "oecd.org",
+    "imf.org",
+    "cepal.org",
+)
+
 PRICE_RE = re.compile(r"(?:R\$\s*|\$\s*)\d[\d.,]*|\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})\b")
 VERSION_RE = re.compile(r"\bv?\d+(?:\.\d+){1,3}\b", re.IGNORECASE)
 DATE_RE = re.compile(r"\b(?:20\d{2}|\d{1,2}/\d{1,2}/20\d{2})\b")
@@ -102,6 +166,28 @@ DEVELOPMENT_PATTERNS = (
 def normalized_terms(text: str) -> set[str]:
     normalized = "".join(char.lower() if char.isalnum() else " " for char in text)
     return {part for part in normalized.split() if len(part) >= 3 and part not in STOPWORDS}
+
+
+def evidence_topics_for_query(text: str) -> list[str]:
+    lowered = text.lower()
+    topics = []
+    for topic, patterns in ECONOMIC_TOPIC_PATTERNS.items():
+        if any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in patterns):
+            topics.append(topic)
+    return topics
+
+
+def _required_source_count(categories: list[str], search_intent: bool, evidence_topics: list[str]) -> int:
+    required = 1 if search_intent else 0
+    if categories:
+        required = max(required, 2)
+    if "pessoa" in categories:
+        required = max(required, 3)
+    if "comparacao" in categories:
+        required = max(required, 3)
+    if "dados_economicos" in categories:
+        required = max(required, min(3, max(2, len(evidence_topics) or 2)))
+    return required
 
 
 def research_profile(text: str) -> dict[str, object]:
@@ -126,10 +212,12 @@ def research_profile(text: str) -> dict[str, object]:
             flags=re.IGNORECASE,
         )
     )
+    evidence_topics = evidence_topics_for_query(text)
     requires_cross_check = bool(categories)
-    required_sources = 2 if requires_cross_check else (1 if search_intent else 0)
+    required_sources = _required_source_count(categories, search_intent, evidence_topics)
     return {
         "categories": categories,
+        "evidence_topics": evidence_topics,
         "freshness_requested": freshness_requested,
         "requires_cross_check": requires_cross_check,
         "required_sources": required_sources,
@@ -145,29 +233,116 @@ def _source_text(source: dict) -> str:
     )
 
 
+def _source_covers_topic(source: dict, topic: str) -> bool:
+    text = _source_text(source).lower()
+    patterns = ECONOMIC_TOPIC_PATTERNS.get(topic, ())
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _source_host(source: dict) -> str:
+    return urlparse(str(source.get("url") or "")).netloc.lower()
+
+
+def _is_data_source(source: dict) -> bool:
+    source_type = str(source.get("source_type") or "").lower()
+    host = _source_host(source)
+    return source_type == "data" or any(hint in host for hint in DATA_SOURCE_HINTS)
+
+
+def _unique_hosts(sources: list[dict]) -> set[str]:
+    hosts = set()
+    for source in sources:
+        host = _source_host(source)
+        if host.startswith("www."):
+            host = host[4:]
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+def suggested_research_queries(query: str, *, limit: int = 6) -> list[str]:
+    topics = evidence_topics_for_query(query)
+    years = re.findall(r"\b(?:19|20)\d{2}\b", query)
+    year_part = " ".join(dict.fromkeys(years))
+    lowered = query.lower()
+    entities = []
+    for name in ("Lula", "Bolsonaro"):
+        if name.lower() in lowered:
+            entities.append(name)
+    entity_part = " ".join(entities)
+    suffix = " ".join(part for part in (entity_part, year_part) if part).strip()
+
+    templates = {
+        "PIB": [
+            "site:ibge.gov.br PIB Brasil {suffix}",
+            "site:ipea.gov.br PIB Brasil {suffix}",
+            "site:data.worldbank.org Brazil GDP growth {suffix}",
+        ],
+        "inflacao/IPCA": [
+            "site:ibge.gov.br IPCA inflacao Brasil {suffix}",
+            "site:bcb.gov.br inflacao IPCA Brasil {suffix}",
+            "site:ipea.gov.br inflacao Brasil {suffix}",
+        ],
+        "desemprego": [
+            "site:ibge.gov.br desemprego PNAD Brasil {suffix}",
+            "site:ipea.gov.br taxa desemprego Brasil {suffix}",
+            "site:worldbank.org Brazil unemployment {suffix}",
+        ],
+        "juros/Selic": [
+            "site:bcb.gov.br taxa Selic Brasil {suffix}",
+            "site:ipea.gov.br juros Selic Brasil {suffix}",
+        ],
+        "cambio": [
+            "site:bcb.gov.br cambio dolar Brasil {suffix}",
+            "site:ipea.gov.br taxa cambio Brasil {suffix}",
+        ],
+    }
+
+    suggestions: list[str] = []
+    for topic in topics:
+        for template in templates.get(topic, []):
+            suggestion = template.format(suffix=suffix).strip()
+            suggestion = re.sub(r"\s+", " ", suggestion)
+            if suggestion not in suggestions:
+                suggestions.append(suggestion)
+            if len(suggestions) >= limit:
+                return suggestions
+    if not suggestions:
+        fallback = f"{query} dados oficiais"
+        suggestions.append(re.sub(r"\s+", " ", fallback).strip())
+    return suggestions[:limit]
+
+
 def source_match_score(query: str, source: dict) -> int:
     query_terms = normalized_terms(query)
     if not query_terms:
         return 0
     source_terms = normalized_terms(_source_text(source))
     overlap = len(query_terms & source_terms)
-    if overlap == 0:
+    covered_topics = sum(1 for topic in evidence_topics_for_query(query) if _source_covers_topic(source, topic))
+    if overlap == 0 and covered_topics == 0:
         return 0
     ratio = overlap / max(len(query_terms), 1)
     quality = int(source.get("quality_score") or 0)
-    return int(overlap * 12 + ratio * 35 + min(quality, 100) * 0.4)
+    return int(overlap * 12 + ratio * 35 + min(quality, 100) * 0.4 + covered_topics * 18)
 
 
 def relevant_sources_for_query(query: str, sources: list[dict], *, limit: int = 8, min_quality: int = 55) -> list[dict]:
+    profile = research_profile(query)
+    evidence_topics = list(profile.get("evidence_topics") or [])
+    needs_topic_coverage = "dados_economicos" in profile.get("categories", []) and bool(evidence_topics)
     ranked = []
     for source in sources:
         quality = int(source.get("quality_score") or 0)
         if quality < min_quality:
             continue
+        covered_topics = [topic for topic in evidence_topics if _source_covers_topic(source, topic)]
+        if needs_topic_coverage and not covered_topics:
+            continue
         score = source_match_score(query, source)
         if score < 24:
             continue
-        ranked.append({**source, "match_score": score})
+        ranked.append({**source, "match_score": score, "covered_topics": covered_topics})
     ranked.sort(key=lambda item: (int(item.get("match_score") or 0), int(item.get("quality_score") or 0)), reverse=True)
     return ranked[:limit]
 
@@ -176,8 +351,12 @@ def cached_search_result(query: str, sources: list[dict], *, limit: int = 6) -> 
     profile = research_profile(query)
     if profile["freshness_requested"]:
         return None
-    matches = relevant_sources_for_query(query, sources, limit=limit)
-    if len(matches) < int(profile["required_sources"] or 1):
+    status = cross_check_status(query, sources)
+    matches = list(status.get("sources") or [])[:limit]
+    minimum = int(profile["required_sources"] or 1)
+    if len(matches) < minimum:
+        return None
+    if int(profile["required_sources"] or 0) > 0 and not status.get("satisfied"):
         return None
     results = []
     for index, source in enumerate(matches, start=1):
@@ -257,12 +436,36 @@ def cross_check_status(query: str, sources: list[dict]) -> dict[str, object]:
     profile = research_profile(query)
     relevant = relevant_sources_for_query(query, sources, limit=10, min_quality=45)
     required = int(profile["required_sources"] or 0)
+    categories = list(profile.get("categories") or [])
+    evidence_topics = list(profile.get("evidence_topics") or [])
+    topic_coverage = {
+        topic: sum(1 for source in relevant if _source_covers_topic(source, topic))
+        for topic in evidence_topics
+    }
+    missing_topics = [topic for topic, count in topic_coverage.items() if count <= 0]
+    unique_host_count = len(_unique_hosts(relevant))
+    min_unique_hosts = 2 if required >= 2 else min(required, 1)
+    data_source_count = sum(1 for source in relevant if _is_data_source(source))
+    requires_data_source = "dados_economicos" in categories and bool(evidence_topics)
     divergence = detect_source_divergence(query, relevant)
+    satisfied = (
+        len(relevant) >= required
+        and unique_host_count >= min_unique_hosts
+        and not missing_topics
+        and (not requires_data_source or data_source_count >= 1)
+    )
     return {
         "profile": profile,
         "required_sources": required,
         "source_count": len(relevant),
-        "satisfied": len(relevant) >= required,
+        "unique_host_count": unique_host_count,
+        "min_unique_hosts": min_unique_hosts,
+        "data_source_count": data_source_count,
+        "requires_data_source": requires_data_source,
+        "topic_coverage": topic_coverage,
+        "missing_topics": missing_topics,
+        "suggested_queries": suggested_research_queries(query),
+        "satisfied": satisfied,
         "sources": relevant,
         "divergence": divergence,
     }

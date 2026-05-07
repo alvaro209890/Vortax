@@ -58,6 +58,26 @@ class BrowserToolError(RuntimeError):
     pass
 
 
+CAPTCHA_PATTERNS = (
+    "captcha",
+    "nao sou um robo",
+    "não sou um robô",
+    "nao sou um robô",
+    "não sou um robo",
+    "i'm not a robot",
+    "im not a robot",
+    "not a robot",
+    "unusual traffic",
+    "trafego incomum",
+    "tráfego incomum",
+    "verify you are human",
+    "verifique que voce e humano",
+    "verifique que você é humano",
+    "request could not be satisfied",
+    "access denied",
+)
+
+
 class BrowserTool:
     def __init__(self) -> None:
         self._playwright: Playwright | None = None
@@ -224,6 +244,17 @@ class BrowserTool:
     async def navigate(self, url: str, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            return {
+                "success": False,
+                "blocked": True,
+                "error": blocked,
+                "url": page.url,
+                "title": await page.title(),
+                "launch_mode": self._launch_mode,
+                "suggested_next_step": "Use browser_google_search, outro resultado ou browser_extract_article para tentar leitura por HTTP sem navegador.",
+            }
         return {"url": page.url, "title": await page.title(), "launch_mode": self._launch_mode}
 
     async def get_state(self, task_id: str | None = None) -> dict[str, Any]:
@@ -254,6 +285,17 @@ class BrowserTool:
         if self._is_blocked_google_url(link["href"]):
             raise BrowserToolError("Link ignorado por apontar para login/conta do Google")
         await page.goto(link["href"], wait_until="domcontentloaded", timeout=30000)
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            return {
+                "success": False,
+                "blocked": True,
+                "error": blocked,
+                "opened": link,
+                "url": page.url,
+                "title": await page.title(),
+                "suggested_next_step": "Abra outro resultado ou use browser_extract_article para tentar leitura por HTTP sem navegador.",
+            }
         return {"opened": link, "url": page.url, "title": await page.title()}
 
     async def type_text(self, text: str, selector: str | None = None, task_id: str | None = None) -> dict[str, Any]:
@@ -300,8 +342,11 @@ class BrowserTool:
             body_text = await page.locator("body").inner_text(timeout=3000)
         except Exception:
             pass
-        if any(m in body_text.lower() for m in ["captcha", "unusual traffic", "not a robot", "sorry", "blocked"]) or "/sorry/" in page.url:
-            return http_result
+        blocked = self._blocked_text_reason(body_text, page.url)
+        if blocked:
+            if http_result.get("result_count", 0) > 0:
+                return http_result
+            raise BrowserToolError(f"{blocked}. Busca por navegador bloqueada; tente outra consulta ou fonte direta.")
 
         results = rank_search_results(query, await self._google_results(page, limit=20), limit=10)
         return {
@@ -388,6 +433,9 @@ class BrowserTool:
         await asyncio.sleep(random.uniform(0.5, 1.5))
         ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl=br-pt"
         await page.goto(ddg_url, wait_until="domcontentloaded", timeout=30000)
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            raise BrowserToolError(f"{blocked}. Busca DuckDuckGo via navegador bloqueada.")
 
         results = await page.evaluate(
             """
@@ -421,6 +469,9 @@ class BrowserTool:
             await asyncio.sleep(random.uniform(1.0, 2.0))
             lite_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}&kl=br-pt"
             await page.goto(lite_url, wait_until="domcontentloaded", timeout=30000)
+            blocked = await self._blocked_page_reason(page)
+            if blocked:
+                raise BrowserToolError(f"{blocked}. Busca DuckDuckGo Lite via navegador bloqueada.")
             results = await page.evaluate(
                 """
                 (limit) => {
@@ -458,12 +509,26 @@ class BrowserTool:
 
     async def extract_text(self, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            fallback = await self._http_extract_url(page.url)
+            if fallback:
+                fallback["blocked_browser"] = blocked
+                return fallback
+            raise BrowserToolError(blocked)
         body_text = await page.locator("body").inner_text(timeout=10000)
         text = body_text[:6000]
         return {"url": page.url, "title": await page.title(), "text": text, "truncated": len(body_text) > len(text)}
 
     async def extract_article(self, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            fallback = await self._http_extract_url(page.url)
+            if fallback:
+                fallback["blocked_browser"] = blocked
+                return fallback
+            raise BrowserToolError(blocked)
         data = await page.evaluate(
             """
             () => {
@@ -500,6 +565,9 @@ class BrowserTool:
 
     async def extract_links(self, limit: int = 30, prefer_google_results: bool = True, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            raise BrowserToolError(blocked)
         page_url = page.url
         links = []
         if prefer_google_results and "://www.google." in page_url and "/search" in page_url:
@@ -511,6 +579,9 @@ class BrowserTool:
 
     async def screenshot(self, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        blocked = await self._blocked_page_reason(page)
+        if blocked:
+            raise BrowserToolError(blocked)
         image = await page.screenshot(type="jpeg", quality=75, full_page=False)
         return {
             "url": page.url,
@@ -722,6 +793,62 @@ class BrowserTool:
             "policies.google",
         )
         return any(fragment.lower() in url.lower() for fragment in blocked_fragments)
+
+    def _blocked_text_reason(self, text: str, url: str = "") -> str | None:
+        lowered = f"{url}\n{text}".lower()
+        if "/sorry/" in lowered:
+            return "Pagina bloqueada por CAPTCHA/anti-bot"
+        if any(pattern in lowered for pattern in CAPTCHA_PATTERNS):
+            return "Pagina bloqueada por CAPTCHA/anti-bot"
+        return None
+
+    async def _blocked_page_reason(self, page: Page) -> str | None:
+        body_text = ""
+        try:
+            body_text = await page.locator("body").inner_text(timeout=2500)
+        except Exception:
+            pass
+        return self._blocked_text_reason(body_text[:5000], page.url)
+
+    async def _http_extract_url(self, url: str) -> dict[str, Any] | None:
+        if not url.startswith(("http://", "https://")):
+            return None
+        headers = {
+            "User-Agent": random.choice(_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+                response = await client.get(url)
+            if response.status_code >= 400:
+                return None
+            html = response.text
+            if self._blocked_text_reason(html[:6000], str(response.url)):
+                return None
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+            description_match = re.search(
+                r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+                html,
+                re.IGNORECASE,
+            )
+            clean = re.sub(r"(?is)<(script|style|noscript|svg|iframe).*?</\1>", " ", html)
+            clean = re.sub(r"(?s)<[^>]+>", " ", clean)
+            text = re.sub(r"\s+", " ", clean).strip()
+            if len(text) < 160:
+                return None
+            return {
+                "url": str(response.url),
+                "title": re.sub(r"\s+", " ", title_match.group(1)).strip()[:220] if title_match else "",
+                "description": description_match.group(1).strip()[:500] if description_match else "",
+                "author": "",
+                "published": "",
+                "text": text[:10000],
+                "length": min(len(text), 10000),
+                "engine": "http_extract_fallback",
+            }
+        except Exception:
+            return None
 
     async def close(self) -> None:
         if self._browser is not None:

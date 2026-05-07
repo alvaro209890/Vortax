@@ -166,6 +166,32 @@ class TaskPlanStore:
             },
         )
 
+    def complete_step_by_id(
+        self,
+        step_id: str,
+        *,
+        status: str = "passed",
+        evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        final_status = status if status in VALID_STEP_STATUSES else "passed"
+        step = database.get_task_step(step_id)
+        if not step:
+            return None
+        evidences = list(step.get("evidence") or [])
+        if evidence:
+            evidences.append(evidence)
+        now = utc_now()
+        return database.update_task_step(
+            step_id,
+            {
+                "status": final_status,
+                "evidence": evidences[-12:],
+                "started_at": step.get("started_at") or now,
+                "finished_at": now if final_status in {"passed", "failed", "skipped"} else step.get("finished_at"),
+                "updated_at": now,
+            },
+        )
+
     def append_evidence(self, task_id: str, evidence: dict[str, Any], *, hint: str | None = None) -> dict[str, Any] | None:
         step = self.find_for_hint(task_id, hint) if hint else self.current_step(task_id)
         if not step:

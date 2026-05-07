@@ -107,6 +107,14 @@ class VertexStreamTests(unittest.TestCase):
 
         self.assertIn("VALIDACAO_AUTOMATICA_VORTAX", command)
         self.assertIn("python3 -m py_compile", command)
+        self.assertIn("DOCUMENTACAO.md", command)
+        self.assertIn("vertex -p", command)
+
+    def test_augments_technical_analysis_with_markdown_report(self) -> None:
+        command = _augment_vertex_command_for_quality("vertex 'analise o frontend deste repositorio'")
+
+        self.assertIn("RELATORIO_TECNICO.md", command)
+        self.assertIn("card de leitura", command)
         self.assertIn("vertex -p", command)
 
     def test_augments_document_prompt_with_file_delivery_instruction(self) -> None:

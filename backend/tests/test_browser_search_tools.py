@@ -10,6 +10,7 @@ class FakeResponse:
 class FakePage:
     def __init__(self) -> None:
         self.url = "about:blank"
+        self.body_text = "conteudo normal"
         self.goto_calls: list[str] = []
         self.evaluate_calls: list[tuple[str, int]] = []
 
@@ -29,6 +30,15 @@ class FakePage:
             {"index": 1, "title": "Primeiro", "text": "Primeiro link", "href": "https://example.com/one"},
             {"index": 2, "title": "Segundo", "text": "Segundo link", "href": "https://example.com/two"},
         ][:limit]
+
+    def locator(self, selector: str):
+        page = self
+
+        class FakeLocator:
+            async def inner_text(self, timeout: int):
+                return page.body_text
+
+        return FakeLocator()
 
 
 class BrowserSearchToolTests(unittest.IsolatedAsyncioTestCase):
@@ -70,6 +80,27 @@ class BrowserSearchToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.tool._is_blocked_google_url("https://accounts.google.com/ServiceLogin"))
         self.assertTrue(self.tool._is_blocked_google_url("https://www.google.com/preferences"))
         self.assertFalse(self.tool._is_blocked_google_url("https://www.hyundai.com.br/"))
+
+    async def test_navigate_reports_captcha_without_screenshot_flow(self) -> None:
+        self.page.body_text = "Confirme que nao sou um robo"
+
+        result = await self.tool.navigate("https://example.com/captcha")
+
+        self.assertTrue(result["blocked"])
+        self.assertFalse(result["success"])
+
+    async def test_extract_text_uses_http_fallback_when_browser_is_blocked(self) -> None:
+        self.page.url = "https://example.com/noticia"
+        self.page.body_text = "captcha not a robot"
+
+        async def fake_http_extract(url):
+            return {"url": url, "title": "Noticia", "text": "conteudo por http", "length": 17}
+
+        self.tool._http_extract_url = fake_http_extract  # type: ignore[method-assign]
+        result = await self.tool.extract_text()
+
+        self.assertEqual(result["text"], "conteudo por http")
+        self.assertIn("blocked_browser", result)
 
 
 if __name__ == "__main__":

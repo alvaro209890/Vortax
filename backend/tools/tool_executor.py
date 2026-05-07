@@ -4,7 +4,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from database import database
-from services.document_intent import document_extensions_from_text, document_intent_from_text
+from services.document_intent import document_extensions_from_text, document_intent_from_text, report_artifact_profile
 from services.event_bus import EventBus
 from services.project_validation import validate_project_after_vertex
 from services.research_policy import cached_search_result
@@ -183,9 +183,11 @@ def _vertex_creation_intent(command: str) -> bool:
     if any(part in {"--version", "-v", "--help", "help"} for part in parts[1:]):
         return False
     text = " ".join(parts[1:]).lower()
+    report_profile = report_artifact_profile(text)
     return bool(
         web_intent_from_command(command)
         or document_intent_from_text(text)
+        or report_profile.get("requires_markdown")
         or re.search(
             r"\b(crie|criar|faca|faça|desenvolva|implemente|gere|corrija|bug|erro|falha|"
             r"software|sistema|script|api|backend|python|node|cli|automacao|automação|app)\b",
@@ -272,8 +274,9 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
     if "DOCUMENTACAO.MD" not in prompt_upper and "DOCUMENTAÇÃO.MD" not in prompt_upper:
         instructions.append(
             "Tambem crie obrigatoriamente um arquivo DOCUMENTACAO.md em Markdown explicando o que foi criado, "
-            "estrutura dos arquivos, funcionalidades, como testar/abrir o site e proximos ajustes sugeridos. "
-            "Esse Markdown sera aberto pelo Vortax em um card de documentacao e precisa ser claro, bem formatado e nao vazio."
+            "com titulo claro, resumo executivo, funcionalidades, estrutura dos arquivos, principais decisoes tecnicas, "
+            "como testar/abrir o site, validacao realizada e proximos ajustes sugeridos. "
+            "Use tabelas Markdown quando ajudarem a leitura e mantenha o documento bonito, escaneavel e pronto para o card de leitura do Vortax."
         )
     if "LINK_LOCAL_DO_SITE" not in prompt:
         instructions.append(
@@ -289,10 +292,15 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
 
 
 def _augment_vertex_command_for_quality(command: str) -> str:
-    if web_intent_from_command(command):
+    initial_split = _split_vertex_command(command)
+    initial_prompt = ""
+    if initial_split is not None:
+        _, initial_parts = initial_split
+        initial_prompt = " ".join(part for part in initial_parts[1:] if part not in {"-p", "--print"}).strip()
+    if web_intent_from_command(command) and not report_artifact_profile(initial_prompt).get("is_analysis"):
         return _augment_vertex_command_for_local_site(command)
 
-    split = _split_vertex_command(command)
+    split = initial_split
     if split is None or not _vertex_creation_intent(command):
         return command
 
@@ -313,6 +321,7 @@ def _augment_vertex_command_for_quality(command: str) -> str:
 
     prompt = " ".join(prompt_parts).strip()
     requested_extensions = document_extensions_from_text(prompt)
+    report_profile = report_artifact_profile(prompt)
     if "VALIDACAO_AUTOMATICA_VORTAX" in prompt:
         instruction = ""
     else:
@@ -323,6 +332,15 @@ def _augment_vertex_command_for_quality(command: str) -> str:
             "Se estiver corrigindo uma falha anterior, preserve o projeto existente e corrija exatamente os bugs descritos. "
             "Nao finalize deixando TODO, arquivo vazio, dependencia quebrada, caminho inexistente ou instrucao que impeca a revisao automatica."
         )
+        if report_profile.get("requires_markdown"):
+            filename = str(report_profile.get("preferred_filename") or "RELATORIO_TECNICO.md")
+            if filename.upper() not in prompt.upper() and "DOCUMENTACAO.MD" not in prompt.upper() and "DOCUMENTAÇÃO.MD" not in prompt.upper():
+                instruction += (
+                    f" Crie tambem um arquivo {filename} em Markdown, bem formatado e pronto para leitura no card de leitura do Vortax. "
+                    "O Markdown deve ter titulo, resumo, contexto do pedido, achados ou funcionalidades principais, "
+                    "arquitetura/estrutura de arquivos quando houver codigo, como executar/testar, validacao feita, riscos/limites e proximos passos. "
+                    "Use secoes curtas, listas e tabelas quando ajudarem; nao entregue um Markdown vazio ou generico."
+                )
         if requested_extensions:
             extensions = ", ".join(requested_extensions)
             instruction += (
@@ -562,6 +580,7 @@ async def execute_tool(
                     },
                 )
 
+        result_blocked = isinstance(result, dict) and bool(result.get("blocked"))
         await _save_source_if_extracted(task_id, tool_name, result, bus)
         compact = compact_tool_result(result)
         await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
@@ -577,8 +596,19 @@ async def execute_tool(
                     "image_base64": result.get("image_base64"),
                 },
             )
-        else:
+        elif not result_blocked:
             await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
+        if result_blocked:
+            await bus.publish(
+                task_id,
+                "agent_progress",
+                {
+                    "label": "Pagina bloqueada",
+                    "detail": "O navegador encontrou CAPTCHA/anti-bot; tentando seguir por fontes alternativas.",
+                    "tool": tool_name,
+                },
+            )
+            return {"success": False, "error": result.get("error") or "Pagina bloqueada por CAPTCHA/anti-bot", "data": result}
         return {"success": True, "data": result}
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"

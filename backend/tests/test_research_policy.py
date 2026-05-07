@@ -67,6 +67,75 @@ class ResearchPolicyTests(unittest.TestCase):
 
         self.assertTrue(divergence["has_divergence"])
 
+    def test_economic_comparison_rejects_biography_sources_without_indicators(self) -> None:
+        sources = [
+            {
+                "url": "https://pt.wikipedia.org/wiki/Luiz_Inacio_Lula_da_Silva",
+                "title": "Lula biografia",
+                "snippet": "Presidente do Brasil de 2003 a 2010.",
+                "extracted_text": "Biografia de Lula, presidente do Brasil de 2003 a 2010.",
+                "source_type": "web",
+                "quality_score": 82,
+            },
+            {
+                "url": "https://www.gov.br/planalto/pt-br/conheca-a-presidencia/ex-presidentes/jair-bolsonaro",
+                "title": "Jair Bolsonaro",
+                "snippet": "Presidente do Brasil de 2019 a 2022.",
+                "extracted_text": "Biografia institucional de Jair Bolsonaro.",
+                "source_type": "official",
+                "quality_score": 86,
+            },
+        ]
+
+        query = "comparacao economica Lula Bolsonaro PIB inflacao desemprego 2003 2010 2019 2022"
+        status = cross_check_status(query, sources)
+
+        self.assertFalse(status["satisfied"])
+        self.assertEqual(status["required_sources"], 3)
+        self.assertEqual(status["source_count"], 0)
+        self.assertIn("PIB", status["missing_topics"])
+        self.assertIn("inflacao/IPCA", status["missing_topics"])
+        self.assertIn("desemprego", status["missing_topics"])
+        self.assertIsNone(cached_search_result(query, sources))
+
+    def test_economic_comparison_accepts_data_sources_covering_indicators(self) -> None:
+        sources = [
+            {
+                "url": "https://www.ibge.gov.br/explica/pib.php",
+                "title": "IBGE PIB Brasil",
+                "snippet": "PIB do Brasil e crescimento economico em series historicas.",
+                "extracted_text": "PIB Produto Interno Bruto Brasil 2003 2010 2019 2022 crescimento economico.",
+                "source_type": "data",
+                "quality_score": 94,
+            },
+            {
+                "url": "https://www.ibge.gov.br/explica/inflacao.php",
+                "title": "IBGE IPCA",
+                "snippet": "IPCA serie historica do Brasil.",
+                "extracted_text": "IPCA Brasil 2003 2010 2019 2022 serie historica.",
+                "source_type": "data",
+                "quality_score": 94,
+            },
+            {
+                "url": "https://www.ipea.gov.br/cartadeconjuntura/index.php/tag/desemprego/",
+                "title": "Ipea desemprego Brasil",
+                "snippet": "Taxa de desemprego e mercado de trabalho no Brasil.",
+                "extracted_text": "Desemprego taxa de desocupacao PNAD Brasil 2003 2010 2019 2022.",
+                "source_type": "data",
+                "quality_score": 90,
+            },
+        ]
+
+        status = cross_check_status(
+            "comparacao economica Lula Bolsonaro PIB inflacao desemprego 2003 2010 2019 2022",
+            sources,
+        )
+
+        self.assertTrue(status["satisfied"])
+        self.assertEqual(status["source_count"], 3)
+        self.assertEqual(status["data_source_count"], 3)
+        self.assertFalse(status["missing_topics"])
+
 
 if __name__ == "__main__":
     unittest.main()

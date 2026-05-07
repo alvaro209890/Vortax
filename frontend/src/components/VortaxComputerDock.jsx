@@ -11,7 +11,11 @@ import {
   Maximize2,
   Monitor,
   PanelRightOpen,
+  Play,
   Search,
+  SkipBack,
+  SkipForward,
+  Terminal,
   X,
   XCircle,
 } from "lucide-react";
@@ -197,6 +201,26 @@ function latestPreview(events) {
     return candidates.sort((a, b) => b.createdAt - a.createdAt)[0];
   }
   return { label: "Ambiente pronto", mode: "idle", using: "Computador" };
+}
+
+function framePreview(event, index) {
+  const payload = event.payload || {};
+  return {
+    createdAt: eventTime(event),
+    frameIndex: index,
+    image: payload.image_base64,
+    label: payload.caption || payload.title || "Navegador",
+    mode: "browser",
+    title: payload.title || "",
+    url: payload.url || "",
+    using: "Navegador",
+  };
+}
+
+function screenFrameHistory(events) {
+  return events
+    .filter((event) => event.type === "screen_frame" && event.payload?.image_base64)
+    .map(framePreview);
 }
 
 function ComputerPreview({ preview, snapshot }) {
@@ -508,18 +532,47 @@ function buildVertexProgress(events, agentStatus) {
 
 export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
+  const [livePlayback, setLivePlayback] = useState(true);
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
   const now = useNow(busy);
-  const preview = useMemo(() => latestPreview(events), [events]);
+  const frameHistory = useMemo(() => screenFrameHistory(events), [events]);
+  const latestFrameIndex = Math.max(0, frameHistory.length - 1);
+  const selectedFrame = frameHistory[selectedFrameIndex] || frameHistory[latestFrameIndex] || null;
+  const livePreview = useMemo(() => latestPreview(events), [events]);
+  const preview = livePlayback ? livePreview : selectedFrame || livePreview;
   const codingSnapshot = useMemo(() => buildCodingSnapshot(events, preview), [events, preview]);
   const vertexProgress = useMemo(() => buildVertexProgress(events, agentStatus), [agentStatus, events]);
   const firstEvent = events.find((event) => event.type === "user_message" || event.type === "task_created");
   const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
-  const total = livePlan.totalCount || 0;
-  const done = livePlan.doneCount || 0;
-  const progressSteps = vertexProgress?.steps || livePlan.visibleSteps || livePlan.steps;
-  const progressTotal = vertexProgress?.totalCount || livePlan.totalCount || 0;
+  const planningFallbackSteps = busy && !vertexProgress && !livePlan.hasSteps
+    ? [
+      progressStep(
+        "instant-plan",
+        "Criar plano de tarefas",
+        "Organizando os passos antes de executar.",
+        "running",
+      ),
+      progressStep(
+        "instant-context",
+        "Preparar contexto",
+        "Separando arquivos, ferramentas e validacoes provaveis.",
+        "pending",
+      ),
+      progressStep(
+        "instant-run",
+        "Executar trabalho",
+        "O progresso detalhado entra aqui assim que o Vortax comecar.",
+        "pending",
+      ),
+    ]
+    : [];
+  const planSteps = livePlan.visibleSteps?.length ? livePlan.visibleSteps : livePlan.steps || [];
+  const progressSteps = vertexProgress?.steps || (planSteps.length ? planSteps : planningFallbackSteps);
+  const progressTotal = vertexProgress?.totalCount || livePlan.totalCount || planningFallbackSteps.length || 0;
   const progressDone = vertexProgress?.doneCount || livePlan.doneCount || 0;
+  const total = progressTotal || livePlan.totalCount || 0;
+  const done = progressDone || livePlan.doneCount || 0;
   const terminalLabel = agentStatus === "done"
     ? "Pedido concluido"
     : agentStatus === "error"
@@ -530,9 +583,26 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
   const current = terminalLabel
     || (codingSnapshot.hasCodingActivity ? codingSnapshot.stageLabel : "")
     || livePlan.currentStep?.label
+    || (busy ? "Criando plano de tarefas" : "")
     || preview.label
     || activeTask?.description
     || "Computador do Vortax";
+  const canBrowseFrames = frameHistory.length > 1;
+
+  useEffect(() => {
+    if (livePlayback) setSelectedFrameIndex(latestFrameIndex);
+  }, [latestFrameIndex, livePlayback]);
+
+  function jumpToLive() {
+    setLivePlayback(true);
+    setSelectedFrameIndex(latestFrameIndex);
+  }
+
+  function selectFrame(index) {
+    const nextIndex = Math.max(0, Math.min(latestFrameIndex, index));
+    setSelectedFrameIndex(nextIndex);
+    setLivePlayback(nextIndex === latestFrameIndex);
+  }
 
   if (!activeTask && !events.length && !livePlan.hasSteps) return null;
 
@@ -595,11 +665,42 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
               <ComputerStage preview={preview} snapshot={codingSnapshot} />
 
               <div className="computer-live-controls">
-                <span>
-                  <Circle size={9} fill="currentColor" />
-                  {connectionState === "open" ? "ao vivo" : connectionState}
+                <div className="computer-frame-controls">
+                  <button
+                    disabled={!canBrowseFrames || selectedFrameIndex <= 0}
+                    onClick={() => selectFrame(selectedFrameIndex - 1)}
+                    title="Voltar captura"
+                    type="button"
+                  >
+                    <SkipBack size={15} />
+                  </button>
+                  <button
+                    disabled={!canBrowseFrames || selectedFrameIndex >= latestFrameIndex}
+                    onClick={() => selectFrame(selectedFrameIndex + 1)}
+                    title="Avancar captura"
+                    type="button"
+                  >
+                    <SkipForward size={15} />
+                  </button>
+                </div>
+                <input
+                  aria-label="Linha do tempo do computador"
+                  className="computer-frame-range"
+                  disabled={!canBrowseFrames}
+                  max={latestFrameIndex}
+                  min="0"
+                  onChange={(event) => selectFrame(Number(event.target.value))}
+                  type="range"
+                  value={selectedFrameIndex}
+                />
+                <span className={`computer-live-state ${livePlayback ? "live" : "replay"}`}>
+                  <Circle size={8} fill="currentColor" />
+                  {livePlayback ? "ao vivo" : `${selectedFrameIndex + 1}/${frameHistory.length}`}
                 </span>
-                <button type="button">Pular para ao vivo</button>
+                <button className="computer-jump-live-btn" onClick={jumpToLive} type="button">
+                  <Play size={13} />
+                  Pular para ao vivo
+                </button>
               </div>
 
               <div className="computer-progress-card">
