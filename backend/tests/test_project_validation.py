@@ -33,7 +33,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-python-ok"
                 task_dir.mkdir()
                 (task_dir / "main.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\nDocumentacao do script.", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\n" + "Documentacao completa do script. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -56,7 +56,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-python-bug"
                 task_dir.mkdir()
                 (task_dir / "main.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
-                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\nDocumentacao do script.", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\n" + "Documentacao completa do script. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -79,7 +79,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-site-bug"
                 task_dir.mkdir()
                 (task_dir / "index.html").write_text('<script src="missing.js"></script>', encoding="utf-8")
-                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\nDocumentacao.", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\n" + "Documentacao completa do site. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -146,7 +146,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-site-doc"
                 task_dir.mkdir()
                 (task_dir / "index.html").write_text("<!doctype html><title>Site</title>", encoding="utf-8")
-                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\nDocumentacao do projeto.", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\n" + "Documentacao completa do projeto. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -167,7 +167,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 settings.WORKSPACE_PATH = Path(tmp)
                 task_dir = settings.WORKSPACE_PATH / "task-pdf"
                 task_dir.mkdir()
-                (task_dir / "relatorio.md").write_text("# Relatorio", encoding="utf-8")
+                (task_dir / "relatorio.md").write_text("# Relatorio\n\n" + "Conteudo completo do relatorio. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -181,6 +181,28 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertTrue(any(".pdf" in bug for bug in result["bugs"]))
+
+    async def test_pdf_request_passes_with_valid_pdf_and_markdown_source(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-pdf-ok"
+                task_dir.mkdir()
+                (task_dir / "relatorio.md").write_text("# Relatorio\n\n" + "Conteudo pesquisado. " * 12, encoding="utf-8")
+                (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 300)
+                bus = FakeBus()
+
+                result = await validate_project_after_vertex(
+                    "task-pdf-ok",
+                    "vertex 'gere um relatorio em PDF'",
+                    bus,
+                    vertex_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "passed")
 
 
 if __name__ == "__main__":

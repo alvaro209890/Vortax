@@ -1,6 +1,8 @@
 import re
 from urllib.parse import urlparse
 
+from services.document_intent import document_extensions_from_text
+
 
 STOPWORDS = {
     "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos",
@@ -161,6 +163,29 @@ DEVELOPMENT_PATTERNS = (
     r"\b(crie|criar|gere|gerar|desenvolva|desenvolver|implemente|implementar|fa[cç]a|construa)\b",
     r"\b(site|pagina|p[aá]gina|app|aplicativo|calculadora|dashboard|landing|frontend|html|css|javascript|react|vite)\b",
 )
+DOCUMENT_FACTUAL_PATTERNS = (
+    r"\bhist[oó]ria\b",
+    r"\bbiografia\b",
+    r"\bperfil\b",
+    r"\bcronologia\b",
+    r"\blinha\s+do\s+tempo\b",
+    r"\bguia\b",
+    r"\bmanual\b",
+    r"\brelat[oó]rio\b",
+    r"\ban[aá]lise\b",
+    r"\bcomparativo\b",
+    r"\bdados\b",
+    r"\bnot[ií]cias?\b",
+    r"\bsobre\b",
+)
+DOCUMENT_PROVIDED_CONTENT_PATTERNS = (
+    r"\btexto abaixo\b",
+    r"\bconte[uú]do abaixo\b",
+    r"\bcom este texto\b",
+    r"\bcom o texto\b",
+    r"\ba seguir\b",
+    r"\bsegue\b",
+)
 
 
 def normalized_terms(text: str) -> set[str]:
@@ -311,6 +336,77 @@ def suggested_research_queries(query: str, *, limit: int = 6) -> list[str]:
         fallback = f"{query} dados oficiais"
         suggestions.append(re.sub(r"\s+", " ", fallback).strip())
     return suggestions[:limit]
+
+
+def _document_subject(query: str) -> str:
+    match = re.search(
+        r"(?:hist[oó]ria|biografia|perfil|relat[oó]rio|guia|manual|sobre|do|da|de)\s+(?:o\s+|a\s+|os\s+|as\s+)?([^.,;:!?]{3,80})",
+        query,
+        flags=re.IGNORECASE,
+    )
+    subject = match.group(1) if match else query
+    subject = re.sub(r"\.(?:md|pdf|markdown)\b", " ", subject, flags=re.IGNORECASE)
+    subject = re.sub(
+        r"\b(gere|gerar|crie|criar|fa[cç]a|um|uma|arquivo|documento|pdf|markdown|md|com|em|para)\b",
+        " ",
+        subject,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", subject).strip() or query
+
+
+def document_research_profile(text: str) -> dict[str, object]:
+    """Detecta quando um documento solicitado precisa de pesquisa previa."""
+    value = str(text or "")
+    lowered = value.lower()
+    requested_extensions = document_extensions_from_text(value)
+    wants_document = bool({".md", ".pdf"} & set(requested_extensions))
+    if not wants_document:
+        return {
+            "is_document_request": False,
+            "requires_research": False,
+            "required_sources": 0,
+            "research_queries": [],
+            "subject": "",
+            "requested_extensions": requested_extensions,
+        }
+
+    profile = research_profile(value)
+    provided_content = bool(any(re.search(pattern, lowered, re.IGNORECASE) for pattern in DOCUMENT_PROVIDED_CONTENT_PATTERNS)) or len(value) >= 1200
+    factual = bool(any(re.search(pattern, lowered, re.IGNORECASE) for pattern in DOCUMENT_FACTUAL_PATTERNS))
+    requires_research = bool(factual and not provided_content and not profile.get("development_intent"))
+    subject = _document_subject(value)
+
+    queries = [
+        f"{subject} fontes oficiais",
+        f"{subject} historia dados principais",
+        f"{subject} wikipedia historia",
+        f"{subject} notícias contexto",
+    ]
+    if "corinthians" in lowered:
+        queries = [
+            "site:corinthians.com.br historia Corinthians",
+            "historia do Corinthians fundacao titulos",
+            "Corinthians historia fontes",
+            "Corinthians titulos oficiais historia",
+        ]
+
+    seen: set[str] = set()
+    unique_queries = []
+    for query in queries:
+        normalized = re.sub(r"\s+", " ", query).strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_queries.append(normalized)
+
+    return {
+        "is_document_request": True,
+        "requires_research": requires_research,
+        "required_sources": 3 if requires_research else 0,
+        "research_queries": unique_queries[:5],
+        "subject": subject,
+        "requested_extensions": requested_extensions,
+    }
 
 
 def source_match_score(query: str, source: dict) -> int:

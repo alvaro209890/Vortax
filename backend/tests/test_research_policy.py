@@ -1,6 +1,6 @@
 import unittest
 
-from services.research_policy import cached_search_result, cross_check_status, detect_source_divergence, research_profile
+from services.research_policy import cached_search_result, cross_check_status, detect_source_divergence, document_research_profile, research_profile
 
 
 SOURCES = [
@@ -56,6 +56,20 @@ class ResearchPolicyTests(unittest.TestCase):
         self.assertTrue(profile["development_intent"])
         self.assertFalse(profile["search_intent"])
         self.assertEqual(profile["required_sources"], 0)
+
+    def test_factual_pdf_requires_document_research(self) -> None:
+        profile = document_research_profile("Gere um PDF com a historia do Corinthians")
+
+        self.assertTrue(profile["is_document_request"])
+        self.assertTrue(profile["requires_research"])
+        self.assertEqual(profile["required_sources"], 3)
+        self.assertTrue(any("Corinthians" in query for query in profile["research_queries"]))
+
+    def test_document_with_provided_content_does_not_require_research(self) -> None:
+        profile = document_research_profile("Gere um PDF com este texto: " + ("conteudo " * 40))
+
+        self.assertTrue(profile["is_document_request"])
+        self.assertFalse(profile["requires_research"])
 
     def test_marks_possible_price_divergence(self) -> None:
         sources = [

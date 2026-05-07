@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
+from services.document_artifacts import valid_markdown_files, valid_pdf_files
 from services.document_intent import document_extensions_from_text, report_artifact_profile
 from services.project_files import missing_local_asset_refs, scan_task_workspace
 from services.web_validation import web_intent_from_command
@@ -148,10 +149,12 @@ def _nonempty_files_with_suffix(project_dir: Path, suffix: str) -> list[str]:
     return matches
 
 
-def _nonempty_markdown_files(project_dir: Path) -> list[str]:
-    files = _nonempty_files_with_suffix(project_dir, ".md")
-    files.extend(_nonempty_files_with_suffix(project_dir, ".markdown"))
-    return sorted(set(files))
+def _valid_files_for_requested_suffix(project_dir: Path, suffix: str) -> list[str]:
+    if suffix.lower() in {".md", ".markdown"}:
+        return valid_markdown_files(project_dir)
+    if suffix.lower() == ".pdf":
+        return valid_pdf_files(project_dir)
+    return _nonempty_files_with_suffix(project_dir, suffix)
 
 
 def _load_package_json(project_dir: Path) -> tuple[dict[str, Any] | None, Path, str | None]:
@@ -213,17 +216,22 @@ async def validate_project_after_vertex(
         bugs.append("Referencias locais ausentes no HTML: " + ", ".join(missing_assets))
 
     report_profile = report_artifact_profile(command)
-    if (web_intent_from_command(command) or report_profile.get("requires_markdown")) and not _nonempty_markdown_files(project_dir):
+    if (web_intent_from_command(command) or report_profile.get("requires_markdown")) and not valid_markdown_files(project_dir):
         bugs.append(
-            "Entrega tecnica criada pelo Vertex precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado e nao vazio."
+            "Entrega tecnica criada pelo Vertex precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
         )
 
     for extension in document_extensions_from_text(command):
-        matches = _nonempty_files_with_suffix(project_dir, extension)
+        matches = _valid_files_for_requested_suffix(project_dir, extension)
         if not matches:
-            bugs.append(
-                f"Pedido de documento/arquivo exige um arquivo {extension} nao vazio no diretorio da conversa."
-            )
+            if extension == ".pdf":
+                bugs.append("Pedido de PDF exige um arquivo .pdf valido, nao vazio e iniciado por %PDF no diretorio da conversa.")
+            elif extension == ".md":
+                bugs.append("Pedido de Markdown exige um arquivo .md valido, com titulo H1 e conteudo suficiente no diretorio da conversa.")
+            else:
+                bugs.append(
+                    f"Pedido de documento/arquivo exige um arquivo {extension} nao vazio no diretorio da conversa."
+                )
 
     timeout = float(getattr(settings, "PROJECT_VALIDATION_TIMEOUT_SECONDS", 60) or 60)
 

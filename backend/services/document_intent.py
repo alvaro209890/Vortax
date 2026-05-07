@@ -99,7 +99,7 @@ def report_artifact_profile(text: str) -> dict[str, Any]:
     technical_context = bool(_TECHNICAL_REPORT_RE.search(value))
     creation_context = bool(_CREATE_SOFTWARE_RE.search(value)) and software_context
     analysis_context = technical_context and software_context
-    should_generate_markdown = wants_markdown or creation_context or analysis_context
+    should_generate_markdown = wants_markdown or wants_pdf or creation_context or analysis_context
 
     if wants_markdown:
         reason = "requested_markdown"
@@ -112,7 +112,12 @@ def report_artifact_profile(text: str) -> dict[str, Any]:
     else:
         reason = "none"
 
-    preferred_filename = "DOCUMENTACAO.md" if creation_context and not analysis_context else "RELATORIO_TECNICO.md"
+    if creation_context and not analysis_context:
+        preferred_filename = "DOCUMENTACAO.md"
+    elif wants_pdf:
+        preferred_filename = "DOCUMENTO_FONTE.md"
+    else:
+        preferred_filename = "RELATORIO_TECNICO.md"
     return {
         "should_generate_markdown": should_generate_markdown,
         "requires_markdown": should_generate_markdown,

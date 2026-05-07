@@ -204,11 +204,11 @@ class GeneratedFilePayloadTests(unittest.TestCase):
     def test_payload_attaches_markdown_document_card_for_site(self) -> None:
         task_dir = settings.WORKSPACE_PATH / self.task_id
         task_dir.mkdir(parents=True)
-        (task_dir / "DOCUMENTACAO.md").write_text("# Guia do Site\n\nConteudo.", encoding="utf-8")
+        (task_dir / "DOCUMENTACAO.md").write_text("# Guia do Site\n\n" + "Conteudo da documentacao. " * 8, encoding="utf-8")
         self._sync_files(
             [
                 {"path": "index.html", "size_bytes": 20, "extension": ".html", "modified_at": 1},
-                {"path": "DOCUMENTACAO.md", "size_bytes": 26, "extension": ".md", "modified_at": 1},
+                {"path": "DOCUMENTACAO.md", "size_bytes": 220, "extension": ".md", "modified_at": 1},
             ]
         )
         events = [
@@ -230,12 +230,12 @@ class GeneratedFilePayloadTests(unittest.TestCase):
     def test_payload_attaches_pdf_as_primary_and_markdown_as_secondary(self) -> None:
         task_dir = settings.WORKSPACE_PATH / self.task_id
         task_dir.mkdir(parents=True)
-        (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4")
-        (task_dir / "relatorio.md").write_text("# Fonte do Relatorio\n\nConteudo.", encoding="utf-8")
+        (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 300)
+        (task_dir / "relatorio.md").write_text("# Fonte do Relatorio\n\n" + "Conteudo pesquisado. " * 8, encoding="utf-8")
         self._sync_files(
             [
-                {"path": "relatorio.pdf", "size_bytes": 8, "extension": ".pdf", "modified_at": 1},
-                {"path": "relatorio.md", "size_bytes": 31, "extension": ".md", "modified_at": 1},
+                {"path": "relatorio.pdf", "size_bytes": 309, "extension": ".pdf", "modified_at": 1},
+                {"path": "relatorio.md", "size_bytes": 190, "extension": ".md", "modified_at": 1},
             ]
         )
         events = [

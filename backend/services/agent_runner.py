@@ -9,6 +9,14 @@ from config import settings
 from database import database
 from services.context_manager import prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action, request_direct_chat_response
+from services.document_artifacts import (
+    artifact_profile as document_artifact_profile,
+    document_context_for_vertex,
+    is_document_edit_request,
+    resolve_document_target,
+    valid_markdown_files,
+    valid_pdf_files,
+)
 from services.document_intent import (
     document_extensions_from_text,
     downloadable_document_files,
@@ -20,7 +28,9 @@ from services.document_intent import (
 from services.event_bus import EventBus
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.mock_runner import run_mock_task
-from services.research_policy import cross_check_status
+from services.research_policy import cross_check_status, document_research_profile, relevant_sources_for_query
+from services.source_quality import source_quality_score, source_type_for_url
+from services.stream_contract import utc_now
 from services.task_store import TaskStore
 from services.task_plan_store import direct_response_steps, fallback_steps, task_plan_store
 from tools.tool_executor import compact_tool_result, execute_tool
@@ -329,6 +339,7 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
                 content
                 and not content.startswith("Resultado da ferramenta:")
                 and not content.startswith("Controle automatico de pesquisa:")
+                and not content.startswith("Controle automatico de documento:")
                 and not content.startswith("Controle automatico de relatorio:")
                 and not content.startswith("Controle automatico de revisao")
                 and not content.startswith("Controle automatico de validacao")
@@ -380,6 +391,7 @@ def _looks_like_creation_vertex_command(command: str) -> bool:
             for keyword in (
                 "api",
                 "app",
+                "arquivo",
                 "automacao",
                 "automação",
                 "backend",
@@ -391,14 +403,23 @@ def _looks_like_creation_vertex_command(command: str) -> bool:
                 "criar",
                 "dashboard",
                 "desenvolva",
+                "documento",
+                "edite",
+                "editar",
                 "erro",
                 "faça",
                 "faca",
                 "frontend",
+                "gere",
                 "html",
                 "implemente",
                 "interface",
+                "markdown",
+                "melhore",
+                "atualize",
+                "altere",
                 "node",
+                "pdf",
                 "python",
                 "react",
                 "script",
@@ -685,6 +706,15 @@ def _has_markdown_artifact(task_id: str) -> bool:
     return bool(markdown_documentation_files(database.list_generated_files(task_id)))
 
 
+def _has_requested_document_artifact(task_id: str, profile: dict[str, Any]) -> bool:
+    project_dir = settings.WORKSPACE_PATH / task_id
+    if profile.get("wants_pdf"):
+        return bool(valid_pdf_files(project_dir) and valid_markdown_files(project_dir))
+    if profile.get("wants_markdown") and not valid_markdown_files(project_dir):
+        return False
+    return bool(profile.get("wants_pdf") or profile.get("wants_markdown"))
+
+
 def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -> str:
     filename = str(profile.get("preferred_filename") or "RELATORIO_TECNICO.md")
     return (
@@ -698,10 +728,50 @@ def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -
     )
 
 
+def _format_document_gate_instruction(description: str, profile: dict[str, Any]) -> str:
+    parts = [
+        "Controle automatico de documento: nao finalize ainda.",
+        "O usuario pediu um arquivo final no chat e o artefato valido ainda nao existe.",
+        "Use shell_run com vertex para criar ou atualizar o documento no diretorio atual.",
+    ]
+    if profile.get("wants_pdf"):
+        parts.append(
+            f"Crie primeiro o Markdown fonte {profile.get('preferred_markdown')} com H1, secoes completas e fontes; "
+            f"o Vortax convertera para {profile.get('preferred_pdf')} se necessario."
+        )
+    if profile.get("wants_markdown"):
+        parts.append(
+            f"Crie o Markdown final {profile.get('preferred_markdown')} com H1, resumo, secoes bem estruturadas, validacao e fontes quando houver pesquisa."
+        )
+    parts.append("A resposta final deve explicar o que foi entregue e deixar o card de documento no chat.")
+    parts.append(f"Pedido original: {description}")
+    return " ".join(str(part) for part in parts if part)
+
+
+def _format_document_research_gate_instruction(description: str, status: dict[str, Any]) -> str:
+    queries = [str(query) for query in status.get("research_queries") or [] if str(query).strip()]
+    required = int(status.get("required_sources") or 3)
+    found = int(status.get("found_sources") or 0)
+    pieces = [
+        "Controle automatico de documento: nao finalize ainda.",
+        f"Este documento factual precisa de pelo menos {required} fontes relevantes antes de gerar o arquivo; ha {found}.",
+    ]
+    if queries:
+        pieces.append("Pesquise e abra fontes com estas consultas: " + " | ".join(queries[:5]) + ".")
+    pieces.append("Use browser_google_search, abra resultados relevantes e salve evidencias com browser_extract_article ou browser_extract_text.")
+    pieces.append("Depois chame Vertex com as fontes pesquisadas para criar o Markdown/PDF e so finalize quando o arquivo aparecer no card.")
+    pieces.append(f"Pedido original: {description}")
+    return " ".join(pieces)
+
+
 def _generated_file_response_payload(task_id: str, result: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     latest_call = _latest_vertex_call(events)
     command = latest_call[1] if latest_call else ""
-    files = database.list_generated_files(task_id)
+    files = [
+        file
+        for file in database.list_generated_files(task_id)
+        if not str(file.get("path") or "").startswith("versions/")
+    ]
     if not files:
         return {"content": result}
     requested_extensions = document_extensions_from_text(command)
@@ -772,7 +842,9 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
 
 def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
     sources = database.list_sources(task_id)[:8]
-    if not sources:
+    files = database.list_generated_files(task_id)
+    document_context = document_context_for_vertex(task_id, _latest_user_prompt(history), files, sources)
+    if not sources and not document_context:
         return history
     lines = []
     for source in sources:
@@ -797,6 +869,11 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
         "Quando browser_google_search retornar from_conversation_cache=true, nao use browser_click_link_by_index; use as evidencias salvas ou navegue direto pela URL se precisar reler.\n"
         + "\n".join(lines)
     )
+    if document_context:
+        source_context += (
+            "\n\nContexto de documentos/arquivos da conversa para edicao e geracao:\n"
+            + document_context
+        )
     return [{"role": "system", "content": source_context}, *history]
 
 
@@ -986,6 +1063,122 @@ async def _inject_pre_research_if_needed(
                 "detail": "Dados coletados. O DeepSeek usara as referencias ao planejar a criacao com Vertex.",
             },
         )
+    return _history_with_research_context(task_id, history)
+
+
+async def _save_extracted_source(task_id: str, bus: EventBus, article: dict[str, Any], fallback_title: str = "") -> bool:
+    url = str(article.get("url") or "").strip()
+    text = str(article.get("text") or "").strip()
+    if not url or not text:
+        return False
+    title = str(article.get("title") or fallback_title or url).strip()
+    source = database.upsert_source(
+        task_id,
+        {
+            "url": url,
+            "title": title,
+            "snippet": str(article.get("description") or text[:280]),
+            "extracted_text": text[:10000],
+            "source_type": source_type_for_url(url),
+            "quality_score": source_quality_score(url, title, text),
+            "used": True,
+            "created_at": utc_now(),
+        },
+    )
+    await bus.publish(
+        task_id,
+        "source_saved",
+        {
+            "id": source["id"],
+            "url": source["url"],
+            "title": source.get("title"),
+            "source_type": source.get("source_type"),
+            "quality_score": source.get("quality_score"),
+        },
+    )
+    return True
+
+
+async def _inject_document_research_if_needed(
+    task_id: str,
+    description: str,
+    history: list[dict[str, str]],
+    bus: EventBus,
+) -> list[dict[str, str]]:
+    """Pesquisa automaticamente quando o usuario pediu PDF/MD factual."""
+    from tools.browser import browser_tool
+
+    profile = document_research_profile(description)
+    if not profile.get("requires_research"):
+        return history
+
+    required = int(profile.get("required_sources") or 3)
+    subject = str(profile.get("subject") or description)
+    existing = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+    if len(existing) >= required:
+        return _history_with_research_context(task_id, history)
+
+    await bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "thinking", "label": "Pesquisando fontes do documento"},
+    )
+    queries = [str(query) for query in profile.get("research_queries") or [] if str(query).strip()]
+    seen_urls: set[str] = set()
+
+    for query in queries[:5]:
+        current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+        if len(current) >= required:
+            break
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Pesquisando fontes do documento",
+                "detail": f"Buscando: {query}",
+                "tool": "browser_google_search",
+            },
+        )
+        try:
+            search = await browser_tool.google_search(query, hl="pt-BR", task_id=task_id)
+        except Exception:
+            continue
+        for result in list(search.get("results") or [])[:4]:
+            current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+            if len(current) >= required:
+                break
+            href = str(result.get("href") or result.get("url") or "").strip()
+            if not href or href in seen_urls:
+                continue
+            seen_urls.add(href)
+            await bus.publish(
+                task_id,
+                "agent_progress",
+                {
+                    "label": "Lendo fonte do documento",
+                    "detail": str(result.get("title") or href)[:180],
+                    "tool": "browser_extract_article",
+                },
+            )
+            try:
+                navigate_result = await browser_tool.navigate(href, task_id=task_id)
+                if isinstance(navigate_result, dict) and navigate_result.get("blocked"):
+                    article = await browser_tool.extract_article(task_id=task_id)
+                else:
+                    article = await browser_tool.extract_article(task_id=task_id)
+            except Exception:
+                continue
+            await _save_extracted_source(task_id, bus, article, str(result.get("title") or ""))
+
+    found = len(relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40))
+    await bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Pesquisa do documento concluida",
+            "detail": f"{found} fonte(s) relevante(s) prontas para gerar o arquivo.",
+        },
+    )
     return _history_with_research_context(task_id, history)
 
 
@@ -1188,6 +1381,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         await _complete_plan_step(task_id, "understand", bus)
         history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
 
+        # Pesquisa factual para documentos PDF/Markdown antes do loop ReAct
+        history = await _inject_document_research_if_needed(task_id, latest_prompt, history, bus)
+
         # Pesquisa automatica de pessoas antes do loop ReAct
         history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
 
@@ -1243,6 +1439,61 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                     continue
 
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
+                document_profile = document_artifact_profile(description)
+                if is_document_edit_request(description) and not document_profile.get("requires_artifact"):
+                    target = resolve_document_target(task_id, description, database.list_generated_files(task_id))
+                    target_extension = Path(str((target or {}).get("path") or "")).suffix.lower()
+                    if target_extension in {".md", ".markdown", ".pdf"}:
+                        document_profile["requires_artifact"] = True
+                        document_profile["wants_markdown"] = target_extension in {".md", ".markdown"}
+                        document_profile["wants_pdf"] = target_extension == ".pdf"
+
+                document_research = document_research_profile(description)
+                if document_research.get("requires_research"):
+                    required = int(document_research.get("required_sources") or 3)
+                    found_sources = relevant_sources_for_query(
+                        str(document_research.get("subject") or description),
+                        database.list_sources(task_id),
+                        limit=required,
+                        min_quality=40,
+                    )
+                    if len(found_sources) < required:
+                        await bus.publish(
+                            task_id,
+                            "agent_progress",
+                            {
+                                "label": "Buscando mais fontes",
+                                "detail": f"Documento factual ainda precisa de {required} fonte(s); ha {len(found_sources)}.",
+                            },
+                        )
+                        history.append(
+                            {
+                                "role": "user",
+                                "content": _format_document_research_gate_instruction(
+                                    description,
+                                    {**document_research, "found_sources": len(found_sources)},
+                                ),
+                            }
+                        )
+                        continue
+
+                if document_profile.get("requires_artifact") and not _has_requested_document_artifact(task_id, document_profile):
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Preparando arquivo final",
+                            "detail": "A resposta precisa anexar o PDF/Markdown solicitado antes de finalizar.",
+                        },
+                    )
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": _format_document_gate_instruction(description, document_profile),
+                        }
+                    )
+                    continue
+
                 report_profile = report_artifact_profile(description)
                 if report_profile.get("requires_markdown") and not _has_markdown_artifact(task_id):
                     await bus.publish(

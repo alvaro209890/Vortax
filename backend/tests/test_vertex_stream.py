@@ -121,6 +121,7 @@ class VertexStreamTests(unittest.TestCase):
         command = _augment_vertex_command_for_quality("vertex 'gere um relatorio em PDF'")
 
         self.assertIn("arquivo/documento final (.pdf)", command)
+        self.assertIn("Markdown fonte", command)
         self.assertIn("pronto para download", command)
 
     def test_does_not_augment_vertex_version_check_with_quality_gate(self) -> None:

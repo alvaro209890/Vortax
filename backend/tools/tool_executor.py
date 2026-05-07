@@ -4,6 +4,15 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from database import database
+from services.document_artifacts import (
+    archive_edit_targets,
+    artifact_profile,
+    document_context_for_vertex,
+    preferred_markdown_for_pdf,
+    render_markdown_to_pdf,
+    resolve_document_target,
+    valid_pdf_files,
+)
 from services.document_intent import document_extensions_from_text, document_intent_from_text, report_artifact_profile
 from services.event_bus import EventBus
 from services.project_validation import validate_project_after_vertex
@@ -190,7 +199,8 @@ def _vertex_creation_intent(command: str) -> bool:
         or report_profile.get("requires_markdown")
         or re.search(
             r"\b(crie|criar|faca|faça|desenvolva|implemente|gere|corrija|bug|erro|falha|"
-            r"software|sistema|script|api|backend|python|node|cli|automacao|automação|app)\b",
+            r"melhore|melhorar|atualize|atualizar|altere|alterar|edite|editar|revise|revisar|"
+            r"software|sistema|script|api|backend|python|node|cli|automacao|automação|app|pdf|markdown|documento|arquivo)\b",
             text,
             re.IGNORECASE,
         )
@@ -291,7 +301,7 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
     )
 
 
-def _augment_vertex_command_for_quality(command: str) -> str:
+def _augment_vertex_command_for_quality(command: str, task_id: str | None = None) -> str:
     initial_split = _split_vertex_command(command)
     initial_prompt = ""
     if initial_split is not None:
@@ -322,6 +332,7 @@ def _augment_vertex_command_for_quality(command: str) -> str:
     prompt = " ".join(prompt_parts).strip()
     requested_extensions = document_extensions_from_text(prompt)
     report_profile = report_artifact_profile(prompt)
+    artifact = artifact_profile(prompt)
     if "VALIDACAO_AUTOMATICA_VORTAX" in prompt:
         instruction = ""
     else:
@@ -349,12 +360,76 @@ def _augment_vertex_command_for_quality(command: str) -> str:
                 "Use nome descritivo, conteudo completo e pronto para download pelo Vortax. "
                 "Se gerar PDF, entregue o .pdf final e, quando fizer sentido, tambem deixe a fonte editavel em Markdown."
             )
+        if artifact.get("wants_pdf"):
+            instruction += (
+                f" Para PDF, crie obrigatoriamente tambem o Markdown fonte {artifact.get('preferred_markdown')} "
+                "com titulo H1, secoes claras, conclusao e fontes usadas. O Vortax convertera esse Markdown em PDF final se necessario."
+            )
+        if artifact.get("wants_markdown"):
+            instruction += (
+                f" Para Markdown final, use preferencialmente o nome {artifact.get('preferred_markdown')} "
+                "e entregue um documento bonito, com H1, resumo, secoes, listas/tabelas quando ajudarem e fontes quando houver pesquisa."
+            )
+
+    if task_id:
+        target = resolve_document_target(task_id, prompt, database.list_generated_files(task_id))
+        target_extension = Path(str((target or {}).get("path") or "")).suffix.lower()
+        if target_extension in {".md", ".markdown"} and not artifact.get("wants_markdown") and not artifact.get("wants_pdf"):
+            instruction += " Este pedido parece editar um Markdown anterior; atualize o arquivo Markdown alvo mantendo H1, estrutura e conteudo suficiente."
+        if target_extension == ".pdf" and not artifact.get("wants_pdf"):
+            instruction += " Este pedido parece editar um PDF anterior; atualize o Markdown fonte correspondente e gere novamente a entrega para PDF."
+        context = document_context_for_vertex(
+            task_id,
+            prompt,
+            database.list_generated_files(task_id),
+            database.list_sources(task_id),
+        )
+        if context:
+            instruction += (
+                "\n\nCONTEXTO_VORTAX_PARA_VERTEX:\n"
+                + context
+                + "\nUse esse contexto ao criar ou editar arquivos. Se houver ALVO_DA_EDICAO, atualize esse arquivo fonte e preserve o nome logico da entrega."
+            )
 
     return (
         cd_prefix
         + "vertex -p --permission-mode bypassPermissions --dangerously-skip-permissions --no-session-persistence "
         + shlex.quote((prompt + instruction).strip())
     )
+
+
+async def _ensure_pdf_artifact_after_vertex(task_id: str, command: str, bus: EventBus) -> dict[str, Any]:
+    profile = artifact_profile(command)
+    project_dir = _project_dir(task_id)
+    existing_valid = valid_pdf_files(project_dir)
+    target = resolve_document_target(task_id, command, database.list_generated_files(task_id))
+    target_path = str((target or {}).get("path") or "")
+    wants_pdf = bool(profile.get("wants_pdf") or Path(target_path).suffix.lower() == ".pdf")
+    if not wants_pdf:
+        return {"changed": False, "reason": "not_pdf_request"}
+    preferred_pdf = target_path if Path(target_path).suffix.lower() == ".pdf" else str(profile.get("preferred_pdf") or "documento.pdf")
+    source_markdown = preferred_markdown_for_pdf(task_id, preferred_pdf)
+    if not source_markdown:
+        return {"changed": False, "reason": "missing_markdown_source", "valid_pdfs": existing_valid}
+
+    await bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Renderizando PDF",
+            "detail": f"Convertendo {source_markdown} em {preferred_pdf}.",
+            "tool": "document_render_pdf",
+        },
+    )
+    result = await render_markdown_to_pdf(task_id, source_markdown, preferred_pdf)
+    if result.get("success"):
+        return {"changed": True, "rendered": result.get("path"), "source": source_markdown}
+    await bus.publish(
+        task_id,
+        "error",
+        {"message": f"Falha ao renderizar PDF: {result.get('error') or 'erro desconhecido'}"},
+    )
+    return {"changed": False, "reason": "render_failed", "error": result.get("error")}
 
 
 async def _open_static_preview_if_available(task_id: str, files: list[dict[str, Any]], bus: EventBus) -> None:
@@ -461,6 +536,18 @@ async def execute_tool(
                     await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
                     return {"success": True, "data": result}
             if _is_vertex_command(command):
+                project_index = sync_task_workspace_files(task_id, _project_dir(task_id))
+                archived = archive_edit_targets(task_id, command, project_index["files"])
+                if archived:
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Preservando versao anterior",
+                            "detail": "Backup criado em: " + ", ".join(archived),
+                            "tool": "document_versioning",
+                        },
+                    )
                 await bus.publish(
                     task_id,
                     "ai_exchange",
@@ -473,7 +560,7 @@ async def execute_tool(
                 )
             tool_params = dict(params or {})
             if _is_vertex_command(command):
-                command = _augment_vertex_command_for_quality(command)
+                command = _augment_vertex_command_for_quality(command, task_id=task_id)
                 tool_params["command"] = command
                 await bus.publish(
                     task_id,
@@ -510,6 +597,17 @@ async def execute_tool(
                             "message": f"Vertex gerou {len(files)} arquivo(s) no projeto.",
                             "status": "running",
                         },
+                    )
+
+            if _is_vertex_command(command) and result.get("success"):
+                document_prepare = await _ensure_pdf_artifact_after_vertex(task_id, command, bus)
+                if document_prepare.get("changed"):
+                    project_index = sync_task_workspace_files(task_id, project_dir)
+                    files = project_index["files"]
+                    await bus.publish(
+                        task_id,
+                        "files_created",
+                        {"files": files, "projects": project_index["projects"], "directory": str(project_dir)},
                     )
 
             # Se foi dev server, publica evento

@@ -32,6 +32,13 @@ class DocumentIntentTests(unittest.TestCase):
 
         self.assertFalse(profile["requires_markdown"])
 
+    def test_pdf_request_requires_markdown_source(self) -> None:
+        profile = report_artifact_profile("gere um PDF com a historia do Corinthians")
+
+        self.assertTrue(profile["requires_markdown"])
+        self.assertTrue(profile["wants_pdf"])
+        self.assertEqual(profile["preferred_filename"], "DOCUMENTO_FONTE.md")
+
 
 if __name__ == "__main__":
     unittest.main()
