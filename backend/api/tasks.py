@@ -236,10 +236,10 @@ async def create_task(payload: TaskCreate) -> dict:
 @router.post("/plan")
 async def create_task_plan(payload: TaskPlanRequest) -> dict:
     try:
-        plan = await request_task_plan(payload.description)
+        result = await request_task_plan(payload.description)
     except DeepSeekError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"plan": plan}
+    return result
 
 
 @router.post("/{task_id}/messages")

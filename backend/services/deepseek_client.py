@@ -372,16 +372,20 @@ async def request_task_plan(description: str) -> list[dict[str, str]]:
 
     system_prompt = (
         "Voce gera planos de acompanhamento para usuarios do Vortax acompanharem o progresso do agente. "
-        "Analise o pedido do usuario e produza 4-6 etapas curtas, sequenciais e realistas que o agente "
-        "provavelmente seguira para cumprir a tarefa. Cada etapa deve ter:\n"
-        "- label: titulo curto (2-4 palavras, imperativo, ex: \"Analisar pedido\", \"Pesquisar no Google\", \"Criar site\")\n"
-        "- detail: descricao de 1 frase explicando o que sera feito nesta etapa\n\n"
-        "Seja ESPECIFICO ao pedido. Nao use etapas genericas. Exemplos:\n"
-        "- Pedido \"crie um site de portfolio\": [Analisar portfolio, Definir secoes visuais, Implementar HTML/CSS, Revisar responsividade, Entregar site]\n"
-        "- Pedido \"pesquise noticias sobre IA\": [Montar busca, Abrir fontes relevantes, Extrair dados, Comparar achados, Responder com sintese]\n"
-        "- Pedido \"corrija o bug no login\": [Localizar arquivos de auth, Identificar causa do bug, Aplicar correcao, Verificar fluxo de login, Reportar solucao]\n"
-        "Responda APENAS com um array JSON valido. Nada de markdown, nada de texto fora do JSON. "
-        "Formato: [{\"label\":\"...\",\"detail\":\"...\"}, ...]"
+        "Analise o pedido do usuario e produza dois conjuntos de dados em um unico JSON:\n\n"
+        "1. \"plan\": 4-6 etapas curtas e sequenciais que o agente Vortax (DeepSeek) provavelmente seguira. "
+        "Cada etapa com \"label\" (2-4 palavras) e \"detail\" (1 frase).\n\n"
+        "2. \"vertex_steps\": Se o pedido envolver desenvolvimento de software/site/script/codigo/arquivo, "
+        "produza 5-8 etapas ESPECIFICAS do que o Vertex CLI fara para criar o projeto. "
+        "Exemplos de vertex_steps: \"Analisar requisitos do site\", \"Criar index.html com estrutura principal\", "
+        "\"Estilizar com CSS responsivo\", \"Adicionar JavaScript para interatividade\", "
+        "\"Gerar DOCUMENTACAO.md\", \"Revisar e corrigir bugs\". "
+        "Se o pedido NAO envolver criacao de software/codigo/arquivos, retorne vertex_steps como array vazio [].\n\n"
+        "Seja ESPECIFICO ao pedido. Exemplos:\n"
+        "- Pedido \"crie um site de portfolio\": plan com etapas de desenvolvimento, vertex_steps com etapas de criacao HTML/CSS/JS\n"
+        "- Pedido \"pesquise noticias sobre IA\": plan com etapas de pesquisa, vertex_steps vazio []\n"
+        "- Pedido \"corrija o bug no login\": plan com etapas de debug, vertex_steps com edicao de arquivos\n"
+        "Responda APENAS com JSON: {\"plan\":[{\"label\":\"...\",\"detail\":\"...\"},...],\"vertex_steps\":[{\"label\":\"...\",\"detail\":\"...\"},...]}"
     )
 
     payload = {
@@ -401,16 +405,29 @@ async def request_task_plan(description: str) -> list[dict[str, str]]:
         raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
 
     parsed = _extract_json_object(content)
-    steps = parsed.get("steps") if isinstance(parsed, dict) and "steps" in parsed else parsed
-    if not isinstance(steps, list) or len(steps) == 0:
+
+    plan = parsed.get("plan") if isinstance(parsed, dict) else parsed
+    if not isinstance(plan, list) or len(plan) == 0:
         raise DeepSeekError("Plano de tasks retornou array vazio")
-    result = []
-    for step in steps[:6]:
+
+    result_plan = []
+    for step in plan[:6]:
         if isinstance(step, dict):
-            result.append({
+            result_plan.append({
                 "label": str(step.get("label") or "Etapa"),
                 "detail": str(step.get("detail") or ""),
             })
-    if not result:
+    if not result_plan:
         raise DeepSeekError("Plano de tasks sem etapas validas")
-    return result
+
+    vertex_steps = []
+    raw_vertex = parsed.get("vertex_steps") if isinstance(parsed, dict) else None
+    if isinstance(raw_vertex, list):
+        for step in raw_vertex[:8]:
+            if isinstance(step, dict):
+                vertex_steps.append({
+                    "label": str(step.get("label") or "Etapa Vertex"),
+                    "detail": str(step.get("detail") or ""),
+                })
+
+    return {"plan": result_plan, "vertex_steps": vertex_steps}

@@ -192,51 +192,20 @@ function StepIcon({ state }) {
 
 // ── Vertex Progress ─────────────────────────────────────────────────────────
 
-const stageLabels = {
-  starting: "Iniciando",
-  planning: "Planejando",
-  creating: "Criando",
-  writing_file: "Escrevendo",
-  editing: "Editando",
-  reading_file: "Lendo",
-  installing: "Instalando",
-  configuring: "Configurando",
-  executing: "Executando",
-  validating: "Revisando",
-  done: "Entrega pronta",
-  error: "Erro",
-};
+function useVertexProgress(events, taskDescription) {
+  const [vertexPlan, setVertexPlan] = useState(null);
+  const lastDescRef = useRef("");
 
-const stageIcons = {
-  starting: "1",
-  planning: "2",
-  creating: "3",
-  writing_file: "4",
-  editing: "5",
-  reading_file: "6",
-  installing: "7",
-  configuring: "8",
-  executing: "9",
-  validating: "10",
-  done: "/",
-  error: "!",
-};
+  useEffect(() => {
+    if (!taskDescription || taskDescription === lastDescRef.current) return;
+    lastDescRef.current = taskDescription;
+    getTaskPlan(taskDescription).then((data) => {
+      if (Array.isArray(data.vertex_steps)) {
+        setVertexPlan(data.vertex_steps.length > 0 ? data.vertex_steps : null);
+      }
+    }).catch(() => setVertexPlan(null));
+  }, [taskDescription]);
 
-const stageOrder = [
-  "starting",
-  "planning",
-  "creating",
-  "writing_file",
-  "editing",
-  "reading_file",
-  "installing",
-  "configuring",
-  "executing",
-  "validating",
-  "done",
-];
-
-function useVertexProgress(events) {
   return useMemo(() => {
     const progressEvents = events.filter((e) => e.type === "vertex_progress");
     const hasVertexActivity = progressEvents.length > 0 || events.some((e) => (
@@ -250,7 +219,7 @@ function useVertexProgress(events) {
     progressEvents.forEach((event) => {
       const payload = event.payload || {};
       const stage = payload.stage || "executing";
-      const message = payload.message || stageLabels[stage] || "Vertex trabalhando";
+      const message = payload.message || "Vertex trabalhando";
       const file = payload.file || null;
       const key = `${stage}:${message}:${file || ""}`;
       if (seen.has(key)) return;
@@ -258,7 +227,6 @@ function useVertexProgress(events) {
       items.push({
         id: `${event.created_at || items.length}-${key}`,
         stage,
-        label: stageLabels[stage] || stage,
         message,
         file,
         status: payload.status || (stage === "done" ? "done" : "running"),
@@ -275,6 +243,15 @@ function useVertexProgress(events) {
     const done = items.some((item) => item.stage === "done" || item.status === "done");
     const latest = items[items.length - 1] || null;
 
+    const steps = vertexPlan && vertexPlan.length > 0
+      ? vertexPlan
+      : null;
+
+    const currentIdx = steps ? Math.min(items.length, steps.length - 1) : 0;
+    const dynamicTrack = steps
+      ? steps.map((s, i) => ({ label: s.label, done: i < items.length, active: i === currentIdx && running }))
+      : null;
+
     return {
       items: items.slice(-12),
       hasVertexActivity,
@@ -283,8 +260,10 @@ function useVertexProgress(events) {
       currentStage: latest?.stage || (running ? "executing" : done ? "done" : "starting"),
       currentMessage: latest?.message || "",
       currentFile: latest?.file || null,
+      dynamicTrack,
+      vertexPlan: steps,
     };
-  }, [events]);
+  }, [events, vertexPlan]);
 }
 
 function latestPayload(events, type) {
@@ -309,19 +288,19 @@ function validationLegend(events) {
   return null;
 }
 
-export function VertexProgressPanel({ events }) {
+export function VertexProgressPanel({ events, taskDescription }) {
   const [collapsed, setCollapsed] = useState(true);
-  const { currentFile, currentStage, items, hasVertexActivity, running, done } = useVertexProgress(events);
+  const { currentFile, currentStage, items, hasVertexActivity, running, done, dynamicTrack, vertexPlan } = useVertexProgress(events, taskDescription);
   const validation = validationLegend(events);
 
   if (!hasVertexActivity) return null;
 
-  const activeStage = currentStage || "executing";
-  const activeIndex = Math.max(0, stageOrder.indexOf(activeStage));
-  const currentLabel = stageLabels[activeStage] || "Trabalhando";
   const currentFileShort = currentFile ? currentFile.split("/").pop() : null;
-  const activeCount = items.filter(i => i.status !== "done" && i.stage !== "done").length;
   const doneCount = items.filter(i => i.status === "done" || i.stage === "done").length;
+  const currentItem = items[items.length - 1];
+  const currentLabel = vertexPlan && dynamicTrack
+    ? (dynamicTrack.find(d => d.active)?.label || (done ? "Entrega pronta" : "Preparando..."))
+    : (currentItem?.message || "Vertex trabalhando");
 
   return (
     <div className={`vtx-toast ${done ? "vtx-done" : ""} ${collapsed ? "vtx-collapsed" : ""}`}>
@@ -339,7 +318,7 @@ export function VertexProgressPanel({ events }) {
           {done ? "Entrega pronta" : currentFileShort || currentLabel}
         </span>
         <span className="vtx-toast-stats">
-          {doneCount}/{items.length || 1} etapas
+          {doneCount}/{dynamicTrack ? dynamicTrack.length : (items.length || 1)} etapas
         </span>
         <motion.span
           className="vtx-toast-chevron"
@@ -359,27 +338,30 @@ export function VertexProgressPanel({ events }) {
         }}
         transition={{ duration: 0.25, ease: "easeInOut" }}
       >
-        <div className="vtx-stage-track">
-          {stageOrder.map((stage, idx) => {
-            const isDone = items.some(i => i.stage === stage && (i.status === "done" || i.stage === "done"));
-            const isActive = stage === activeStage;
-            const hideAfter = stage === "done" && !isDone;
-            if (hideAfter) return <span key={stage} className="vtx-dot vtx-future" />;
-            return (
+        {dynamicTrack ? (
+          <div className="vtx-stage-track vtx-dynamic">
+            {dynamicTrack.map((step, idx) => (
               <span
-                key={stage}
-                className={`vtx-dot ${isDone ? "vtx-done" : ""} ${isActive ? "vtx-active" : ""}`}
-                title={stageLabels[stage]}
+                key={`${idx}-${step.label}`}
+                className={`vtx-dot ${step.done ? "vtx-done" : ""} ${step.active ? "vtx-active" : ""}`}
+                title={step.label}
               >
-                {isDone ? "v" : isActive ? "·" : ""}
+                {step.done ? "v" : step.active ? "·" : ""}
               </span>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="vtx-stage-track">
+            <span className="vtx-dot vtx-done" title="Vertex em execucao">v</span>
+            {items.slice(1).map((_, idx) => (
+              <span key={idx} className="vtx-dot vtx-active" title="..." />
+            ))}
+          </div>
+        )}
 
         <div className="vtx-current-card">
-          <span className="vtx-current-badge">{currentLabel}</span>
-          <span className="vtx-current-file">{done ? "Projeto revisado e pronto" : currentFileShort || "Preparando entrega..."}</span>
+          <span className="vtx-current-badge">{done ? "Entrega pronta" : currentLabel}</span>
+          <span className="vtx-current-file">{done ? "Projeto revisado e pronto" : currentFileShort || (vertexPlan && dynamicTrack ? dynamicTrack.find(d => d.active)?.label || "Preparando..." : "Preparando entrega...")}</span>
         </div>
 
         {validation && (
@@ -391,7 +373,30 @@ export function VertexProgressPanel({ events }) {
 
         <div className="vtx-items-scroll">
           <AnimatePresence initial={false}>
-            {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => {
+            {(vertexPlan && vertexPlan.length > 0 ? (
+              vertexPlan.map((step, idx) => {
+                const isItemDone = idx < items.length;
+                const isItemActive = idx === items.length && running;
+                return (
+                  <motion.div
+                    className={`vtx-item ${isItemDone ? "vtx-item-done" : ""}`}
+                    key={`${idx}-${step.label}`}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  >
+                    <span className={`vtx-item-dot ${isItemDone ? "vtx-item-dot-done" : ""}`}>
+                      {isItemDone ? <CheckCircle2 size={11} /> : isItemActive ? <Loader2 size={11} className="spinner" /> : <Circle size={11} />}
+                    </span>
+                    <div>
+                      <strong>{step.label}</strong>
+                      <p>{step.detail}</p>
+                    </div>
+                  </motion.div>
+                );
+              })
+            ) : items.length ? items.map((item) => {
               const isItemDone = item.status === "done" || item.stage === "done";
               return (
                 <motion.div
@@ -406,12 +411,28 @@ export function VertexProgressPanel({ events }) {
                     {isItemDone ? <CheckCircle2 size={11} /> : <Loader2 size={11} className="spinner" />}
                   </span>
                   <div>
-                    <strong>{item.label}</strong>
+                    <strong>{item.message?.split(" ").slice(0, 4).join(" ") || "Vertex"}</strong>
                     <p>{item.file ? item.file.split("/").pop() : item.message}</p>
                   </div>
                 </motion.div>
               );
-            })}
+            }) : (
+              <motion.div
+                className="vtx-item"
+                key="starting-fallback"
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              >
+                <span className="vtx-item-dot">
+                  <Loader2 size={11} className="spinner" />
+                </span>
+                <div>
+                  <strong>Preparando execucao</strong>
+                  <p>Vertex iniciando ambiente de trabalho.</p>
+                </div>
+              </motion.div>
+            ))}
           </AnimatePresence>
         </div>
       </motion.div>

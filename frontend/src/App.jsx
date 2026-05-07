@@ -375,7 +375,7 @@ export default function App() {
         </>
       }
       />
-      <VertexProgressPanel events={currentEvents} />
+      <VertexProgressPanel events={currentEvents} taskDescription={activeTask?.description} />
     </>
   );
 }
