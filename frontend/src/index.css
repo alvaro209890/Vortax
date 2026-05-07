@@ -101,14 +101,6 @@ small {
   grid-template-columns: 0px minmax(420px, 1fr) 400px;
 }
 
-.app-shell.sidebar-closed .sidebar {
-  opacity: 0;
-  padding: 0;
-  border-width: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-
 .sidebar, .chat-panel, .inspector {
   background: var(--bg-panel);
   border: 1px solid var(--border-light);
@@ -1510,11 +1502,6 @@ small {
   color: var(--text-secondary);
   font-size: 12px;
   transform: translateX(-50%);
-}
-
-@keyframes modalScale {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
 }
 
 .screen-placeholder {

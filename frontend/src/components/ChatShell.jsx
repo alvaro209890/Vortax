@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 export function ChatShell({ sidebar, main, inspector }) {
@@ -6,28 +7,49 @@ export function ChatShell({ sidebar, main, inspector }) {
 
   return (
     <div className={`app-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
-      <aside className="sidebar">
+      <motion.aside
+        className="sidebar"
+        animate={{
+          width: isSidebarOpen ? "280px" : "0px",
+          opacity: isSidebarOpen ? 1 : 0,
+          padding: isSidebarOpen ? "24px" : "0px",
+          borderWidth: isSidebarOpen ? "1px" : "0px",
+        }}
+        transition={{
+          type: "spring",
+          stiffness: 200,
+          damping: 26,
+        }}
+      >
         <div className="sidebar-toggle-container">
-          <button 
-            className="sidebar-toggle-btn" 
+          <motion.button
+            className="sidebar-toggle-btn"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={() => setIsSidebarOpen(false)}
             title="Recolher menu"
           >
             <PanelLeftClose size={18} />
-          </button>
+          </motion.button>
         </div>
         {sidebar}
-      </aside>
+      </motion.aside>
       <main className="chat-panel">
-        {!isSidebarOpen && (
-          <button 
-            className="sidebar-open-btn" 
-            onClick={() => setIsSidebarOpen(true)}
-            title="Expandir menu"
-          >
-            <PanelLeftOpen size={18} />
-          </button>
-        )}
+        <AnimatePresence>
+          {!isSidebarOpen && (
+            <motion.button
+              className="sidebar-open-btn"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ type: "spring", stiffness: 200, damping: 20 }}
+              onClick={() => setIsSidebarOpen(true)}
+              title="Expandir menu"
+            >
+              <PanelLeftOpen size={18} />
+            </motion.button>
+          )}
+        </AnimatePresence>
         {main}
       </main>
       <aside className="inspector">{inspector}</aside>

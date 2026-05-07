@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, Loader2, Sparkles } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+import { staggerContainer, fadeInUp } from "../animations/variants.js";
 
 const busyStatuses = new Set(["queued", "thinking", "executing", "running"]);
 
@@ -288,11 +290,24 @@ export function VertexProgressPanel({ events }) {
         </div>
         <div className="vertex-progress-meta">
           <small>{items.length || 1} etapa(s)</small>
-          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+          <motion.span
+            animate={{ rotate: collapsed ? -90 : 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+            style={{ display: "inline-flex" }}
+          >
+            <ChevronDown size={14} />
+          </motion.span>
         </div>
       </button>
 
-      <div className="vertex-progress-body">
+      <motion.div
+        className="vertex-progress-body"
+        animate={{
+          height: collapsed ? 0 : "auto",
+          opacity: collapsed ? 0 : 1,
+        }}
+        transition={{ duration: 0.24, ease: "easeInOut" }}
+      >
         <div className="vertex-live-legend">
           <div className="vertex-live-main">
             <small>Agora</small>
@@ -313,26 +328,38 @@ export function VertexProgressPanel({ events }) {
 
         <div className="vertex-stage-rail" aria-label="Etapas estimadas do Vertex">
           {stageOrder.map((stage, index) => (
-            <span
+            <motion.span
               className={`${index <= activeIndex || done ? "reached" : ""} ${stage === activeStage ? "active" : ""}`}
               key={stage}
               title={stageLabels[stage]}
+              animate={stage === activeStage ? { scale: [1, 1.3, 1] } : { scale: 1 }}
+              transition={stage === activeStage ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" } : {}}
             />
           ))}
         </div>
 
-        {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
-          <div className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`} key={item.id}>
-            <div className="vertex-progress-icon">
-              {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
-            </div>
-            <div>
-              <strong>{item.label}</strong>
-              <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
-            </div>
-          </div>
-        ))}
-      </div>
+        <AnimatePresence initial={false}>
+          {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
+            <motion.div
+              className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`}
+              key={item.id}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0 }}
+              layout
+              transition={{ type: "spring", stiffness: 200, damping: 22 }}
+            >
+              <div className="vertex-progress-icon">
+                {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
+              </div>
+              <div>
+                <strong>{item.label}</strong>
+                <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 }
@@ -404,7 +431,12 @@ export function AgentActivity({ events, status, taskDescription }) {
   const completedCount = steps.filter((step) => step.state === "done").length;
 
   return (
-    <section className={`agent-activity ${collapsed ? "collapsed" : ""}`}>
+    <motion.section
+      className={`agent-activity ${collapsed ? "collapsed" : ""}`}
+      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 180, damping: 22 }}
+    >
       <button className="activity-header" onClick={() => setCollapsed((current) => !current)} type="button">
         <div className="activity-summary">
           <div className="activity-mark">
@@ -415,16 +447,30 @@ export function AgentActivity({ events, status, taskDescription }) {
             <span>{completedCount}/{steps.length} tasks concluídas{detail ? ` · ${detail}` : ""}</span>
           </div>
         </div>
-        <div className="activity-toggle">
-          {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-        </div>
+        <motion.div
+          className="activity-toggle"
+          animate={{ rotate: collapsed ? -90 : 0 }}
+          transition={{ type: "spring", stiffness: 200, damping: 20 }}
+        >
+          <ChevronDown size={16} />
+        </motion.div>
       </button>
 
-      <div className="activity-steps" aria-label="Tasks da atividade">
+      <motion.div
+        className="activity-steps"
+        aria-label="Tasks da atividade"
+        variants={staggerContainer}
+        initial="hidden"
+        animate={collapsed ? "hidden" : "visible"}
+      >
         {steps.map((step) => (
-          <button
+          <motion.button
             className={`activity-step ${step.state} ${expandedTaskId === step.id ? "expanded" : ""}`}
             key={step.id}
+            variants={fadeInUp}
+            layout
+            whileHover={{ x: 2 }}
+            whileTap={{ scale: 0.995 }}
             onClick={() => setExpandedTaskId((current) => (current === step.id ? null : step.id))}
             type="button"
           >
@@ -434,15 +480,18 @@ export function AgentActivity({ events, status, taskDescription }) {
               {expandedTaskId === step.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </div>
             <p>{step.detail}</p>
-          </button>
+          </motion.button>
         ))}
 
         {hasVertexActivity && (
-          <div className="activity-vertex-slot">
+          <motion.div
+            className="activity-vertex-slot"
+            variants={fadeInUp}
+          >
             <VertexProgressPanel events={events} />
-          </div>
+          </motion.div>
         )}
-      </div>
-    </section>
+      </motion.div>
+    </motion.section>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { motion } from "framer-motion";
 import { FileText, Loader2, Terminal } from "lucide-react";
 
 const stageLabels = {
@@ -49,7 +50,12 @@ export function ShellOutput({ events }) {
   if (shellLines.length === 0 && !vertexProgress) return null;
 
   return (
-    <div className="shell-output">
+    <motion.div
+      className="shell-output"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+    >
       <div className="shell-output-header">
         <Terminal size={14} />
         <span>Terminal</span>
@@ -110,6 +116,6 @@ export function ShellOutput({ events }) {
         ))}
       </pre>
       <div ref={endRef} />
-    </div>
+    </motion.div>
   );
 }

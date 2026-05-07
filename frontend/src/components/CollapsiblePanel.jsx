@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { motion } from "framer-motion";
+import { ChevronDown } from "lucide-react";
 
 import { usePersistentState } from "../hooks/usePersistentState.js";
 
@@ -29,9 +30,24 @@ export function CollapsiblePanel({
           {title}
         </span>
         {count !== undefined && <small>{count}</small>}
-        {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+        <motion.span
+          animate={{ rotate: collapsed ? -90 : 0 }}
+          transition={{ type: "spring", stiffness: 200, damping: 20 }}
+          style={{ display: "inline-flex" }}
+        >
+          <ChevronDown size={16} />
+        </motion.span>
       </button>
-      <div className="collapsible-content">{children}</div>
+      <motion.div
+        className="collapsible-content"
+        animate={{
+          height: collapsed ? 0 : "auto",
+          opacity: collapsed ? 0 : 1,
+        }}
+        transition={{ duration: 0.2, ease: "easeInOut" }}
+      >
+        {children}
+      </motion.div>
     </section>
   );
 }

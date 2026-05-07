@@ -1,7 +1,9 @@
 import { CheckCircle2, ChevronLeft, ChevronRight, Code2, Monitor, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+import { scaleIn } from "../animations/variants.js";
 
 function isVertexCommand(command) {
   let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
@@ -176,28 +178,75 @@ export function ScreenView({ events, connectionState }) {
         )}
       </div>
 
-      {isModalOpen && image && (
-        <div className="image-modal-overlay" onClick={() => setIsModalOpen(false)}>
-          <button className="image-modal-close" onClick={() => setIsModalOpen(false)} title="Fechar" type="button">
-            <X size={18} />
-          </button>
-          <button className="image-modal-nav left" disabled={!canGoBack} onClick={(event) => { event.stopPropagation(); goPrevious(); }} title="Print anterior" type="button">
-            <ChevronLeft size={22} />
-          </button>
-          <img
-            alt="Tela ampliada"
-            className="image-modal-content"
-            src={`data:image/jpeg;base64,${image}`}
-            onClick={(event) => event.stopPropagation()}
-          />
-          <button className="image-modal-nav right" disabled={!canGoForward} onClick={(event) => { event.stopPropagation(); goNext(); }} title="Proximo print" type="button">
-            <ChevronRight size={22} />
-          </button>
-          <div className="image-modal-counter">
-            {selectedIndex + 1} / {frames.length}
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {isModalOpen && image && (
+          <motion.div
+            className="image-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            onClick={() => setIsModalOpen(false)}
+          >
+            <motion.button
+              className="image-modal-close"
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              onClick={() => setIsModalOpen(false)}
+              title="Fechar"
+              type="button"
+            >
+              <X size={18} />
+            </motion.button>
+            <motion.button
+              className="image-modal-nav left"
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              disabled={!canGoBack}
+              onClick={(event) => { event.stopPropagation(); goPrevious(); }}
+              title="Print anterior"
+              type="button"
+            >
+              <ChevronLeft size={22} />
+            </motion.button>
+            <motion.img
+              alt="Tela ampliada"
+              className="image-modal-content"
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              src={`data:image/jpeg;base64,${image}`}
+              onClick={(event) => event.stopPropagation()}
+            />
+            <motion.button
+              className="image-modal-nav right"
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              disabled={!canGoForward}
+              onClick={(event) => { event.stopPropagation(); goNext(); }}
+              title="Proximo print"
+              type="button"
+            >
+              <ChevronRight size={22} />
+            </motion.button>
+            <motion.div
+              className="image-modal-counter"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
+              {selectedIndex + 1} / {frames.length}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </CollapsiblePanel>
   );
 }

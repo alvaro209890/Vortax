@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { ArrowUp, ImagePlus, X } from "lucide-react";
 
 export function Composer({ disabled, onSubmit }) {
@@ -55,18 +56,35 @@ export function Composer({ disabled, onSubmit }) {
   return (
     <div className="composer-wrapper">
       <div className={`composer-container ${disabled ? "disabled" : ""}`}>
-        {files.length > 0 && (
-          <div className="composer-attachments">
-            {files.map((file, index) => (
-              <div className="composer-attachment" key={`${file.name}-${file.size}-${index}`}>
-                <img alt="" src={previews[index]} />
-                <button onClick={() => removeFile(index)} title="Remover imagem" type="button">
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <AnimatePresence>
+          {files.length > 0 && (
+            <motion.div
+              className="composer-attachments"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+            >
+              <AnimatePresence mode="popLayout">
+                {files.map((file, index) => (
+                  <motion.div
+                    className="composer-attachment"
+                    key={`${file.name}-${file.size}-${index}`}
+                    layout
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 22 }}
+                  >
+                    <img alt="" src={previews[index]} />
+                    <button onClick={() => removeFile(index)} title="Remover imagem" type="button">
+                      <X size={12} />
+                    </button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div className="composer-row">
           <label className="composer-icon-btn" title="Anexar imagem">
             <ImagePlus size={20} />
@@ -82,18 +100,28 @@ export function Composer({ disabled, onSubmit }) {
             rows={1}
             value={value}
           />
-          <button
+          <motion.button
             className={`composer-send-btn ${canSend ? "active" : ""}`}
+            whileHover={canSend ? { scale: 1.08 } : {}}
+            whileTap={canSend ? { scale: 0.95 } : {}}
+            transition={{ type: "spring", stiffness: 400, damping: 15 }}
             disabled={!canSend}
             onClick={submit}
             title="Enviar"
             type="button"
           >
             <ArrowUp size={18} />
-          </button>
+          </motion.button>
         </div>
       </div>
-      <span className="composer-hint">Pressione Enter para enviar · Shift+Enter para nova linha</span>
+      <motion.span
+        className="composer-hint"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.4, duration: 0.3 }}
+      >
+        Pressione Enter para enviar · Shift+Enter para nova linha
+      </motion.span>
     </div>
   );
 }

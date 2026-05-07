@@ -1,3 +1,5 @@
+import { motion } from "framer-motion";
+
 function contextLabel(status, compactionCount) {
   if (!status || status === "empty") return "Contexto vazio";
   if (status === "full") return "Contexto cheio";
@@ -28,7 +30,20 @@ export function ContextIndicator({ context }) {
 
   return (
     <div className={`context-indicator ${contextTone(status)}`} title={title}>
-      <span className="context-dot" style={{ "--context-percent": `${percent}%` }} />
+      <motion.span
+        className="context-dot"
+        style={{ "--context-percent": `${percent}%` }}
+        animate={
+          status === "full"
+            ? { scale: [1, 1.12, 1] }
+            : {}
+        }
+        transition={
+          status === "full"
+            ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" }
+            : {}
+        }
+      />
       <div>
         <strong>{label}</strong>
         <span>{percent}%</span>
