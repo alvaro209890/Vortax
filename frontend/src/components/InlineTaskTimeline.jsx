@@ -50,9 +50,11 @@ function latestStepLine(step, livePlan) {
 
 export function InlineTaskTimeline({ livePlan, showEmpty = false }) {
   const [expandedId, setExpandedId] = useState(null);
-  const { currentStep, doneCount, percent, sourceCount, steps, totalCount } = livePlan;
+  const { currentStep, doneCount, isDirect, percent, sourceCount, totalCount } = livePlan;
+  const steps = livePlan.visibleSteps || livePlan.steps || [];
+  const allSteps = livePlan.steps || [];
 
-  if (!steps.length) {
+  if (!allSteps.length) {
     if (!showEmpty) return null;
     return (
       <section className="inline-task-timeline empty">
@@ -61,6 +63,21 @@ export function InlineTaskTimeline({ livePlan, showEmpty = false }) {
           <small>0/0</small>
         </div>
         <p>O plano aparece aqui.</p>
+      </section>
+    );
+  }
+
+  if (isDirect) {
+    const step = allSteps[0];
+    const done = step?.status === "passed" || step?.status === "skipped";
+    const running = step?.status === "running";
+    return (
+      <section className={`inline-task-timeline direct ${done ? "done" : running ? "running" : "pending"}`} aria-label="Resposta rapida">
+        <span className="inline-direct-node">{done ? <Check size={13} /> : running ? <Loader2 size={13} className="spinner" /> : <Circle size={13} />}</span>
+        <div>
+          <strong>{done ? "Resposta pronta" : running ? "Respondendo" : "Preparando resposta"}</strong>
+          <small>{done ? "A resposta vem logo abaixo." : livePlan.latestProgress || "Sem pesquisa, sem Vertex."}</small>
+        </div>
       </section>
     );
   }

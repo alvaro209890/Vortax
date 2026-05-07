@@ -1,8 +1,9 @@
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
+from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
 from services.registry import task_store
 from services.project_files import sync_task_workspace_files
@@ -32,18 +33,20 @@ def list_task_workspace_projects(task_id: str) -> list[dict]:
 
 
 @router.get("/task/{task_id}")
-async def list_task_files(task_id: str) -> dict:
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def list_task_files(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
     base = safe_task_workspace_path(task_id)
     index = sync_task_workspace_files(task_id, base)
     return {"files": index["files"], "projects": index["projects"]}
 
 
 @router.get("/task/{task_id}/{file_path:path}")
-async def download_task_file(task_id: str, file_path: str) -> FileResponse:
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def download_task_file(
+    task_id: str,
+    file_path: str,
+    current_user: AuthUser = Depends(require_auth),
+) -> FileResponse:
+    ensure_task_owner(task_store.get(task_id), current_user)
     target = safe_task_workspace_path(task_id, file_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Arquivo nao encontrado")
@@ -53,10 +56,9 @@ async def download_task_file(task_id: str, file_path: str) -> FileResponse:
 # ── Preview de projetos web gerados ────────────────────────────────────────
 
 @router.get("/preview/{task_id}/")
-async def preview_task_index(task_id: str):
+async def preview_task_index(task_id: str, current_user: AuthUser = Depends(require_auth)):
     """Serve o index.html padrao para preview do projeto web."""
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+    ensure_task_owner(task_store.get(task_id), current_user)
     base = safe_task_workspace_path(task_id)
     index_path = base / "index.html"
     if not index_path.exists():
@@ -68,10 +70,13 @@ async def preview_task_index(task_id: str):
 
 
 @router.get("/preview/{task_id}/{file_path:path}")
-async def preview_task_file(task_id: str, file_path: str):
+async def preview_task_file(
+    task_id: str,
+    file_path: str,
+    current_user: AuthUser = Depends(require_auth),
+):
     """Serve arquivos estaticos da pasta de projetos para preview em iframe."""
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+    ensure_task_owner(task_store.get(task_id), current_user)
     target = safe_task_workspace_path(task_id, file_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Arquivo nao encontrado")
@@ -79,8 +84,9 @@ async def preview_task_file(task_id: str, file_path: str):
 
 
 @router.get("/preview-dev/{task_id}")
-async def check_dev_server(task_id: str) -> dict:
+async def check_dev_server(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
     """Verifica se ha um dev server rodando para esta conversa."""
+    ensure_task_owner(task_store.get(task_id), current_user)
     from tools.shell import get_dev_server
 
     server = get_dev_server(task_id)
@@ -90,8 +96,9 @@ async def check_dev_server(task_id: str) -> dict:
 
 
 @router.delete("/preview-dev/{task_id}")
-async def stop_dev_server_endpoint(task_id: str) -> dict:
+async def stop_dev_server_endpoint(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
     """Para o dev server de uma conversa."""
+    ensure_task_owner(task_store.get(task_id), current_user)
     from tools.shell import stop_dev_server
 
     stopped = await stop_dev_server(task_id)

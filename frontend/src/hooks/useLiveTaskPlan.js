@@ -77,6 +77,28 @@ function latestProgressLabel(events) {
   return progress?.payload?.label || progress?.payload?.detail || "";
 }
 
+function latestPlanMeta(events, steps) {
+  const planEvent = latestEvent(events, (event) => event.type === "task_plan_created" || event.type === "task_plan_replanned");
+  const direct = Boolean(planEvent?.payload?.direct)
+    || (steps.length === 1 && steps[0]?.tool_hint === "deliver" && /responder/i.test(steps[0]?.label || ""));
+  return {
+    direct,
+    fallback: Boolean(planEvent?.payload?.fallback),
+  };
+}
+
+function progressiveSteps(steps, terminal) {
+  if (terminal) return steps;
+  let lastRevealedIndex = steps.findIndex((step) => step.status === "running");
+  steps.forEach((step, index) => {
+    if (step.status && step.status !== "pending") {
+      lastRevealedIndex = Math.max(lastRevealedIndex, index);
+    }
+  });
+  if (lastRevealedIndex < 0) return steps.slice(0, 1);
+  return steps.slice(0, Math.min(steps.length, lastRevealedIndex + 2));
+}
+
 export function useLiveTaskPlan(initialPlan, events) {
   return useMemo(() => {
     const steps = applyLivePlanEvents(initialPlan, events).map((step) => ({
@@ -89,6 +111,7 @@ export function useLiveTaskPlan(initialPlan, events) {
     const pendingStep = steps.find((step) => step.status === "pending");
     const latestStatus = latestEvent(events, (event) => event.type === "agent_status")?.payload?.status || "";
     const terminal = ["done", "stopped", "error", "idle"].includes(latestStatus);
+    const meta = latestPlanMeta(events, steps);
     const currentStep = terminal && steps.length
       ? steps[steps.length - 1]
       : runningStep || pendingStep || steps[steps.length - 1] || null;
@@ -105,6 +128,7 @@ export function useLiveTaskPlan(initialPlan, events) {
       doneCount,
       failedCount,
       hasSteps: steps.length > 0,
+      isDirect: meta.direct,
       latestProgress,
       percent,
       planKey,
@@ -112,6 +136,7 @@ export function useLiveTaskPlan(initialPlan, events) {
       sourceCount,
       steps,
       totalCount: steps.length,
+      visibleSteps: meta.direct ? steps : progressiveSteps(steps, terminal),
     };
   }, [initialPlan, events]);
 }

@@ -55,6 +55,18 @@ def fallback_steps(description: str) -> list[dict[str, Any]]:
     ]
 
 
+def direct_response_steps(description: str) -> list[dict[str, Any]]:
+    detail = description.strip()[:180]
+    return [
+        {
+            "label": "Responder mensagem",
+            "detail": detail or "Responder de forma direta.",
+            "tool_hint": "deliver",
+            "acceptance_criteria": ["Resposta direta enviada."],
+        }
+    ]
+
+
 class TaskPlanStore:
     def normalize_steps(self, raw_steps: list[dict[str, Any]], description: str) -> list[dict[str, Any]]:
         source_steps = raw_steps if raw_steps else fallback_steps(description)

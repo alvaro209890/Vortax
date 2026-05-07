@@ -3,7 +3,7 @@ import { ExternalLink, Eye, EyeOff, Globe } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 import { usePersistentState } from "../hooks/usePersistentState.js";
-import { API_BASE_URL } from "../lib/api.js";
+import { taskPreviewUrl } from "../lib/api.js";
 
 function detectPreviewType(files) {
   const indexFile = files.find(
@@ -25,10 +25,7 @@ export function PreviewPanel({ files, taskId }) {
 
   const previewUrl = useMemo(() => {
     if (!taskId || !preview) return null;
-    const encodedPath = preview.path === "index.html"
-      ? ""
-      : String(preview.path || "").split("/").map((part) => encodeURIComponent(part)).join("/");
-    return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId)}/${encodedPath}`;
+    return taskPreviewUrl(taskId, preview.path === "index.html" ? "" : preview.path);
   }, [taskId, preview]);
 
   if (!preview || !previewUrl) return null;

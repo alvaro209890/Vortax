@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, PanelRightOpen, Trash2 } from "lucide-react";
+import { LogOut, MessageSquarePlus, PanelRightOpen, Trash2 } from "lucide-react";
 
+import { useAuth } from "./auth/AuthProvider.jsx";
 import { AiExchangePanel } from "./components/AgentActivity.jsx";
+import { AuthScreen } from "./components/AuthScreen.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
@@ -10,7 +12,6 @@ import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { InlineTaskTimeline } from "./components/InlineTaskTimeline.jsx";
 import { MessageList } from "./components/MessageList.jsx";
-import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
@@ -88,6 +89,7 @@ function shouldShowTyping(task, events, agentBusy) {
 }
 
 export default function App() {
+  const { loading: authLoading, signOut, user } = useAuth();
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [agentStatus, setAgentStatus] = useState("idle");
   const [tasks, setTasks] = useState([]);
@@ -146,11 +148,18 @@ export default function App() {
   }, [currentEvents]);
 
   useEffect(() => {
+    if (authLoading || !user) return undefined;
+    let cancelled = false;
     healthcheck()
-      .then(() => setBackendStatus("online"))
-      .catch(() => setBackendStatus("offline"));
+      .then(() => {
+        if (!cancelled) setBackendStatus("online");
+      })
+      .catch(() => {
+        if (!cancelled) setBackendStatus("offline");
+      });
     listTasks()
       .then((data) => {
+        if (cancelled) return;
         const loadedTasks = data.tasks || [];
         setTasks(loadedTasks);
         setTasksError(null);
@@ -158,9 +167,27 @@ export default function App() {
           setActiveTaskId(loadedTasks[0].id);
         }
       })
-      .catch((error) => setTasksError(error))
-      .finally(() => setTasksLoading(false));
-  }, []);
+      .catch((error) => {
+        if (!cancelled) setTasksError(error);
+      })
+      .finally(() => {
+        if (!cancelled) setTasksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (user) return;
+    setActiveTaskId(null);
+    setTasks([]);
+    setTasksLoading(true);
+    setTasksError(null);
+    setBackendStatus("checking");
+    resetTaskData();
+    setAgentStatus("idle");
+  }, [resetTaskData, user]);
 
   useEffect(() => {
     if (!activeTaskId) {
@@ -314,6 +341,19 @@ export default function App() {
     setAgentStatus("idle");
   }
 
+  if (authLoading) {
+    return (
+      <main className="auth-page auth-loading">
+        <div className="auth-loading-card">
+          <img src="/vortax-logo.png" alt="Vortax" />
+          <span>Carregando acesso...</span>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user) return <AuthScreen />;
+
   return (
     <>
       <ChatShell
@@ -394,6 +434,10 @@ export default function App() {
                 </button>
                 <ContextIndicator context={contextState} />
                 <StatusBadge status={agentStatus} label={agentStatus} />
+                <button className="user-menu-btn" onClick={signOut} title="Sair" type="button">
+                  <span>{user.displayName || user.email || "Usuario"}</span>
+                  <LogOut size={15} />
+                </button>
               </div>
             </header>
             <MessageList
@@ -427,7 +471,6 @@ export default function App() {
         }
       />
       <TaskDetailDrawer open={detailsOpen} onClose={() => setDetailsOpen(false)}>
-        <ScreenView events={currentEvents} connectionState={connectionState} />
         <DocumentationPanel files={files} taskId={activeTaskId} />
         <AiExchangePanel events={currentEvents} />
         <ActionTimeline events={currentEvents} />

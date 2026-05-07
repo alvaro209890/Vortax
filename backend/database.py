@@ -39,6 +39,7 @@ class Database:
                 """
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT,
                     description TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -172,16 +173,26 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_task_steps_task_id_position ON task_steps(task_id, position);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "user_id" not in columns:
+                self._connection.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT")
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_user_id_created_at ON tasks(user_id, created_at DESC)"
+            )
 
     def create_task(self, task: dict[str, Any]) -> None:
         with self._lock, self._connection:
             self._connection.execute(
                 """
-                INSERT INTO tasks (id, description, status, created_at, updated_at, result)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (id, user_id, description, status, created_at, updated_at, result)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task["id"],
+                    task.get("user_id"),
                     task["description"],
                     task["status"],
                     task["created_at"],
@@ -193,19 +204,23 @@ class Database:
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT id, description, status, created_at, updated_at, result FROM tasks WHERE id = ?",
+                "SELECT id, user_id, description, status, created_at, updated_at, result FROM tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
         return dict(row) if row else None
 
-    def list_tasks(self) -> list[dict[str, Any]]:
+    def list_tasks(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        if user_id is None:
+            return []
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT id, description, status, created_at, updated_at, result
+                SELECT id, user_id, description, status, created_at, updated_at, result
                 FROM tasks
+                WHERE user_id = ?
                 ORDER BY created_at DESC
-                """
+                """,
+                (user_id,),
             ).fetchall()
         return [dict(row) for row in rows]
 

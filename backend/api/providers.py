@@ -1,12 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from auth import AuthUser, require_auth
 from config import settings
 
 router = APIRouter()
 
 
 @router.get("/")
-async def provider_status() -> dict:
+async def provider_status(current_user: AuthUser = Depends(require_auth)) -> dict:
+    _ = current_user
     return {
         "providers": [
             {

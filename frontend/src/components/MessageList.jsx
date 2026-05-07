@@ -109,6 +109,55 @@ const markdownComponents = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
 };
 
+function MessageArticle({ message }) {
+  return (
+    <motion.article
+      className={`message ${message.role}`}
+      key={message.id}
+      variants={fadeInUp}
+      layout
+    >
+      <div className="message-avatar">
+        {message.role === "user" ? <User size={18} /> : <Sparkles size={18} />}
+      </div>
+      <div className="message-content">
+        <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
+        {message.content ? (
+          <div className="markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        ) : null}
+        <MessageDownloads downloads={message.downloads} taskId={message.taskId} />
+        {message.images?.length > 0 && (
+          <div className="message-images">
+            {message.images.map((image, index) => (
+              <a
+                href={`data:${image.content_type};base64,${image.image_base64}`}
+                key={`${image.filename || "imagem"}-${index}`}
+                rel="noreferrer"
+                target="_blank"
+                title="Abrir imagem"
+              >
+                {image.image_base64 ? (
+                  <img
+                    alt={image.filename || "Imagem enviada para analise"}
+                    src={`data:${image.content_type};base64,${image.image_base64}`}
+                  />
+                ) : (
+                  <div className="message-image-pending" />
+                )}
+                <span>{image.filename || "Imagem"}</span>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.article>
+  );
+}
+
 /* ── Downloads ───────────────────────────────────────────────────── */
 
 function MessageDownloads({ downloads = [], taskId }) {
@@ -138,6 +187,12 @@ function MessageDownloads({ downloads = [], taskId }) {
 
 export function MessageList({ activity, activityVersion, isTyping = false, messages, activeSearch }) {
   const endRef = useRef(null);
+  const lastUserIndex = messages.reduce(
+    (latest, message, index) => (message.role === "user" ? index : latest),
+    -1,
+  );
+  const beforeActivity = lastUserIndex >= 0 ? messages.slice(0, lastUserIndex + 1) : messages;
+  const afterActivity = lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : [];
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -150,101 +205,65 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
       initial="hidden"
       animate="visible"
     >
-      <AnimatePresence mode="popLayout">
-        {messages.map((message) => (
+      <div className="message-list-inner">
+        <AnimatePresence mode="popLayout">
+          {beforeActivity.map((message) => (
+            <MessageArticle key={message.id} message={message} />
+          ))}
+        </AnimatePresence>
+        {activity}
+        <AnimatePresence mode="popLayout">
+          {afterActivity.map((message) => (
+            <MessageArticle key={message.id} message={message} />
+          ))}
+        </AnimatePresence>
+        {isTyping && (
           <motion.article
-            className={`message ${message.role}`}
-            key={message.id}
-            variants={fadeInUp}
-            layout
+            className="message assistant typing-message"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 22 }}
           >
             <div className="message-avatar">
-              {message.role === "user" ? <User size={18} /> : <Sparkles size={18} />}
+              <Sparkles size={18} />
             </div>
             <div className="message-content">
-              <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
-              {message.content ? (
-                <div className="markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {message.content}
-                  </ReactMarkdown>
-                </div>
-              ) : null}
-              <MessageDownloads downloads={message.downloads} taskId={message.taskId} />
-              {message.images?.length > 0 && (
-                <div className="message-images">
-                  {message.images.map((image, index) => (
-                    <a
-                      href={`data:${image.content_type};base64,${image.image_base64}`}
-                      key={`${image.filename || "imagem"}-${index}`}
-                      rel="noreferrer"
-                      target="_blank"
-                      title="Abrir imagem"
-                    >
-                      {image.image_base64 ? (
-                        <img
-                          alt={image.filename || "Imagem enviada para analise"}
-                          src={`data:${image.content_type};base64,${image.image_base64}`}
-                        />
-                      ) : (
-                        <div className="message-image-pending" />
-                      )}
-                      <span>{image.filename || "Imagem"}</span>
-                    </a>
-                  ))}
-                </div>
-              )}
+              <div className="message-role">Vortax</div>
+              <div aria-label="Vortax esta digitando" className="typing-dots" role="status">
+                <span />
+                <span />
+                <span />
+              </div>
             </div>
           </motion.article>
-        ))}
-      </AnimatePresence>
-      {activity}
-      {isTyping && (
-        <motion.article
-          className="message assistant typing-message"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 200, damping: 22 }}
-        >
-          <div className="message-avatar">
-            <Sparkles size={18} />
-          </div>
-          <div className="message-content">
-            <div className="message-role">Vortax</div>
-            <div aria-label="Vortax esta digitando" className="typing-dots" role="status">
-              <span />
-              <span />
-              <span />
+        )}
+        {activeSearch && (
+          <motion.article
+            className="message assistant search-message"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 22 }}
+          >
+            <div className="message-avatar">
+              <Sparkles size={18} />
             </div>
-          </div>
-        </motion.article>
-      )}
-      {activeSearch && (
-        <motion.article
-          className="message assistant search-message"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 200, damping: 22 }}
-        >
-          <div className="message-avatar">
-            <Sparkles size={18} />
-          </div>
-          <div className="message-content">
-            <div className="message-role">Vortax pesquisando...</div>
-            <div className="search-animation-container">
-              <div className="search-radar">
-                <div className="radar-sweep"></div>
-                <Globe2 size={24} className="radar-icon" />
-              </div>
-              <div className="search-details">
-                <span className="search-query">"{activeSearch.query}"</span>
-                <span className="search-status">Buscando em milhares de fontes...</span>
+            <div className="message-content">
+              <div className="message-role">Vortax pesquisando...</div>
+              <div className="search-animation-container">
+                <div className="search-radar">
+                  <div className="radar-sweep"></div>
+                  <Globe2 size={24} className="radar-icon" />
+                </div>
+                <div className="search-details">
+                  <span className="search-query">"{activeSearch.query}"</span>
+                  <span className="search-status">Buscando em milhares de fontes...</span>
+                </div>
               </div>
             </div>
-          </div>
-        </motion.article>
-      )}
-      <div ref={endRef} />
+          </motion.article>
+        )}
+        <div ref={endRef} />
+      </div>
     </motion.div>
   );
 }

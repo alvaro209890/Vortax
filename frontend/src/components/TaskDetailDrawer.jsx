@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { X } from "lucide-react";
+import { ListChecks, X } from "lucide-react";
 
 export function TaskDetailDrawer({ children, onClose, open }) {
   return (
@@ -23,9 +23,14 @@ export function TaskDetailDrawer({ children, onClose, open }) {
             transition={{ type: "spring", stiffness: 260, damping: 30 }}
           >
             <header className="detail-drawer-header">
-              <div>
-                <strong>Detalhes da tarefa</strong>
-                <span>Timeline tecnica, arquivos, fontes e telas</span>
+              <div className="detail-drawer-title">
+                <span className="detail-drawer-mark">
+                  <ListChecks size={16} />
+                </span>
+                <div>
+                  <strong>Detalhes da tarefa</strong>
+                  <span>Arquivos, fontes, timeline e trocas tecnicas</span>
+                </div>
               </div>
               <button onClick={onClose} title="Fechar detalhes" type="button">
                 <X size={18} />

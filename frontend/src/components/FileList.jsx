@@ -1,10 +1,10 @@
 import { Download, FileArchive, FileText, Folder, Package } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
-import { API_BASE_URL, fileDownloadUrl } from "../lib/api.js";
+import { fileDownloadUrl, taskDownloadZipUrl } from "../lib/api.js";
 
 export function FileList({ error, files, loading, taskId }) {
-  const downloadZipUrl = taskId ? `${API_BASE_URL}/api/tasks/${encodeURIComponent(taskId)}/download` : null;
+  const downloadZipUrl = taskId ? taskDownloadZipUrl(taskId) : null;
   const projects = files.reduce((groups, file) => {
     const id = file.project_id || "root";
     if (!groups.has(id)) {

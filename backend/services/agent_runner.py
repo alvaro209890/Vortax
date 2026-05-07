@@ -19,7 +19,7 @@ from services.exact_solver import format_exact_answer, is_exact_prompt, should_a
 from services.mock_runner import run_mock_task
 from services.research_policy import cross_check_status
 from services.task_store import TaskStore
-from services.task_plan_store import fallback_steps, task_plan_store
+from services.task_plan_store import direct_response_steps, fallback_steps, task_plan_store
 from tools.tool_executor import compact_tool_result, execute_tool
 from services.web_validation import web_intent_from_command
 
@@ -102,6 +102,9 @@ def _tool_evidence(action_name: str, result: dict[str, Any]) -> dict[str, Any]:
 
 async def _ensure_plan(task_id: str, description: str, bus: EventBus) -> None:
     if should_answer_directly(description):
+        if not task_plan_store.list_steps(task_id):
+            steps = task_plan_store.replace_plan(task_id, direct_response_steps(description), description)
+            await bus.publish(task_id, "task_plan_created", {"steps": steps, "direct": True, "fallback": True})
         return
     if task_plan_store.list_steps(task_id):
         return

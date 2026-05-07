@@ -219,15 +219,135 @@ function ComputerStage({ preview }) {
   );
 }
 
+function phaseStatus(started, done, failed = false) {
+  if (failed) return "failed";
+  if (done) return "passed";
+  if (started) return "running";
+  return "pending";
+}
+
+function phaseState(status) {
+  if (status === "passed") return "done";
+  if (status === "failed") return "failed";
+  if (status === "running") return "running";
+  return "pending";
+}
+
+function latestPayload(events, predicate) {
+  const event = latestEvent(events, predicate);
+  return event?.payload || null;
+}
+
+function progressStep(id, label, detail, status) {
+  return {
+    id,
+    label,
+    detail,
+    status,
+    state: phaseState(status),
+  };
+}
+
+function visibleProgressSteps(steps, terminal) {
+  if (terminal) return steps;
+  let lastIndex = steps.findIndex((step) => step.status === "running");
+  steps.forEach((step, index) => {
+    if (step.status !== "pending") lastIndex = Math.max(lastIndex, index);
+  });
+  if (lastIndex < 0) return steps.slice(0, 1);
+  return steps.slice(0, Math.min(steps.length, lastIndex + 2));
+}
+
+function buildVertexProgress(events, agentStatus) {
+  const vertexEvents = events.filter((event) => event.type === "vertex_progress");
+  const latestVertex = vertexEvents[vertexEvents.length - 1]?.payload || null;
+  const delegated = events.some((event) =>
+    event.type === "ai_exchange"
+    && event.payload?.actor === "deepseek"
+    && event.payload?.target === "vertex"
+  );
+  const shellVertex = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isVertexShell(event));
+  const active = delegated || shellVertex || vertexEvents.length > 0;
+  if (!active) return null;
+
+  const done = latestVertex?.status === "done" || latestVertex?.stage === "done";
+  const filesPayload = latestPayload(events, (event) => event.type === "files_created" && event.payload?.files?.length);
+  const files = filesPayload?.files || latestVertex?.files || [];
+  const fileName = latestVertex?.file || files[0]?.path || files[0]?.name || "";
+  const validationStarted = events.some((event) =>
+    event.type === "web_validation_started"
+    || event.type === "project_validation_started"
+    || event.type === "web_validation_step"
+    || event.type === "project_validation_step"
+  );
+  const validationResult = latestPayload(events, (event) =>
+    event.type === "web_validation_result" || event.type === "project_validation_result"
+  );
+  const validationStatus = validationResult?.status || "";
+  const validationFailed = validationStatus === "failed" || validationStatus === "blocked";
+  const validationDone = ["passed", "skipped"].includes(validationStatus) || done;
+  const hasWriting = vertexEvents.some((event) =>
+    ["writing_file", "creating", "editing", "installing", "executing", "configuring"].includes(event.payload?.stage)
+  ) || files.length > 0;
+  const hasPlanning = vertexEvents.some((event) =>
+    ["starting", "planning"].includes(event.payload?.stage)
+  ) || delegated || shellVertex;
+  const terminal = ["done", "stopped", "error", "idle"].includes(agentStatus) || done;
+
+  const steps = [
+    progressStep(
+      "vertex-delegation",
+      "Delegar ao Vertex",
+      "DeepSeek enviou a parte de codigo para o Vertex CLI.",
+      phaseStatus(active, hasPlanning || hasWriting || done),
+    ),
+    progressStep(
+      "vertex-plan",
+      "Planejar projeto",
+      latestVertex?.stage === "planning" ? latestVertex.message : "Definir estrutura, arquivos e criterios de entrega.",
+      phaseStatus(hasPlanning, hasWriting || validationStarted || done),
+    ),
+    progressStep(
+      "vertex-write",
+      "Criar arquivos",
+      fileName ? `Trabalhando em ${String(fileName).split("/").pop()}.` : files.length ? `${files.length} arquivo(s) sincronizados.` : latestVertex?.message || "Escrever e ajustar a entrega.",
+      phaseStatus(hasWriting, files.length > 0 || validationStarted || done),
+    ),
+    progressStep(
+      "vertex-validate",
+      "Validar entrega",
+      validationResult?.reason || validationResult?.summary || (validationStarted ? "Revisao automatica em andamento." : "Aguardar revisao automatica do Vortax."),
+      phaseStatus(validationStarted, validationDone, validationFailed),
+    ),
+    progressStep(
+      "vertex-return",
+      "Devolver resultado",
+      done ? latestVertex?.message || "Vertex devolveu a entrega ao Vortax." : "A resposta final sera montada apos a revisao.",
+      phaseStatus(done, done),
+    ),
+  ];
+
+  return {
+    doneCount: steps.filter((step) => step.status === "passed").length,
+    steps: visibleProgressSteps(steps, terminal),
+    title: "Trabalho do Vertex",
+    totalCount: steps.length,
+  };
+}
+
 export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
   const now = useNow(busy);
   const preview = useMemo(() => latestPreview(events), [events]);
+  const vertexProgress = useMemo(() => buildVertexProgress(events, agentStatus), [agentStatus, events]);
   const firstEvent = events.find((event) => event.type === "user_message" || event.type === "task_created");
   const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
   const total = livePlan.totalCount || 0;
   const done = livePlan.doneCount || 0;
+  const progressSteps = vertexProgress?.steps || livePlan.visibleSteps || livePlan.steps;
+  const progressTotal = vertexProgress?.totalCount || livePlan.totalCount || 0;
+  const progressDone = vertexProgress?.doneCount || livePlan.doneCount || 0;
   const terminalLabel = agentStatus === "done"
     ? "Pedido concluido"
     : agentStatus === "error"
@@ -303,17 +423,17 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
 
               <div className="computer-progress-card">
                 <div className="computer-progress-head">
-                  <strong>Progresso da tarefa</strong>
-                  <span>{done}/{total || 1}</span>
+                  <strong>{vertexProgress?.title || "Progresso da tarefa"}</strong>
+                  <span>{progressDone}/{progressTotal || 1}</span>
                 </div>
                 <div className="computer-progress-list">
-                  {livePlan.steps.length > 0 ? (
-                    livePlan.steps.map((step) => (
+                  {progressSteps.length > 0 ? (
+                    progressSteps.map((step) => (
                       <div className={`computer-progress-step ${step.state}`} key={step.id}>
                         <span>{stepIcon(step)}</span>
                         <div>
                           <strong>{step.label}</strong>
-                          {step.status === "running" ? <small>{elapsed ? `${elapsed} · ` : ""}{statusLabel(agentStatus)}</small> : null}
+                          <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
                         </div>
                       </div>
                     ))

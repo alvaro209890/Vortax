@@ -37,6 +37,8 @@ class ExactSolverTests(unittest.TestCase):
 
     def test_quick_prompt_router_skips_planner_for_simple_questions(self) -> None:
         self.assertTrue(should_answer_directly("o que e HTML?"))
+        self.assertTrue(should_answer_directly("oi"))
+        self.assertTrue(should_answer_directly("me fale sobre cache em uma frase"))
         self.assertFalse(should_answer_directly("pesquise o preco atual do dolar"))
         self.assertFalse(should_answer_directly("crie um site de restaurante"))
 

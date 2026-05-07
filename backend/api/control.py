@@ -4,8 +4,9 @@ import signal
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
 from services.registry import event_bus, runner_tasks, task_store
 
@@ -79,19 +80,20 @@ def _kill_runner_and_children(task_id: str) -> bool:
 
 
 @router.post("/{task_id}/confirm")
-async def confirm_task(task_id: str, approved: bool = True) -> dict:
-    if not task_store.get(task_id):
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def confirm_task(
+    task_id: str,
+    approved: bool = True,
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
     await event_bus.publish(task_id, "confirmation_result", {"approved": approved})
     return {"ok": True, "approved": approved}
 
 
 @router.post("/{task_id}/stop")
-async def stop_task(task_id: str) -> dict:
+async def stop_task(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
     """Interrompe uma tarefa em execucao: cancela runner, mata subprocessos, limpa estado."""
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+    ensure_task_owner(task_store.get(task_id), current_user)
 
     # Marca como stopped no store (o loop do runner checa is_stopped)
     task_store.stop(task_id)

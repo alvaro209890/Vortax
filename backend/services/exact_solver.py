@@ -43,6 +43,14 @@ ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+SIMPLE_DIRECT_RE = re.compile(
+    r"\b(oi|ola|olá|bom dia|boa tarde|boa noite|obrigad[oa]|valeu|beleza|"
+    r"me fale|fale sobre|conte|explique|resuma|defina|traduza|reescreva|"
+    r"melhore esse texto|corrija esse texto|qual e|qual é|quem e|quem é|"
+    r"o que e|o que é|como funciona|por que|porque)\b",
+    re.IGNORECASE,
+)
+
 ARITHMETIC_SIGNAL_RE = re.compile(r"(\d\s*[-+*/^×÷]\s*\d|\d\s*x\s*\d|=\s*[-+]?\d|[-+]?\d\s*%)", re.IGNORECASE)
 
 _BIN_OPS = {
@@ -108,13 +116,9 @@ def should_answer_directly(text: str) -> bool:
         return True
     if len(value) > 260 or ACTION_RE.search(value):
         return False
-    quick_question = re.search(r"\?$", value) or re.search(
-        r"\b(o que e|o que é|quem e|quem é|como funciona|explique|resuma|defina|"
-        r"qual a diferenca|qual a diferença|bom dia|boa tarde|boa noite|ola|olá|oi)\b",
-        value,
-        re.IGNORECASE,
-    )
-    return bool(quick_question)
+    if SIMPLE_DIRECT_RE.search(value):
+        return True
+    return bool(re.search(r"\?$", value))
 
 
 def _to_float(text: str) -> float:

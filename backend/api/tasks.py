@@ -5,10 +5,11 @@ import io
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
 from database import database
 from services.agent_runner import run_agent_task
@@ -17,6 +18,7 @@ from services.deepseek_client import DeepSeekError, deepseek_configured, request
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_plan_store, task_store
 from services.stream_contract import utc_now
+from services.task_plan_store import direct_response_steps
 from api.files import list_task_workspace_files, list_task_workspace_projects
 from tools.vision import VisionError, vision_tool
 
@@ -41,7 +43,10 @@ MAX_IMAGE_BYTES = 6 * 1024 * 1024
 
 async def _create_live_plan(task_id: str, description: str, *, replan: bool = False) -> list[dict]:
     if should_answer_directly(description):
-        return []
+        steps = task_plan_store.replace_plan(task_id, direct_response_steps(description), description)
+        event_type = "task_plan_replanned" if replan else "task_plan_created"
+        await event_bus.publish(task_id, event_type, {"steps": steps, "direct": True, "fallback": True})
+        return steps
 
     raw_steps: list[dict] = []
     plan_error = ""
@@ -271,8 +276,8 @@ def _format_vision_answer(analysis: dict) -> str:
 
 
 @router.post("/")
-async def create_task(payload: TaskCreate) -> dict:
-    task = task_store.create(payload.description)
+async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(require_auth)) -> dict:
+    task = task_store.create(payload.description, current_user.uid)
     await event_bus.publish(task["id"], "task_created", {"task": task})
     steps = await _create_live_plan(task["id"], task["description"])
     await event_bus.publish(task["id"], "user_message", {"content": task["description"]})
@@ -283,7 +288,11 @@ async def create_task(payload: TaskCreate) -> dict:
 
 
 @router.post("/plan")
-async def create_task_plan(payload: TaskPlanRequest) -> dict:
+async def create_task_plan(
+    payload: TaskPlanRequest,
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    _ = current_user
     try:
         result = await request_task_plan(payload.description)
     except DeepSeekError as exc:
@@ -292,10 +301,12 @@ async def create_task_plan(payload: TaskPlanRequest) -> dict:
 
 
 @router.post("/{task_id}/messages")
-async def create_task_message(task_id: str, payload: TaskMessageCreate) -> dict:
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def create_task_message(
+    task_id: str,
+    payload: TaskMessageCreate,
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
 
     runner = runner_tasks.get(task_id)
     if runner and not runner.done():
@@ -303,15 +314,20 @@ async def create_task_message(task_id: str, payload: TaskMessageCreate) -> dict:
 
     content = payload.content.strip()
     await event_bus.publish(task_id, "user_message", {"content": content})
+    await _create_live_plan(task_id, content, replan=True)
     task_store.update_status(task_id, "queued")
     runner_tasks[task_id] = asyncio.create_task(run_agent_task(task_id, content, task_store, event_bus))
     return {"ok": True, "task_id": task_id}
 
 
 @router.post("/images")
-async def create_image_task(question: str = Form(""), files: list[UploadFile] = File(...)) -> dict:
+async def create_image_task(
+    question: str = Form(""),
+    files: list[UploadFile] = File(...),
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
     normalized_question = _normalize_question(question)
-    task = task_store.create(normalized_question)
+    task = task_store.create(normalized_question, current_user.uid)
     await event_bus.publish(task["id"], "task_created", {"task": task})
     steps = await _create_live_plan(task["id"], normalized_question)
     try:
@@ -326,10 +342,13 @@ async def create_image_task(question: str = Form(""), files: list[UploadFile] = 
 
 
 @router.post("/{task_id}/images")
-async def create_task_images(task_id: str, question: str = Form(""), files: list[UploadFile] = File(...)) -> dict:
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def create_task_images(
+    task_id: str,
+    question: str = Form(""),
+    files: list[UploadFile] = File(...),
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
 
     runner = runner_tasks.get(task_id)
     if runner and not runner.done():
@@ -348,15 +367,13 @@ async def create_task_images(task_id: str, question: str = Form(""), files: list
 
 
 @router.get("/")
-async def list_tasks() -> dict:
-    return {"tasks": task_store.list()}
+async def list_tasks(current_user: AuthUser = Depends(require_auth)) -> dict:
+    return {"tasks": task_store.list(current_user.uid)}
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str) -> dict:
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def get_task(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
+    task = ensure_task_owner(task_store.get(task_id), current_user)
     return {
         "task": task,
         "events": event_bus.history(task_id),
@@ -370,11 +387,12 @@ async def get_task(task_id: str) -> dict:
 
 
 @router.get("/{task_id}/download")
-async def download_task_zip(task_id: str) -> StreamingResponse:
+async def download_task_zip(
+    task_id: str,
+    current_user: AuthUser = Depends(require_auth),
+) -> StreamingResponse:
     """Gera e retorna um ZIP com todos os arquivos criados na conversa."""
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+    task = ensure_task_owner(task_store.get(task_id), current_user)
 
     project_dir = settings.WORKSPACE_PATH / task_id
     if not project_dir.exists() or not project_dir.is_dir():
@@ -409,10 +427,8 @@ async def download_task_zip(task_id: str) -> StreamingResponse:
 
 
 @router.delete("/{task_id}")
-async def delete_task(task_id: str) -> dict:
-    task = task_store.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task nao encontrada")
+async def delete_task(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
 
     task_store.stop(task_id)
 

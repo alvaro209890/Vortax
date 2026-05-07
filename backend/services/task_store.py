@@ -12,6 +12,7 @@ def utc_now() -> str:
 @dataclass
 class TaskRecord:
     id: str
+    user_id: str
     description: str
     status: str
     created_at: str
@@ -24,11 +25,12 @@ class TaskStore:
         self._paused: set[str] = set()
         self._stopped: set[str] = set()
 
-    def create(self, description: str) -> dict:
+    def create(self, description: str, user_id: str) -> dict:
         task_id = str(uuid4())
         now = utc_now()
         record = TaskRecord(
             id=task_id,
+            user_id=user_id,
             description=description.strip(),
             status="queued",
             created_at=now,
@@ -41,8 +43,8 @@ class TaskStore:
     def get(self, task_id: str) -> dict | None:
         return database.get_task(task_id)
 
-    def list(self) -> list[dict]:
-        return database.list_tasks()
+    def list(self, user_id: str) -> list[dict]:
+        return database.list_tasks(user_id)
 
     def update_status(self, task_id: str, status: str, result: str | None = None) -> dict | None:
         return database.update_task(task_id, status, result, utc_now())

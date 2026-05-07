@@ -5,11 +5,12 @@ from pathlib import Path
 
 from api import files as files_api
 from api import tasks as tasks_api
+from auth import AuthUser
 
 
 class FakeTaskStore:
     def get(self, task_id: str) -> dict | None:
-        return {"id": task_id, "description": "test", "status": "done"}
+        return {"id": task_id, "user_id": "test-user", "description": "test", "status": "done"}
 
 
 class FilesApiTests(unittest.TestCase):
@@ -29,6 +30,7 @@ class FilesApiTests(unittest.TestCase):
         tasks_api.settings.WORKSPACE_PATH = self.workspace
         files_api.task_store = FakeTaskStore()
         tasks_api.task_store = FakeTaskStore()
+        self.user = AuthUser(uid="test-user")
 
     def tearDown(self) -> None:
         files_api.settings.WORKSPACE_PATH = self.original_files_workspace
@@ -45,7 +47,7 @@ class FilesApiTests(unittest.TestCase):
         self.assertLess(preview_index, catchall_index)
 
     def test_preview_index_endpoint_targets_generated_index_html(self) -> None:
-        response = asyncio.run(files_api.preview_task_index(self.task_id))
+        response = asyncio.run(files_api.preview_task_index(self.task_id, current_user=self.user))
 
         self.assertEqual(Path(response.path).name, "index.html")
 
@@ -72,7 +74,7 @@ class FilesApiTests(unittest.TestCase):
         self.assertEqual({item["project_name"] for item in nested}, {"App"})
 
     def test_task_zip_download_endpoint_builds_zip_response(self) -> None:
-        response = asyncio.run(tasks_api.download_task_zip(self.task_id))
+        response = asyncio.run(tasks_api.download_task_zip(self.task_id, current_user=self.user))
 
         self.assertEqual(response.media_type, "application/zip")
         self.assertIn("vortax-task-pre.zip", response.headers["content-disposition"])

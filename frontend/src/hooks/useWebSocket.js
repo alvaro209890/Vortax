@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { WS_BASE_URL } from "../lib/api.js";
+import { getAuthToken, WS_BASE_URL } from "../lib/api.js";
 
 export function useWebSocket(taskId) {
   const [events, setEvents] = useState([]);
@@ -13,41 +13,50 @@ export function useWebSocket(taskId) {
       return undefined;
     }
 
-    const socket = new WebSocket(`${WS_BASE_URL}/ws/${taskId}`);
-    setConnectionState("connecting");
+    let socket = null;
+    let cancelled = false;
+    let ping = null;
     setEvents([]);
+    setConnectionState("connecting");
 
-    socket.addEventListener("open", () => setConnectionState("open"));
-    socket.addEventListener("close", () => setConnectionState("closed"));
-    socket.addEventListener("error", () => setConnectionState("error"));
-    socket.addEventListener("message", (message) => {
-      try {
-        const event = JSON.parse(message.data);
-        if (event.type !== "pong") {
-          setEvents((current) => [...current, event]);
+    getAuthToken().then((token) => {
+      if (cancelled) return;
+      const query = token ? `?token=${encodeURIComponent(token)}` : "";
+      socket = new WebSocket(`${WS_BASE_URL}/ws/${taskId}${query}`);
+
+      socket.addEventListener("open", () => setConnectionState("open"));
+      socket.addEventListener("close", () => setConnectionState("closed"));
+      socket.addEventListener("error", () => setConnectionState("error"));
+      socket.addEventListener("message", (message) => {
+        try {
+          const event = JSON.parse(message.data);
+          if (event.type !== "pong") {
+            setEvents((current) => [...current, event]);
+          }
+        } catch {
+          setEvents((current) => [
+            ...current,
+            {
+              type: "error",
+              task_id: taskId,
+              created_at: new Date().toISOString(),
+              payload: { message: "Evento WebSocket invalido" },
+            },
+          ]);
         }
-      } catch {
-        setEvents((current) => [
-          ...current,
-          {
-            type: "error",
-            task_id: taskId,
-            created_at: new Date().toISOString(),
-            payload: { message: "Evento WebSocket invalido" },
-          },
-        ]);
-      }
+      });
+
+      ping = window.setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send("ping");
+        }
+      }, 30000);
     });
 
-    const ping = window.setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send("ping");
-      }
-    }, 30000);
-
     return () => {
-      window.clearInterval(ping);
-      socket.close();
+      cancelled = true;
+      if (ping) window.clearInterval(ping);
+      if (socket) socket.close();
     };
   }, [taskId]);
 

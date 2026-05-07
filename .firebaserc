@@ -1,14 +1,5 @@
 {
   "projects": {
     "default": "notazap-2520f"
-  },
-  "targets": {
-    "notazap-2520f": {
-      "hosting": {
-        "vortax": [
-          "notazap-2520f"
-        ]
-      }
-    }
   }
 }

@@ -1,21 +1,14 @@
 {
   "hosting": {
-    "site": "notazap-2520f",
     "public": "frontend/dist",
     "ignore": [
       "firebase.json",
       "**/.*",
       "**/node_modules/**"
     ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ],
     "headers": [
       {
-        "source": "**/*.@(js|css)",
+        "source": "/assets/**",
         "headers": [
           {
             "key": "Cache-Control",
@@ -24,13 +17,19 @@
         ]
       },
       {
-        "source": "**",
+        "source": "**/*.@(png|jpg|jpeg|gif|webp|svg|ico)",
         "headers": [
           {
-            "key": "X-Content-Type-Options",
-            "value": "nosniff"
+            "key": "Cache-Control",
+            "value": "public,max-age=86400"
           }
         ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
     ]
   }
