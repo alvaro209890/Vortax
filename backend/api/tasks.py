@@ -14,7 +14,7 @@ from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response, request_task_plan
-from services.exact_solver import format_exact_answer, is_exact_prompt, solve_exact_problem
+from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_plan_store, task_store
 from services.stream_contract import utc_now
 from api.files import list_task_workspace_files, list_task_workspace_projects
@@ -40,6 +40,9 @@ MAX_IMAGE_BYTES = 6 * 1024 * 1024
 
 
 async def _create_live_plan(task_id: str, description: str, *, replan: bool = False) -> list[dict]:
+    if should_answer_directly(description):
+        return []
+
     raw_steps: list[dict] = []
     plan_error = ""
     if deepseek_configured():

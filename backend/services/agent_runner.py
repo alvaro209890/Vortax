@@ -101,6 +101,8 @@ def _tool_evidence(action_name: str, result: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _ensure_plan(task_id: str, description: str, bus: EventBus) -> None:
+    if should_answer_directly(description):
+        return
     if task_plan_store.list_steps(task_id):
         return
     steps = task_plan_store.replace_plan(task_id, fallback_steps(description), description)

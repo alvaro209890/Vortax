@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, ImagePlus, X } from "lucide-react";
+import { ArrowUp, Mic, Monitor, Plus, Square, X } from "lucide-react";
 
-export function Composer({ disabled, onSubmit }) {
+export function Composer({ disabled, isBusy = false, onStop, onSubmit, stopping = false }) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
@@ -27,7 +27,7 @@ export function Composer({ disabled, onSubmit }) {
 
   async function submit() {
     const description = value.trim();
-    if ((!description && files.length === 0) || disabled) return;
+    if ((!description && files.length === 0) || disabled || isBusy) return;
     setValue("");
     const selectedFiles = files;
     setFiles([]);
@@ -51,11 +51,12 @@ export function Composer({ disabled, onSubmit }) {
     }
   }
 
-  const canSend = !disabled && (value.trim() || files.length > 0);
+  const canSend = !disabled && !isBusy && (value.trim() || files.length > 0);
+  const inputDisabled = disabled || isBusy;
 
   return (
     <div className="composer-wrapper">
-      <div className={`composer-container ${disabled ? "disabled" : ""}`}>
+      <div className={`composer-container ${disabled ? "disabled" : ""} ${isBusy ? "busy" : ""}`}>
         <AnimatePresence>
           {files.length > 0 && (
             <motion.div
@@ -87,41 +88,40 @@ export function Composer({ disabled, onSubmit }) {
         </AnimatePresence>
         <div className="composer-row">
           <label className="composer-icon-btn" title="Anexar imagem">
-            <ImagePlus size={20} />
-            <input accept="image/png,image/jpeg,image/webp" disabled={disabled} multiple onChange={handleFiles} type="file" />
+            <Plus size={20} />
+            <input accept="image/png,image/jpeg,image/webp" disabled={inputDisabled} multiple onChange={handleFiles} type="file" />
           </label>
           <textarea
             ref={textareaRef}
             aria-label="Mensagem"
-            disabled={disabled}
+            disabled={inputDisabled}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={disabled ? "Backend indisponível..." : "O que você quer que eu faça?"}
+            placeholder={disabled ? "Backend indisponível..." : isBusy ? "Vortax esta trabalhando..." : "Enviar mensagem para Vortax"}
             rows={1}
             value={value}
           />
+          <span className="composer-computer-pill">
+            <Monitor size={14} />
+            Computador do Vortax
+          </span>
+          <button className="composer-voice-btn" disabled={inputDisabled} title="Voz" type="button">
+            <Mic size={17} />
+          </button>
           <motion.button
-            className={`composer-send-btn ${canSend ? "active" : ""}`}
-            whileHover={canSend ? { scale: 1.08 } : {}}
-            whileTap={canSend ? { scale: 0.95 } : {}}
+            className={`composer-send-btn ${canSend || isBusy ? "active" : ""} ${isBusy ? "stop-mode" : ""}`}
+            whileHover={canSend || isBusy ? { scale: 1.08 } : {}}
+            whileTap={canSend || isBusy ? { scale: 0.95 } : {}}
             transition={{ type: "spring", stiffness: 400, damping: 15 }}
-            disabled={!canSend}
-            onClick={submit}
-            title="Enviar"
+            disabled={isBusy ? stopping || !onStop : !canSend}
+            onClick={isBusy ? onStop : submit}
+            title={isBusy ? "Interromper tarefa" : "Enviar"}
             type="button"
           >
-            <ArrowUp size={18} />
+            {isBusy ? <Square size={15} /> : <ArrowUp size={18} />}
           </motion.button>
         </div>
       </div>
-      <motion.span
-        className="composer-hint"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4, duration: 0.3 }}
-      >
-        Pressione Enter para enviar · Shift+Enter para nova linha
-      </motion.span>
     </div>
   );
 }

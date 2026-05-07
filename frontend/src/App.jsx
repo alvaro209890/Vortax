@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, StopCircle, Trash2 } from "lucide-react";
+import { MessageSquarePlus, PanelRightOpen, Trash2 } from "lucide-react";
 
-import { AgentActivity, AiExchangePanel, VertexProgressPanel } from "./components/AgentActivity.jsx";
+import { AiExchangePanel } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
 import { FileList } from "./components/FileList.jsx";
+import { InlineTaskTimeline } from "./components/InlineTaskTimeline.jsx";
 import { MessageList } from "./components/MessageList.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
-import { TaskPlanPanel } from "./components/TaskPlanPanel.jsx";
+import { TaskDetailDrawer } from "./components/TaskDetailDrawer.jsx";
+import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
 import { useTaskEvents } from "./hooks/useTaskEvents.js";
 import { useTaskFiles } from "./hooks/useTaskFiles.js";
+import { useLiveTaskPlan } from "./hooks/useLiveTaskPlan.js";
 import { useTaskSources } from "./hooks/useTaskSources.js";
 import {
   appendTaskMessage,
@@ -26,7 +29,6 @@ import {
   createImageTask,
   deleteTask,
   healthcheck,
-  listProviders,
   listTasks,
   stopTask,
 } from "./lib/api.js";
@@ -93,6 +95,7 @@ export default function App() {
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState(null);
   const [stopping, setStopping] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const {
     activeTask,
     contextState,
@@ -112,6 +115,7 @@ export default function App() {
   const { connectionState, currentEvents } = useTaskEvents(activeTaskId, taskEvents);
   const { error: filesError, files, loading: filesLoading } = useTaskFiles(activeTaskId, currentEvents, initialFiles);
   const { sources } = useTaskSources(activeTaskId, currentEvents, initialSources);
+  const livePlan = useLiveTaskPlan(initialPlan, currentEvents);
 
   const messages = useMemo(() => {
     if (taskLoading) {
@@ -313,111 +317,124 @@ export default function App() {
   return (
     <>
       <ChatShell
-      sidebar={
-        <>
-          <div className="brand">
-            <img className="brand-logo" src="/vortax-logo.png" alt="Vortax" />
-            <div>
-              <strong>Vortax</strong>
-              <span>Agente autonomo</span>
+        sidebar={
+          <>
+            <div className="brand">
+              <img className="brand-logo" src="/vortax-logo.png" alt="Vortax" />
+              <div>
+                <strong>Vortax</strong>
+                <span>Agente autonomo</span>
+              </div>
             </div>
-          </div>
-          <StatusBadge status={backendStatus} label={`Backend ${backendStatus}`} />
+            <StatusBadge status={backendStatus} label={`Backend ${backendStatus}`} />
 
-          <div className="task-list">
-            <div className="task-list-header">
-              <span className="panel-label">Conversas</span>
-              <button onClick={handleNewChat} title="Novo chat" type="button">
-                <MessageSquarePlus size={15} />
-              </button>
-            </div>
-            {tasksLoading ? (
-              <p className="panel-state">Carregando conversas...</p>
-            ) : tasksError ? (
-              <p className="panel-state error">Nao foi possivel carregar conversas.</p>
-            ) : tasks.length === 0 ? (
-              <p className="panel-state">Nenhuma conversa criada.</p>
-            ) : (
-              tasks.map((task) => (
-                <div
-                  className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
-                  key={task.id}
-                  onClick={() => setActiveTaskId(task.id)}
-                >
-                  <div className="task-content">
-                    <span>{task.description}</span>
-                    <small>{task.status}</small>
-                  </div>
-                  <button
-                    className="task-delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTask(task.id);
-                    }}
-                    title="Excluir chat"
-                    type="button"
+            <div className="task-list">
+              <div className="task-list-header">
+                <span className="panel-label">Conversas</span>
+                <button onClick={handleNewChat} title="Novo chat" type="button">
+                  <MessageSquarePlus size={15} />
+                </button>
+              </div>
+              {tasksLoading ? (
+                <p className="panel-state">Carregando conversas...</p>
+              ) : tasksError ? (
+                <p className="panel-state error">Nao foi possivel carregar conversas.</p>
+              ) : tasks.length === 0 ? (
+                <p className="panel-state">Nenhuma conversa criada.</p>
+              ) : (
+                tasks.map((task) => (
+                  <div
+                    className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                    key={task.id}
+                    onClick={() => setActiveTaskId(task.id)}
                   >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </>
-      }
-      main={
-        <>
-          <header className="chat-header">
-            <div className="chat-header-left">
-              <div className="chat-header-icon">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" opacity="0.2" fill="currentColor"/>
-                  <path d="M12 2a10 10 0 0 1 7 17.3M12 2a10 10 0 0 0-7 17.3M12 2v20M12 22a10 10 0 0 1-7-17.3M12 22a10 10 0 0 0 7-17.3"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M12 9v6M9 12h6"/>
-                </svg>
-              </div>
-              <div className="chat-header-text">
-                <span className="chat-header-badge">Agente IA</span>
-                <h1>Crie, pesquise e <mark>execute</mark> tarefas com IA</h1>
-              </div>
+                    <div className="task-content">
+                      <span>{task.description}</span>
+                      <small>{task.status}</small>
+                    </div>
+                    <button
+                      className="task-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTask(task.id);
+                      }}
+                      title="Excluir chat"
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
-            <div className="chat-header-actions">
-              {agentBusy && (
+          </>
+        }
+        main={
+          <>
+            <header className="chat-header">
+              <div className="chat-header-left">
+                <img className="chat-brand-logo" src="/vortax-logo.png" alt="Vortax" />
+                <div className="chat-header-text">
+                  <div className="chat-brand-line">
+                    <strong>Vortax</strong>
+                    <span>Lite</span>
+                  </div>
+                  <small>{activeTask?.description || "Agente autonomo para pesquisar, criar e validar tarefas"}</small>
+                </div>
+              </div>
+              <div className="chat-header-actions">
                 <button
-                  className="stop-btn"
-                  onClick={handleStop}
-                  disabled={stopping}
-                  title="Interromper tarefa"
+                  className="detail-open-btn"
+                  onClick={() => setDetailsOpen(true)}
+                  title="Abrir detalhes"
                   type="button"
                 >
-                  <StopCircle size={16} />
-                  <span>{stopping ? "Parando..." : "Parar"}</span>
+                  <PanelRightOpen size={16} />
+                  <span>Detalhes</span>
                 </button>
-              )}
-              <ContextIndicator context={contextState} />
-              <StatusBadge status={agentStatus} label={agentStatus} />
-            </div>
-          </header>
-          <MessageList isTyping={showTyping} messages={messages} activeSearch={activeSearch} />
-          <AgentActivity events={currentEvents} status={agentStatus} taskDescription={activeTask?.description} />
-          <Composer disabled={backendStatus !== "online" || agentBusy} onSubmit={handleSubmit} />
-        </>
-      }
-      inspector={
-        <>
-          <ScreenView events={currentEvents} connectionState={connectionState} />
-          <DocumentationPanel files={files} taskId={activeTaskId} />
-          <AiExchangePanel events={currentEvents} />
-          <TaskPlanPanel events={currentEvents} initialPlan={initialPlan} />
-          <ActionTimeline events={currentEvents} />
-          <SourceList error={taskError} loading={taskLoading} sources={sources} />
-          <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />
-          <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
-        </>
-      }
+                <ContextIndicator context={contextState} />
+                <StatusBadge status={agentStatus} label={agentStatus} />
+              </div>
+            </header>
+            <MessageList
+              activeSearch={activeSearch}
+              activity={
+                <InlineTaskTimeline
+                  livePlan={livePlan}
+                  showEmpty={false}
+                />
+              }
+              activityVersion={livePlan.planKey}
+              isTyping={showTyping}
+              messages={messages}
+            />
+            <VortaxComputerDock
+              activeTask={activeTask}
+              agentStatus={agentStatus}
+              connectionState={connectionState}
+              events={currentEvents}
+              livePlan={livePlan}
+              onOpenDetails={() => setDetailsOpen(true)}
+            />
+            <Composer
+              disabled={backendStatus !== "online"}
+              isBusy={agentBusy}
+              onStop={handleStop}
+              onSubmit={handleSubmit}
+              stopping={stopping}
+            />
+          </>
+        }
       />
-      <VertexProgressPanel events={currentEvents} taskDescription={activeTask?.description} />
+      <TaskDetailDrawer open={detailsOpen} onClose={() => setDetailsOpen(false)}>
+        <ScreenView events={currentEvents} connectionState={connectionState} />
+        <DocumentationPanel files={files} taskId={activeTaskId} />
+        <AiExchangePanel events={currentEvents} />
+        <ActionTimeline events={currentEvents} />
+        <SourceList error={taskError} loading={taskLoading} sources={sources} />
+        <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />
+      </TaskDetailDrawer>
+      <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
     </>
   );
 }

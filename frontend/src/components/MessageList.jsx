@@ -136,12 +136,12 @@ function MessageDownloads({ downloads = [], taskId }) {
 
 /* ── Message List ────────────────────────────────────────────────── */
 
-export function MessageList({ isTyping = false, messages, activeSearch }) {
+export function MessageList({ activity, activityVersion, isTyping = false, messages, activeSearch }) {
   const endRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isTyping]);
+  }, [messages, isTyping, activityVersion]);
 
   return (
     <motion.div
@@ -198,6 +198,7 @@ export function MessageList({ isTyping = false, messages, activeSearch }) {
           </motion.article>
         ))}
       </AnimatePresence>
+      {activity}
       {isTyping && (
         <motion.article
           className="message assistant typing-message"

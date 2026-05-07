@@ -2,18 +2,30 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
-export function ChatShell({ sidebar, main, inspector }) {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+export function ChatShell({ sidebar, main }) {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
-    <div className={`app-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+    <div className={`app-shell manus-layout ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.button
+            aria-label="Fechar conversas"
+            className="sidebar-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            type="button"
+          />
+        )}
+      </AnimatePresence>
       <motion.aside
         className="sidebar"
         animate={{
-          width: isSidebarOpen ? "280px" : "0px",
+          x: isSidebarOpen ? 0 : -320,
+          width: "300px",
           opacity: isSidebarOpen ? 1 : 0,
-          padding: isSidebarOpen ? "24px" : "0px",
-          borderWidth: isSidebarOpen ? "1px" : "0px",
         }}
         transition={{
           type: "spring",
@@ -52,7 +64,6 @@ export function ChatShell({ sidebar, main, inspector }) {
         </AnimatePresence>
         {main}
       </main>
-      <aside className="inspector">{inspector}</aside>
     </div>
   );
 }
