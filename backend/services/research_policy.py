@@ -3,32 +3,41 @@ from urllib.parse import urlparse
 
 
 STOPWORDS = {
-    "a",
-    "as",
-    "ao",
-    "aos",
-    "com",
-    "da",
-    "das",
-    "de",
-    "do",
-    "dos",
-    "e",
-    "em",
-    "na",
-    "nas",
-    "no",
-    "nos",
-    "o",
-    "os",
-    "para",
-    "por",
-    "que",
-    "qual",
-    "quais",
-    "um",
-    "uma",
+    "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos",
+    "e", "em", "na", "nas", "no", "nos", "o", "os", "para", "por",
+    "que", "qual", "quais", "um", "uma",
 }
+
+# Padroes para deteccao de pedidos que se beneficiariam de pesquisa previa
+SUBJECTIVE_DESIGN_PATTERNS = (
+    r"\b(modern[oa]|profissiona[l|is]|bonit[oa]|atrativ[oa]|elegante|"
+    r"sofisticad[oa]|contemporane[oa]|estilos[oa]|luxuoso|minimalist[oa])\b"
+)
+
+TREND_PATTERNS = (
+    r"\b(tendencias?|tendências?|atual|atualmente|lançamento|"
+    r"novo|nova|novos|novas|últimos|ultimos|recém|recem)\b"
+)
+
+VAGUE_TECH_PATTERNS = (
+    r"\b(react|vue|angular|next|nuxt|node|express|django|flask)\b(?!\s*(?:v?\d+|version|versão|com\s+typescript))"
+)
+
+QUALITY_AMBIGUITY_PATTERNS = (
+    r"\b(responsivo|otimizad[oa]|performatic[oa]|escalável|escalavel|"
+    r"acessível|acessivel|seguro|rápido|rapido|leve|robust[oa])\b"
+)
+
+SECTOR_PATTERNS = (
+    r"\b(ecommerce|e-commerce|loja\s+virtual|saas|landing\s*page|"
+    r"portfólio|portfolio|blog|sistema\s+web|plataforma|marketplace|"
+    r"aplicativo|app|dashboard|painel|site\s+institucional)\b"
+)
+
+DEVELOPMENT_DESIGN_SOURCES = (
+    "dribbble", "behance", "awwwards", "siteinspire", "referencia",
+    "exemplo", "inspiração", "inspiracao", "ui design", "ux design",
+)
 
 FRESHNESS_PATTERNS = (
     r"\batual(?:izado|izada|mente)?\b",
@@ -237,4 +246,101 @@ def cross_check_status(query: str, sources: list[dict]) -> dict[str, object]:
         "satisfied": len(relevant) >= required,
         "sources": relevant,
         "divergence": divergence,
+    }
+
+
+def _extract_project_type(text: str) -> str | None:
+    """Extrai o tipo de projeto do texto (ex: 'site', 'dashboard', 'api')."""
+    lowered = text.lower()
+    types = re.findall(SECTOR_PATTERNS, lowered)
+    if types:
+        return types[0]
+    for pattern in (r"\bsite\b", r"\bapi\b", r"\bscript\b", r"\bsistema\b", r"\bapp\b", r"\bcli\b"):
+        match = re.search(pattern, lowered)
+        if match:
+            return match.group(0)
+    return None
+
+
+def _extract_research_keywords(text: str) -> list[str]:
+    """Extrai termos-chave do pedido para montar queries de pesquisa."""
+    lowered = text.lower()
+    keywords: list[str] = []
+    for match in re.finditer(
+        r"\b(react|vue|angular|node|python|javascript|typescript|html|css|next|nuxt|vite|tailwind|bootstrap)\b",
+        lowered,
+    ):
+        tech = match.group(0).strip()
+        if tech not in keywords:
+            keywords.append(tech)
+    return keywords[:5]
+
+
+def software_research_profile(text: str) -> dict:
+    """Analisa se um pedido de criacao de software se beneficiaria de pesquisa previa.
+
+    Retorna dict com:
+    - is_software_request: bool
+    - requires_pre_research: bool — True se pesquisa previa e altamente recomendada
+    - reasons: list[str] — motivos para a recomendacao
+    - research_queries: list[str] — queries sugeridas para pesquisa
+    - keywords: list[str] — termos-chave extraidos
+    - project_type: str | None
+    """
+    lowered = text.lower()
+
+    is_software_request = all(
+        any(re.search(pattern, lowered, re.IGNORECASE) for pattern in group)
+        for group in (DEVELOPMENT_PATTERNS[:1], DEVELOPMENT_PATTERNS[1:])
+    )
+    if not is_software_request:
+        return {
+            "is_software_request": False,
+            "requires_pre_research": False,
+            "reasons": [],
+            "research_queries": [],
+            "keywords": [],
+            "project_type": None,
+        }
+
+    reasons: list[str] = []
+    if re.search(SUBJECTIVE_DESIGN_PATTERNS, lowered):
+        reasons.append("pedido menciona atributos subjetivos de design")
+    if re.search(TREND_PATTERNS, lowered):
+        reasons.append("pedido menciona tendencias ou atualidade")
+    if re.search(VAGUE_TECH_PATTERNS, lowered):
+        reasons.append("pedido menciona framework sem especificar versao ou detalhes")
+    if re.search(QUALITY_AMBIGUITY_PATTERNS, lowered):
+        reasons.append("pedido usa termos de qualidade ambiguos que se beneficiam de contexto")
+
+    project_type = _extract_project_type(text)
+    keywords = _extract_research_keywords(text)
+
+    research_queries: list[str] = []
+    year = "2026"
+    base = project_type or "site web"
+    if reasons:
+        research_queries.append(f"tendencias {base} {year}")
+        research_queries.append(f"design {base} exemplos {year}")
+        if any("design" in r for r in reasons):
+            research_queries.append(f"melhores praticas {base} {year}")
+    if keywords:
+        tech_part = "+".join(keywords[:3])
+        research_queries.append(f"{base} {tech_part} {year}")
+
+    # Remove duplicatas mantendo ordem
+    seen: set[str] = set()
+    unique_queries: list[str] = []
+    for q in research_queries:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+
+    return {
+        "is_software_request": True,
+        "requires_pre_research": len(reasons) >= 1,
+        "reasons": reasons,
+        "research_queries": unique_queries[:3],
+        "keywords": keywords,
+        "project_type": project_type,
     }

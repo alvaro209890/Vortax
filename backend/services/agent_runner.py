@@ -471,6 +471,117 @@ async def _wait_if_paused_or_stopped(task_id: str, store: TaskStore, bus: EventB
     return True
 
 
+async def _inject_pre_research_if_needed(
+    task_id: str,
+    description: str,
+    history: list[dict[str, str]],
+    bus: EventBus,
+) -> list[dict[str, str]]:
+    """Analisa o pedido e, se for criacao de software viavel para pesquisa, executa
+    pesquisa web automatica e alimenta o historico para o DeepSeek usar ao planejar."""
+    from services.research_policy import relevant_sources_for_query, software_research_profile
+
+    profile = software_research_profile(description)
+    if not profile.get("is_software_request") or not profile.get("requires_pre_research"):
+        return history
+
+    # Verifica se o historico ja tem resultados de pesquisa (evita repetir)
+    for msg in history:
+        content = str(msg.get("content") or "")
+        if "Resultado da ferramenta:" in content and "browser_google_search" in content:
+            return history
+
+    research_queries = profile.get("research_queries", [])
+    if not research_queries:
+        return history
+
+    # Verifica se ja ha fontes relevantes salvas para esta task
+    existing_sources = database.list_sources(task_id)
+    if existing_sources:
+        relevant = relevant_sources_for_query(description, existing_sources, limit=3)
+        if len(relevant) >= 2:
+            return _history_with_research_context(task_id, history)
+
+    await bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "thinking", "label": "Pesquisando referencias antes de criar"},
+    )
+
+    pesquisa_feita = False
+    for query in research_queries[:2]:
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Pesquisando referencias e tendencias",
+                "detail": f"Buscando: {query}",
+                "tool": "browser_google_search",
+            },
+        )
+        try:
+            from tools.tool_executor import execute_tool
+
+            search_result = await execute_tool(
+                "browser_google_search",
+                {"query": query, "hl": "pt-BR"},
+                task_id=task_id,
+                bus=bus,
+                description=f"Pesquisa automatica de referencias: {query}",
+            )
+            if search_result.get("success"):
+                pesquisa_feita = True
+                data = search_result.get("data", {})
+                results = data.get("results", [])
+                if results:
+                    best = results[0]
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Abrindo referencia",
+                            "detail": f"Abrindo: {best.get('title') or best.get('href', 'resultado')}",
+                            "tool": "browser_navigate",
+                        },
+                    )
+                    await execute_tool(
+                        "browser_navigate",
+                        {"url": best.get("href")},
+                        task_id=task_id,
+                        bus=bus,
+                        description="Abrindo melhor resultado da pesquisa",
+                    )
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Extraindo referencia",
+                            "detail": "Extraindo conteudo da pagina de referencia",
+                            "tool": "browser_extract_article",
+                        },
+                    )
+                    await execute_tool(
+                        "browser_extract_article",
+                        {},
+                        task_id=task_id,
+                        bus=bus,
+                        description="Extraindo conteudo da referencia",
+                    )
+        except Exception:
+            pass  # Falha na pesquisa nao deve bloquear o fluxo
+
+    if pesquisa_feita:
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Pesquisa de referencias concluida",
+                "detail": "Dados coletados. O DeepSeek usara as referencias ao planejar a criacao com Vertex.",
+            },
+        )
+    return _history_with_research_context(task_id, history)
+
+
 async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
     if not deepseek_configured():
         history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
@@ -502,6 +613,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         if should_answer_directly(latest_prompt):
             await _answer_simple_prompt(task_id, latest_prompt, history, store, bus)
             return
+
+        # Pesquisa previa automatica antes do loop ReAct
+        history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
 
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):
