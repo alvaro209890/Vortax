@@ -390,7 +390,13 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
         detail = snippet or excerpt
         lines.append(f"- [{source_type} {score}/100] {title}: {source.get('url')}" + (f" — {detail[:520]}" if detail else ""))
     source_context = (
-        "Fontes ja abertas e salvas nesta conversa. Reutilize antes de pesquisar de novo quando responder ao mesmo tema; "
+        "Fontes ja abertas e salvas nesta conversa. IMPORTANTE: Se voce for criar software com Vertex, "
+        "USE estas fontes para enriquecer o prompt. Extraia destas fontes: tendencias de design, exemplos "
+        "de layout, paleta de cores, estrutura de navegacao, tecnologias recomendadas e boas praticas. "
+        "Monte um prompt detalhado para o Vertex que inclua referencias concretas extraidas das fontes "
+        "(ex: 'crie um site inspirado nas referencias de [URL], usando paleta de cores similar, layout com "
+        "hero section, navegacao superior, secao de depoimentos e rodape com contato'). "
+        "Reutilize antes de pesquisar de novo quando responder ao mesmo tema; "
         "se precisar de informacao atual, controversa ou insuficiente, busque fontes adicionais. "
         "Quando browser_google_search retornar from_conversation_cache=true, nao use browser_click_link_by_index; use as evidencias salvas ou navegue direto pela URL se precisar reler.\n"
         + "\n".join(lines)
