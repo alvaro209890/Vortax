@@ -158,6 +158,46 @@ function MessageArticle({ message }) {
   );
 }
 
+function ActivityArticle({ children }) {
+  if (!children) return null;
+  return (
+    <motion.article
+      className="message assistant progress-message"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ type: "spring", stiffness: 210, damping: 24 }}
+      layout
+    >
+      <div className="message-avatar">
+        <Sparkles size={18} />
+      </div>
+      <div className="message-content">
+        <div className="message-role">Vortax trabalhando</div>
+        {children}
+      </div>
+    </motion.article>
+  );
+}
+
+function SearchActivityArticle({ activeSearch }) {
+  if (!activeSearch) return null;
+  return (
+    <ActivityArticle>
+      <div className="search-animation-container inline-search-activity">
+        <div className="search-radar">
+          <div className="radar-sweep"></div>
+          <Globe2 size={24} className="radar-icon" />
+        </div>
+        <div className="search-details">
+          <span className="search-query">"{activeSearch.query}"</span>
+          <span className="search-status">Buscando fontes para melhorar a entrega...</span>
+        </div>
+      </div>
+    </ActivityArticle>
+  );
+}
+
 /* ── Downloads ───────────────────────────────────────────────────── */
 
 function MessageDownloads({ downloads = [], taskId }) {
@@ -211,7 +251,16 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
             <MessageArticle key={message.id} message={message} />
           ))}
         </AnimatePresence>
-        {activity}
+        <AnimatePresence mode="popLayout">
+          {activity ? (
+            <ActivityArticle key="activity">
+              {activity}
+            </ActivityArticle>
+          ) : null}
+          {activeSearch ? (
+            <SearchActivityArticle activeSearch={activeSearch} key={`search-${activeSearch.query}`} />
+          ) : null}
+        </AnimatePresence>
         <AnimatePresence mode="popLayout">
           {afterActivity.map((message) => (
             <MessageArticle key={message.id} message={message} />
@@ -233,31 +282,6 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
                 <span />
                 <span />
                 <span />
-              </div>
-            </div>
-          </motion.article>
-        )}
-        {activeSearch && (
-          <motion.article
-            className="message assistant search-message"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", stiffness: 200, damping: 22 }}
-          >
-            <div className="message-avatar">
-              <Sparkles size={18} />
-            </div>
-            <div className="message-content">
-              <div className="message-role">Vortax pesquisando...</div>
-              <div className="search-animation-container">
-                <div className="search-radar">
-                  <div className="radar-sweep"></div>
-                  <Globe2 size={24} className="radar-icon" />
-                </div>
-                <div className="search-details">
-                  <span className="search-query">"{activeSearch.query}"</span>
-                  <span className="search-status">Buscando em milhares de fontes...</span>
-                </div>
               </div>
             </div>
           </motion.article>

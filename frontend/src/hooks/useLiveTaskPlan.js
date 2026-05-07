@@ -129,6 +129,7 @@ export function useLiveTaskPlan(initialPlan, events) {
       failedCount,
       hasSteps: steps.length > 0,
       isDirect: meta.direct,
+      isTerminal: terminal,
       latestProgress,
       percent,
       planKey,

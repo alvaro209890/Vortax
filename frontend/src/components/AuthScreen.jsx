@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, LockKeyhole, Mail, Sparkles, UserRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, LockKeyhole, Mail, MessageSquareText, Sparkles, UserRound } from "lucide-react";
 
 import { useAuth } from "../auth/AuthProvider.jsx";
 
@@ -64,15 +64,25 @@ export function AuthScreen() {
           transition={{ type: "spring", stiffness: 160, damping: 22 }}
         >
           <img src="/vortax-logo.png" alt="Vortax" />
-          <div>
-            <span>Agente autonomo</span>
-            <h1>Entre no seu workspace Vortax.</h1>
-            <p>Conversas, arquivos e entregas ficam separados para cada usuario.</p>
+          <div className="auth-hero-copy">
+            <span>Seu assistente pessoal</span>
+            <h1>Transforme pedidos em entregas prontas.</h1>
+            <p>Converse com o Vortax para criar, pesquisar, organizar ideias e acompanhar cada resposta com clareza.</p>
           </div>
-          <div className="auth-capabilities">
-            <span><Sparkles size={15} /> Planejamento vivo</span>
-            <span><LockKeyhole size={15} /> Firebase Auth</span>
-            <span><UserRound size={15} /> Chats privados</span>
+          <div className="auth-prompt-preview" aria-hidden="true">
+            <div className="auth-prompt user">
+              <MessageSquareText size={15} />
+              <span>Crie uma pagina bonita para meu negocio</span>
+            </div>
+            <div className="auth-prompt assistant">
+              <Sparkles size={15} />
+              <span>Claro. Vou montar uma proposta e entregar os arquivos.</span>
+            </div>
+          </div>
+          <div className="auth-benefits">
+            <span><CheckCircle2 size={15} /> Comece em segundos</span>
+            <span><Sparkles size={15} /> Veja o progresso</span>
+            <span><LockKeyhole size={15} /> Historico privado</span>
           </div>
         </motion.div>
       </section>
@@ -94,7 +104,7 @@ export function AuthScreen() {
 
         <div className="auth-card-head">
           <strong>{registering ? "Crie sua conta" : "Bem-vindo de volta"}</strong>
-          <span>{registering ? "Configure seu acesso em poucos segundos." : "Acesse seus chats e projetos salvos."}</span>
+          <span>{registering ? "Guarde suas conversas e continue de onde parou." : "Entre para acessar suas conversas e novas entregas."}</span>
         </div>
 
         <button className="auth-google-btn" disabled={submitting} onClick={handleGoogle} type="button">

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Check,
-  ChevronDown,
   Circle,
   Code2,
+  FileCode2,
+  FolderTree,
   Globe2,
   Loader2,
   Maximize2,
@@ -47,6 +48,65 @@ function statusLabel(status) {
   if (status === "stopped") return "Interrompido";
   if (["queued", "thinking", "executing", "running"].includes(status)) return "Pensando";
   return "Pronto";
+}
+
+const vertexStageLabels = {
+  starting: "Preparando ambiente",
+  planning: "Planejando arquitetura",
+  creating: "Criando estrutura",
+  writing_file: "Escrevendo arquivo",
+  editing: "Refinando codigo",
+  reading_file: "Lendo contexto",
+  installing: "Instalando dependencias",
+  configuring: "Configurando projeto",
+  executing: "Executando comandos",
+  validating: "Validando preview",
+  done: "Entrega pronta",
+  error: "Corrigindo falha",
+};
+
+const vertexStageDescriptions = {
+  starting: "Abrindo a sessao do Vertex na pasta da conversa.",
+  planning: "Separando requisitos em arquivos, componentes e validacoes.",
+  creating: "Montando a base do projeto antes de editar detalhes.",
+  writing_file: "Aplicando alteracoes em arquivos reais do workspace.",
+  editing: "Ajustando layout, estados e comportamento.",
+  reading_file: "Conferindo arquivos para decidir o proximo ajuste.",
+  installing: "Preparando pacotes ou scripts necessarios.",
+  configuring: "Ajustando configs, rotas ou comandos do projeto.",
+  executing: "Rodando comandos e acompanhando a saida do terminal.",
+  validating: "Abrindo o resultado e procurando problemas visuais.",
+  done: "Arquivos salvos e resposta final pronta para o chat.",
+  error: "A execucao retornou algo que precisa de correcao.",
+};
+
+function fileName(value) {
+  return String(value || "").split(/[\\/]/).filter(Boolean).pop() || "";
+}
+
+function compactCommand(command = "") {
+  const value = String(command).trim().replace(/^cd\s+[^&]+\s*&&\s*/, "");
+  if (!value) return "vertex --workspace tarefa";
+  if (/^vertex\b/.test(value)) return "vertex --workspace tarefa";
+  return value.length > 72 ? `${value.slice(0, 69)}...` : value;
+}
+
+function languageForFile(name = "") {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".jsx") || lower.endsWith(".tsx")) return "React";
+  if (lower.endsWith(".js") || lower.endsWith(".ts")) return "JavaScript";
+  if (lower.endsWith(".css") || lower.endsWith(".scss")) return "CSS";
+  if (lower.endsWith(".html")) return "HTML";
+  if (lower.endsWith(".py")) return "Python";
+  if (lower.endsWith(".json")) return "JSON";
+  if (lower.endsWith(".md")) return "Markdown";
+  return "Codigo";
+}
+
+function normalizeFiles(files = []) {
+  return files
+    .map((item) => (typeof item === "string" ? item : item?.path || item?.name || ""))
+    .filter(Boolean);
 }
 
 function stepIcon(step) {
@@ -139,7 +199,7 @@ function latestPreview(events) {
   return { label: "Ambiente pronto", mode: "idle", using: "Computador" };
 }
 
-function ComputerPreview({ preview }) {
+function ComputerPreview({ preview, snapshot }) {
   if (preview.image) {
     return (
       <div className="computer-preview image">
@@ -157,12 +217,76 @@ function ComputerPreview({ preview }) {
         <span />
         <span />
       </div>
-      <small>{preview.file ? preview.file.split("/").pop() : preview.label}</small>
+      <small>{snapshot?.activeFile || fileName(preview.file) || preview.label}</small>
     </div>
   );
 }
 
-function ComputerStage({ preview }) {
+function CodingWorkspace({ snapshot }) {
+  return (
+    <div className="computer-coding-workspace">
+      <div className="computer-ide-topbar">
+        <div className="computer-window-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <span className="computer-ide-title">
+          <Code2 size={13} />
+          Vertex Workspace
+        </span>
+        <span className={`computer-ide-status ${snapshot.status === "done" ? "done" : "running"}`}>
+          {snapshot.status === "done" ? "salvo" : "ao vivo"}
+        </span>
+      </div>
+      <div className="computer-ide-body">
+        <aside className="computer-file-tree">
+          <div className="computer-file-tree-head">
+            <FolderTree size={12} />
+            projeto
+          </div>
+          {snapshot.files.map((path) => {
+            const name = fileName(path);
+            return (
+              <span className={name === snapshot.activeFile ? "active" : ""} key={path}>
+                <FileCode2 size={12} />
+                {name}
+              </span>
+            );
+          })}
+        </aside>
+        <main className="computer-code-editor">
+          <div className="computer-editor-tabs">
+            <span className="active">{snapshot.activeFile}</span>
+            <small>{snapshot.language}</small>
+          </div>
+          <div className="computer-code-lines" aria-hidden="true">
+            {snapshot.codeLines.map((line, index) => (
+              <div key={`${line}-${index}`}>
+                <em>{String(index + 1).padStart(2, "0")}</em>
+                <span>{line}</span>
+              </div>
+            ))}
+          </div>
+        </main>
+      </div>
+      <div className="computer-terminal-pane">
+        <div className="computer-terminal-title">
+          <Terminal size={12} />
+          terminal
+          <small>{snapshot.stageLabel}</small>
+        </div>
+        <div className="computer-terminal-lines">
+          {snapshot.terminalLines.map((line, index) => (
+            <span className={line.tone} key={`${line.text}-${index}`}>{line.text}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ComputerStage({ preview, snapshot }) {
   if (preview.image) {
     return (
       <div className="computer-stage browser-live">
@@ -197,24 +321,9 @@ function ComputerStage({ preview }) {
   return (
     <div className={`computer-stage ${preview.mode}`}>
       <div className="computer-stage-address">
-        {preview.mode === "editor" ? "Editor do Vertex" : preview.mode === "terminal" ? "Terminal" : "Computador do Vortax"}
+        {snapshot.command}
       </div>
-      <div className="computer-editor-page">
-        <div className="computer-editor-sidebar">
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="computer-editor-code">
-          <strong>{preview.file ? preview.file.split("/").pop() : preview.label}</strong>
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
+      <CodingWorkspace snapshot={snapshot} />
     </div>
   );
 }
@@ -236,6 +345,68 @@ function phaseState(status) {
 function latestPayload(events, predicate) {
   const event = latestEvent(events, predicate);
   return event?.payload || null;
+}
+
+function buildCodingSnapshot(events, preview) {
+  const vertexEvents = events.filter((event) => event.type === "vertex_progress");
+  const latestVertex = vertexEvents[vertexEvents.length - 1]?.payload || {};
+  const filesPayload = latestPayload(events, (event) => event.type === "files_created" && event.payload?.files?.length);
+  const realFiles = normalizeFiles(latestVertex.files?.length ? latestVertex.files : filesPayload?.files || []);
+  const lastShellCall = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run");
+  const lastShellResult = latestEvent(events, (event) => event.type === "tool_result" && event.payload?.name === "shell_run");
+  const hasCodingActivity = vertexEvents.length > 0 || Boolean(lastShellCall) || realFiles.length > 0;
+  const activeFile = fileName(latestVertex.file || realFiles[0]) || (hasCodingActivity ? "App.jsx" : "");
+  const stage = hasCodingActivity ? latestVertex.stage || "executing" : preview.mode || "idle";
+  const shellEvents = events
+    .filter((event) => event.type === "shell_stdout" || event.type === "shell_stderr")
+    .slice(-5);
+  const validation = latestPayload(events, (event) =>
+    event.type === "web_validation_result" || event.type === "project_validation_result"
+  );
+  const files = realFiles.length
+    ? realFiles.slice(0, 5)
+    : ["src/App.jsx", "src/index.css", "package.json", "README.md"];
+  const status = latestVertex.status || (lastShellResult ? "done" : lastShellCall ? "running" : "idle");
+  const stageLabel = hasCodingActivity ? vertexStageLabels[stage] || "Programando" : preview.label || "Computador pronto";
+  const stageDetail = latestVertex.message
+    || validation?.summary
+    || validation?.reason
+    || vertexStageDescriptions[stage]
+    || "Acompanhando a sessao de desenvolvimento.";
+  const command = hasCodingActivity ? compactCommand(lastShellCall?.payload?.params?.command) : "Computador do Vortax";
+  const terminalLines = shellEvents.length
+    ? shellEvents.map((event) => ({
+      tone: event.type === "shell_stderr" ? "warn" : "normal",
+      text: String(event.payload?.line || "").replace(/\s+/g, " ").slice(0, 110),
+    }))
+    : [
+      { tone: "muted", text: `$ ${command}` },
+      { tone: "normal", text: `${stageLabel.toLowerCase()}...` },
+      { tone: "normal", text: activeFile ? `editando ${activeFile}` : "sincronizando arquivos" },
+      { tone: validation?.status === "failed" ? "warn" : "ok", text: validation?.status ? `validacao: ${validation.status}` : "aguardando proximo evento" },
+    ];
+
+  const codeLines = [
+    "const task = await vortax.readContext();",
+    `open("${activeFile}")`,
+    "applyChanges({ focused: true });",
+    validation?.status === "failed" ? "fixVisualIssues(report);" : "runQualityCheck();",
+    "saveWorkspace();",
+  ];
+
+  return {
+    activeFile,
+    command,
+    files,
+    hasCodingActivity,
+    language: languageForFile(activeFile),
+    stage,
+    stageDetail,
+    stageLabel,
+    status,
+    terminalLines,
+    codeLines,
+  };
 }
 
 function progressStep(id, label, detail, status) {
@@ -340,6 +511,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
   const now = useNow(busy);
   const preview = useMemo(() => latestPreview(events), [events]);
+  const codingSnapshot = useMemo(() => buildCodingSnapshot(events, preview), [events, preview]);
   const vertexProgress = useMemo(() => buildVertexProgress(events, agentStatus), [agentStatus, events]);
   const firstEvent = events.find((event) => event.type === "user_message" || event.type === "task_created");
   const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
@@ -355,14 +527,19 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
       : agentStatus === "stopped"
         ? "Tarefa interrompida"
         : "";
-  const current = terminalLabel || livePlan.currentStep?.label || preview.label || activeTask?.description || "Computador do Vortax";
+  const current = terminalLabel
+    || (codingSnapshot.hasCodingActivity ? codingSnapshot.stageLabel : "")
+    || livePlan.currentStep?.label
+    || preview.label
+    || activeTask?.description
+    || "Computador do Vortax";
 
   if (!activeTask && !events.length && !livePlan.hasSteps) return null;
 
   return (
     <section className={`vortax-computer-dock ${expanded ? "expanded" : ""}`}>
       <button className="computer-dock-bar" onClick={() => setExpanded((value) => !value)} type="button">
-        <ComputerPreview preview={preview} />
+        <ComputerPreview preview={preview} snapshot={codingSnapshot} />
         <div className="computer-dock-main">
           <div>
             <span className="computer-live-dot" />
@@ -398,7 +575,11 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
                   <strong>Computador do Vortax</strong>
                   <span>
                     {preview.mode === "search" || preview.mode === "browser" ? <Globe2 size={14} /> : <Monitor size={14} />}
-                    Vortax esta usando o {preview.using}
+                    {preview.image
+                      ? "Tela real do navegador"
+                      : preview.mode === "search" || preview.mode === "browser"
+                        ? `Vortax esta usando o ${preview.using}`
+                        : codingSnapshot.stageDetail}
                   </span>
                 </div>
                 <div className="computer-side-actions">
@@ -411,7 +592,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
                 </div>
               </header>
 
-              <ComputerStage preview={preview} />
+              <ComputerStage preview={preview} snapshot={codingSnapshot} />
 
               <div className="computer-live-controls">
                 <span>

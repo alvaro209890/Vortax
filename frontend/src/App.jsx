@@ -40,7 +40,7 @@ const welcomeMessage = {
   content: "Descreva uma tarefa e acompanhe o Vortax pesquisar, criar, revisar e entregar o resultado.",
 };
 
-function buildMessages(task, events) {
+function buildMessages(task, events, responseReady = true) {
   if (!task) return [welcomeMessage];
 
   // So mostra mensagens do assistant apos o agente comecar a executar de fato
@@ -52,8 +52,10 @@ function buildMessages(task, events) {
   const assistantOk = (event, index) => {
     if (event.type === "user_message") return true;
     if (event.type === "assistant_message_done" || event.type === "assistant_message_delta") {
-      // So mostra se veio depois do agente comecar a trabalhar
-      return firstProgressIndex >= 0 && index > firstProgressIndex;
+      if (!responseReady) return false;
+      // So mostra se veio depois do agente comecar a trabalhar; conversas antigas
+      // sem eventos de progresso continuam exibindo a resposta normalmente.
+      return firstProgressIndex < 0 || index > firstProgressIndex;
     }
     return false;
   };
@@ -118,6 +120,7 @@ export default function App() {
   const { error: filesError, files, loading: filesLoading } = useTaskFiles(activeTaskId, currentEvents, initialFiles);
   const { sources } = useTaskSources(activeTaskId, currentEvents, initialSources);
   const livePlan = useLiveTaskPlan(initialPlan, currentEvents);
+  const agentBusy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
 
   const messages = useMemo(() => {
     if (taskLoading) {
@@ -126,9 +129,9 @@ export default function App() {
     if (taskError) {
       return [{ id: "task-error", role: "assistant", content: "Nao foi possivel carregar esta conversa." }];
     }
-    return buildMessages(activeTask, currentEvents);
-  }, [activeTask, currentEvents, taskError, taskLoading]);
-  const agentBusy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
+    const responseReady = !agentBusy || livePlan.percent >= 100 || livePlan.isTerminal;
+    return buildMessages(activeTask, currentEvents, responseReady);
+  }, [activeTask, agentBusy, currentEvents, livePlan.isTerminal, livePlan.percent, taskError, taskLoading]);
   const showTyping = useMemo(
     () => shouldShowTyping(activeTask, currentEvents, agentBusy),
     [activeTask, agentBusy, currentEvents],
@@ -442,12 +445,12 @@ export default function App() {
             </header>
             <MessageList
               activeSearch={activeSearch}
-              activity={
+              activity={livePlan.hasSteps ? (
                 <InlineTaskTimeline
                   livePlan={livePlan}
                   showEmpty={false}
                 />
-              }
+              ) : null}
               activityVersion={livePlan.planKey}
               isTyping={showTyping}
               messages={messages}
