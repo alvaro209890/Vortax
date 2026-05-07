@@ -15,7 +15,7 @@ def estimate_text_tokens(text: str) -> int:
     cleaned = " ".join(str(text or "").split())
     if not cleaned:
         return 0
-    # Same practical fallback used in the Vertex stack when tokenizer data is not available.
+    # Same practical fallback used in the code-agent stack when tokenizer data is not available.
     return max(1, len(cleaned) // 4)
 
 

@@ -330,10 +330,11 @@ def preferred_markdown_for_pdf(task_id: str, pdf_path: str | None = None) -> str
     return candidates[0]
 
 
-def document_context_for_vertex(task_id: str, prompt: str, files: list[dict[str, Any]], sources: list[dict[str, Any]]) -> str:
+def document_context_for_code_agent(task_id: str, prompt: str, files: list[dict[str, Any]], sources: list[dict[str, Any]]) -> str:
     sections: list[str] = []
+    quality_sources = [s for s in sources if int(s.get("quality_score") or 0) >= 50]
     relevant_sources = []
-    for source in sources[:8]:
+    for source in quality_sources[:3]:
         title = str(source.get("title") or source.get("url") or "").strip()
         url = str(source.get("url") or "").strip()
         text = str(source.get("extracted_text") or source.get("snippet") or "").strip()
@@ -341,7 +342,7 @@ def document_context_for_vertex(task_id: str, prompt: str, files: list[dict[str,
             continue
         relevant_sources.append(
             f"- [{source.get('source_type') or 'web'} {int(source.get('quality_score') or 0)}/100] {title}: {url}"
-            + (f"\n  Trecho: {text[:700]}" if text else "")
+            + (f"\n  Trecho: {text[:300]}" if text else "")
         )
     if relevant_sources:
         sections.append("FONTES_PESQUISADAS:\n" + "\n".join(relevant_sources))
@@ -352,7 +353,7 @@ def document_context_for_vertex(task_id: str, prompt: str, files: list[dict[str,
         if is_previewable_document(str(file.get("path") or "")) and not str(file.get("path") or "").startswith("versions/")
     ]
     if docs:
-        lines = [f"- {file.get('path')} ({file.get('extension') or Path(str(file.get('path') or '')).suffix}, {int(file.get('size_bytes') or 0)} bytes)" for file in docs[:10]]
+        lines = [f"- {file.get('path')} ({file.get('extension') or Path(str(file.get('path') or '')).suffix}, {int(file.get('size_bytes') or 0)} bytes)" for file in docs[:5]]
         target = resolve_document_target(task_id, prompt, docs) if is_document_edit_request(prompt) else None
         if target:
             lines.insert(0, f"ALVO_DA_EDICAO: {target.get('path')}")

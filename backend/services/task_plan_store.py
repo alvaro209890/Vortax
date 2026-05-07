@@ -20,7 +20,7 @@ def _infer_tool_hint(label: str, detail: str = "") -> str:
         return "validate"
     if any(word in text for word in ("entreg", "final", "resposta", "download")):
         return "deliver"
-    if any(word in text for word in ("vertex", "criar", "gerar", "execut", "implementar", "codigo", "código", "site")):
+    if any(word in text for word in ("openclaude", "criar", "gerar", "execut", "implementar", "codigo", "código", "site")):
         return "execute"
     return "understand"
 

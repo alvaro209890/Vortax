@@ -12,7 +12,7 @@ from database import Database
 from services.agent_runner import (
     _complete_supported_steps_before_delivery,
     _generated_file_response_payload,
-    _latest_vertex_quality_gate,
+    _latest_code_agent_quality_gate,
     _latest_web_validation_gate,
     _message_history_from_events,
 )
@@ -59,12 +59,12 @@ class AgentHistoryTests(unittest.TestCase):
         self.assertEqual(history[0]["content"], "mensagem 8")
         self.assertEqual(history[-1]["content"], "mensagem 19")
 
-    def test_web_validation_gate_blocks_latest_vertex_until_passed(self) -> None:
+    def test_web_validation_gate_blocks_latest_openclaude_until_passed(self) -> None:
         events = [
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie um site'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'crie um site'"}},
             },
             {"event_id": 2, "type": "web_validation_result", "payload": {"requires_validation": True, "status": "failed", "bugs": ["Texto cortado"]}},
         ]
@@ -75,12 +75,12 @@ class AgentHistoryTests(unittest.TestCase):
         self.assertEqual(gate["status"], "failed")
         self.assertEqual(gate["bugs"], ["Texto cortado"])
 
-    def test_web_validation_gate_allows_passed_vertex_site(self) -> None:
+    def test_web_validation_gate_allows_passed_openclaude_site(self) -> None:
         events = [
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie um site'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'crie um site'"}},
             },
             {"event_id": 2, "type": "web_validation_result", "payload": {"requires_validation": True, "status": "passed"}},
         ]
@@ -90,12 +90,12 @@ class AgentHistoryTests(unittest.TestCase):
         self.assertTrue(gate["required"])
         self.assertEqual(gate["status"], "passed")
 
-    def test_vertex_quality_gate_blocks_failed_python_project_validation(self) -> None:
+    def test_code_agent_quality_gate_blocks_failed_python_project_validation(self) -> None:
         events = [
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie um script python'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'crie um script python'"}},
             },
             {"event_id": 2, "type": "web_validation_result", "payload": {"requires_validation": False, "status": "skipped"}},
             {
@@ -105,38 +105,38 @@ class AgentHistoryTests(unittest.TestCase):
             },
         ]
 
-        gate = _latest_vertex_quality_gate(events)
+        gate = _latest_code_agent_quality_gate(events)
 
         self.assertTrue(gate["required"])
         self.assertEqual(gate["status"], "failed")
         self.assertEqual(gate["bugs"], ["SyntaxError em main.py"])
 
-    def test_vertex_quality_gate_allows_non_web_project_after_validation(self) -> None:
+    def test_code_agent_quality_gate_allows_non_web_project_after_validation(self) -> None:
         events = [
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie uma api python'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'crie uma api python'"}},
             },
             {"event_id": 2, "type": "web_validation_result", "payload": {"requires_validation": False, "status": "skipped"}},
             {"event_id": 3, "type": "project_validation_result", "payload": {"requires_validation": True, "status": "passed"}},
         ]
 
-        gate = _latest_vertex_quality_gate(events)
+        gate = _latest_code_agent_quality_gate(events)
 
         self.assertTrue(gate["required"])
         self.assertEqual(gate["status"], "passed")
 
-    def test_vertex_quality_gate_does_not_block_vertex_version_check(self) -> None:
+    def test_code_agent_quality_gate_does_not_block_openclaude_version_check(self) -> None:
         events = [
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex --version"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude --version"}},
             },
         ]
 
-        gate = _latest_vertex_quality_gate(events)
+        gate = _latest_code_agent_quality_gate(events)
 
         self.assertFalse(gate["required"])
         self.assertEqual(gate["status"], "not_required")
@@ -215,7 +215,7 @@ class GeneratedFilePayloadTests(unittest.TestCase):
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'crie um site html'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'crie um site html'"}},
             }
         ]
 
@@ -242,7 +242,7 @@ class GeneratedFilePayloadTests(unittest.TestCase):
             {
                 "event_id": 1,
                 "type": "tool_call",
-                "payload": {"name": "shell_run", "params": {"command": "vertex 'gere um relatorio em PDF'"}},
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'gere um relatorio em PDF'"}},
             }
         ]
 

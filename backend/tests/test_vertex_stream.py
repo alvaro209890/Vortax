@@ -9,18 +9,18 @@ from tools.shell import (
     _extract_command,
     _is_spinner_noise,
     _normalize_shell_command,
-    _parse_vertex_progress,
-    _publish_vertex_terminal_frame,
+    _parse_code_agent_progress,
+    _publish_code_agent_terminal_frame,
 )
-from tools.tool_executor import _augment_vertex_command_for_local_site, _augment_vertex_command_for_quality
+from tools.tool_executor import _augment_code_agent_command_for_local_site, _augment_code_agent_command_for_quality
 
 
-class VertexStreamTests(unittest.TestCase):
+class OpenClaudeStreamTests(unittest.TestCase):
     def test_ai_exchange_is_known_stream_event(self) -> None:
         event = build_stream_event(
             "task-1",
             "ai_exchange",
-            {"actor": "deepseek", "target": "vertex", "message": "delegando"},
+            {"actor": "deepseek", "target": "openclaude", "message": "delegando"},
         )
 
         self.assertEqual(event["type"], "ai_exchange")
@@ -53,19 +53,19 @@ class VertexStreamTests(unittest.TestCase):
                 event = build_stream_event("task-1", event_type, {"step": {"label": "Validar"}})
                 self.assertEqual(event["type"], event_type)
 
-    def test_parses_vertex_file_progress(self) -> None:
-        progress = _parse_vertex_progress("Criando arquivo src/App.jsx")
+    def test_parses_code_agent_file_progress(self) -> None:
+        progress = _parse_code_agent_progress("Criando arquivo src/App.jsx")
 
         self.assertEqual(progress["stage"], "writing_file")
         self.assertEqual(progress["file"], "src/App.jsx")
 
     def test_cleans_terminal_control_sequences(self) -> None:
-        cleaned = _clean_terminal_text("\x1b[32mVertex\x1b[0m\r\n")
+        cleaned = _clean_terminal_text("\x1b[32mOpenClaude\x1b[0m\r\n")
 
-        self.assertEqual(cleaned, "Vertex\r\n")
+        self.assertEqual(cleaned, "OpenClaude\r\n")
 
-    def test_cleans_vertex_osc_title_sequences(self) -> None:
-        cleaned = _clean_terminal_text("\x1b]0;✳ Vertex\x07Conectado\r\n")
+    def test_cleans_openclaude_osc_title_sequences(self) -> None:
+        cleaned = _clean_terminal_text("\x1b]0;✳ OpenClaude\x07Conectado\r\n")
 
         self.assertEqual(cleaned, "Conectado\r\n")
 
@@ -77,57 +77,57 @@ class VertexStreamTests(unittest.TestCase):
     def test_removes_spinner_prefix_from_status_line(self) -> None:
         self.assertEqual(_display_terminal_line("◔ Aplicando…"), "Aplicando…")
 
-    def test_augments_vertex_site_prompt_with_local_link_instruction(self) -> None:
-        command = _augment_vertex_command_for_local_site("vertex 'crie um site react'")
+    def test_augments_openclaude_site_prompt_with_local_link_instruction(self) -> None:
+        command = _augment_code_agent_command_for_local_site("openclaude 'crie um site react'")
 
         self.assertIn("LINK_LOCAL_DO_SITE", command)
-        self.assertIn("vertex -p", command)
+        self.assertIn("openclaude -p", command)
         self.assertIn("index.html", command)
         self.assertIn("DOCUMENTACAO.md", command)
 
-    def test_augments_vertex_command_after_safe_cd(self) -> None:
-        command = _augment_vertex_command_for_local_site("cd workspace/app && vertex 'crie uma landing page'")
+    def test_augments_openclaude_command_after_safe_cd(self) -> None:
+        command = _augment_code_agent_command_for_local_site("cd workspace/app && openclaude 'crie uma landing page'")
 
-        self.assertTrue(command.startswith("cd workspace/app && vertex -p"))
+        self.assertTrue(command.startswith("cd workspace/app && openclaude -p"))
         self.assertIn("LINK_LOCAL_DO_SITE", command)
 
     def test_existing_local_link_instruction_still_uses_print_mode(self) -> None:
-        command = _augment_vertex_command_for_local_site("vertex 'crie site e imprima LINK_LOCAL_DO_SITE'")
+        command = _augment_code_agent_command_for_local_site("openclaude 'crie site e imprima LINK_LOCAL_DO_SITE'")
 
-        self.assertIn("vertex -p", command)
+        self.assertIn("openclaude -p", command)
         self.assertEqual(command.count("LINK_LOCAL_DO_SITE"), 1)
 
-    def test_does_not_augment_non_site_vertex_prompt(self) -> None:
-        command = _augment_vertex_command_for_local_site("vertex 'crie uma api python'")
+    def test_does_not_augment_non_site_openclaude_prompt(self) -> None:
+        command = _augment_code_agent_command_for_local_site("openclaude 'crie uma api python'")
 
-        self.assertEqual(command, "vertex 'crie uma api python'")
+        self.assertEqual(command, "openclaude 'crie uma api python'")
 
-    def test_augments_non_site_vertex_prompt_with_quality_gate(self) -> None:
-        command = _augment_vertex_command_for_quality("vertex 'crie uma api python'")
+    def test_augments_non_site_openclaude_prompt_with_quality_gate(self) -> None:
+        command = _augment_code_agent_command_for_quality("openclaude 'crie uma api python'")
 
         self.assertIn("VALIDACAO_AUTOMATICA_VORTAX", command)
         self.assertIn("python3 -m py_compile", command)
         self.assertIn("DOCUMENTACAO.md", command)
-        self.assertIn("vertex -p", command)
+        self.assertIn("openclaude -p", command)
 
     def test_augments_technical_analysis_with_markdown_report(self) -> None:
-        command = _augment_vertex_command_for_quality("vertex 'analise o frontend deste repositorio'")
+        command = _augment_code_agent_command_for_quality("openclaude 'analise o frontend deste repositorio'")
 
         self.assertIn("RELATORIO_TECNICO.md", command)
         self.assertIn("card de leitura", command)
-        self.assertIn("vertex -p", command)
+        self.assertIn("openclaude -p", command)
 
     def test_augments_document_prompt_with_file_delivery_instruction(self) -> None:
-        command = _augment_vertex_command_for_quality("vertex 'gere um relatorio em PDF'")
+        command = _augment_code_agent_command_for_quality("openclaude 'gere um relatorio em PDF'")
 
         self.assertIn("arquivo/documento final (.pdf)", command)
         self.assertIn("Markdown fonte", command)
         self.assertIn("pronto para download", command)
 
-    def test_does_not_augment_vertex_version_check_with_quality_gate(self) -> None:
-        command = _augment_vertex_command_for_quality("vertex --version")
+    def test_does_not_augment_openclaude_version_check_with_quality_gate(self) -> None:
+        command = _augment_code_agent_command_for_quality("openclaude --version")
 
-        self.assertEqual(command, "vertex --version")
+        self.assertEqual(command, "openclaude --version")
 
     def test_normalizes_background_dev_server_wrappers(self) -> None:
         command = _normalize_shell_command("cd workspace/calc && nohup python3 -m http.server 8080 --bind 127.0.0.1 &")
@@ -135,7 +135,7 @@ class VertexStreamTests(unittest.TestCase):
         self.assertEqual(command, "cd workspace/calc && python3 -m http.server 8080 --bind 127.0.0.1")
         self.assertEqual(_extract_command(command), "python3")
 
-    def test_vertex_terminal_status_uses_progress_event_not_screen_frame(self) -> None:
+    def test_code_agent_terminal_status_uses_progress_event_not_screen_frame(self) -> None:
         class FakeBus:
             def __init__(self) -> None:
                 self.events = []
@@ -145,7 +145,7 @@ class VertexStreamTests(unittest.TestCase):
 
         async def run() -> None:
             bus = FakeBus()
-            await _publish_vertex_terminal_frame(
+            await _publish_code_agent_terminal_frame(
                 "task-1",
                 bus,
                 [{"stream": "stdout", "line": "Criando arquivo index.html"}],

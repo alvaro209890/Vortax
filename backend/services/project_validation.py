@@ -183,30 +183,30 @@ def _script_is_real_test(script: str) -> bool:
     return bool(script.strip()) and "no test specified" not in lowered
 
 
-async def validate_project_after_vertex(
+async def validate_project_after_code_agent(
     task_id: str,
     command: str,
     bus: Any,
     *,
-    vertex_result: dict[str, Any] | None = None,
+    agent_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     project_dir = settings.WORKSPACE_PATH / task_id
     profile = detect_project_profile(project_dir)
     await bus.publish(task_id, "project_validation_started", {"project": profile})
 
     result_success = True
-    if isinstance(vertex_result, dict):
-        result_success = bool(vertex_result.get("success", True))
+    if isinstance(agent_result, dict):
+        result_success = bool(agent_result.get("success", True))
 
     checks: list[dict[str, Any]] = []
     bugs: list[str] = []
     warnings: list[str] = []
 
     if not result_success:
-        bugs.append("Vertex terminou com erro antes de entregar um projeto valido.")
+        bugs.append("OpenClaude terminou com erro antes de entregar um projeto valido.")
 
     if profile["kind"] == "empty":
-        bugs.append("Vertex nao gerou arquivos no diretorio da conversa.")
+        bugs.append("OpenClaude nao gerou arquivos no diretorio da conversa.")
 
     if not profile.get("has_code") and profile["kind"] != "empty":
         warnings.append("Arquivos gerados nao parecem conter codigo executavel.")
@@ -218,7 +218,7 @@ async def validate_project_after_vertex(
     report_profile = report_artifact_profile(command)
     if (web_intent_from_command(command) or report_profile.get("requires_markdown")) and not valid_markdown_files(project_dir):
         bugs.append(
-            "Entrega tecnica criada pelo Vertex precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
+            "Entrega tecnica criada pelo OpenClaude precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
         )
 
     for extension in document_extensions_from_text(command):

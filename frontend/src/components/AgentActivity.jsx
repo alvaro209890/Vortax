@@ -18,9 +18,9 @@ function hasEvent(events, types) {
   return events.some((event) => types.includes(event.type));
 }
 
-function isVertexCommand(command) {
+function isCodeAgentCommand(command) {
   let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
-  return text.split(/\s+/)[0] === "vertex";
+  return text.split(/\s+/)[0] === "openclaude";
 }
 
 function lastUserPrompt(events, fallbackDescription) {
@@ -244,10 +244,10 @@ function StepIcon({ state }) {
   return <Circle size={15} />;
 }
 
-// ── Vertex Progress ─────────────────────────────────────────────────────────
+// ── OpenClaude Progress ─────────────────────────────────────────────────────
 
-function useVertexProgress(events, taskDescription) {
-  const [vertexPlan, setVertexPlan] = useState(null);
+function useCodeAgentProgress(events, taskDescription) {
+  const [codeAgentPlan, setCodeAgentPlan] = useState(null);
   const lastDescRef = useRef("");
 
   useEffect(() => {
@@ -255,17 +255,17 @@ function useVertexProgress(events, taskDescription) {
     lastDescRef.current = taskDescription;
     getTaskPlan(taskDescription).then((data) => {
       if (Array.isArray(data.vertex_steps)) {
-        setVertexPlan(data.vertex_steps.length > 0 ? data.vertex_steps : null);
+        setCodeAgentPlan(data.vertex_steps.length > 0 ? data.vertex_steps : null);
       }
-    }).catch(() => setVertexPlan(null));
+    }).catch(() => setCodeAgentPlan(null));
   }, [taskDescription]);
 
   return useMemo(() => {
     const progressEvents = events.filter((e) => e.type === "vertex_progress");
-    const hasVertexActivity = progressEvents.length > 0 || events.some((e) => (
+    const hasCodeAgentActivity = progressEvents.length > 0 || events.some((e) => (
       e.type === "tool_call" &&
       e.payload?.name === "shell_run" &&
-      isVertexCommand(e.payload?.params?.command)
+      isCodeAgentCommand(e.payload?.params?.command)
     ));
 
     const items = [];
@@ -273,7 +273,7 @@ function useVertexProgress(events, taskDescription) {
     progressEvents.forEach((event) => {
       const payload = event.payload || {};
       const stage = payload.stage || "executing";
-      const message = payload.message || "Vertex trabalhando";
+      const message = payload.message || "OpenClaude trabalhando";
       const file = payload.file || null;
       const key = `${stage}:${message}:${file || ""}`;
       if (seen.has(key)) return;
@@ -287,18 +287,18 @@ function useVertexProgress(events, taskDescription) {
       });
     });
 
-    const lastVertexCall = [...events].reverse().find(
-      (e) => e.type === "tool_call" && e.payload?.name === "shell_run" && isVertexCommand(e.payload?.params?.command)
+    const lastCodeAgentCall = [...events].reverse().find(
+      (e) => e.type === "tool_call" && e.payload?.name === "shell_run" && isCodeAgentCommand(e.payload?.params?.command)
     );
-    const lastVertexResult = [...events].reverse().find(
+    const lastCodeAgentResult = [...events].reverse().find(
       (e) => e.type === "tool_result" && e.payload?.name === "shell_run"
     );
-    const running = Boolean(lastVertexCall && (!lastVertexResult || lastVertexResult.created_at < lastVertexCall.created_at));
+    const running = Boolean(lastCodeAgentCall && (!lastCodeAgentResult || lastCodeAgentResult.created_at < lastCodeAgentCall.created_at));
     const done = items.some((item) => item.stage === "done" || item.status === "done");
     const latest = items[items.length - 1] || null;
 
-    const steps = vertexPlan && vertexPlan.length > 0
-      ? vertexPlan
+    const steps = codeAgentPlan && codeAgentPlan.length > 0
+      ? codeAgentPlan
       : null;
 
     const currentIdx = steps ? Math.min(items.length, steps.length - 1) : 0;
@@ -308,16 +308,16 @@ function useVertexProgress(events, taskDescription) {
 
     return {
       items: items.slice(-12),
-      hasVertexActivity,
+      hasCodeAgentActivity,
       running,
       done,
       currentStage: latest?.stage || (running ? "executing" : done ? "done" : "starting"),
       currentMessage: latest?.message || "",
       currentFile: latest?.file || null,
       dynamicTrack,
-      vertexPlan: steps,
+      codeAgentPlan: steps,
     };
-  }, [events, vertexPlan]);
+  }, [events, codeAgentPlan]);
 }
 
 function latestPayload(events, type) {
@@ -342,19 +342,19 @@ function validationLegend(events) {
   return null;
 }
 
-export function VertexProgressPanel({ events, taskDescription }) {
+export function CodeAgentProgressPanel({ events, taskDescription }) {
   const [collapsed, setCollapsed] = useState(true);
-  const { currentFile, currentStage, items, hasVertexActivity, running, done, dynamicTrack, vertexPlan } = useVertexProgress(events, taskDescription);
+  const { currentFile, currentStage, items, hasCodeAgentActivity, running, done, dynamicTrack, codeAgentPlan } = useCodeAgentProgress(events, taskDescription);
   const validation = validationLegend(events);
 
-  if (!hasVertexActivity) return null;
+  if (!hasCodeAgentActivity) return null;
 
   const currentFileShort = currentFile ? currentFile.split("/").pop() : null;
   const doneCount = items.filter(i => i.status === "done" || i.stage === "done").length;
   const currentItem = items[items.length - 1];
-  const currentLabel = vertexPlan && dynamicTrack
+  const currentLabel = codeAgentPlan && dynamicTrack
     ? (dynamicTrack.find(d => d.active)?.label || (done ? "Entrega pronta" : "Preparando..."))
-    : (currentItem?.message || "Vertex trabalhando");
+    : (currentItem?.message || "OpenClaude trabalhando");
 
   return (
     <div className={`vtx-toast ${done ? "vtx-done" : ""} ${collapsed ? "vtx-collapsed" : ""}`}>
@@ -406,7 +406,7 @@ export function VertexProgressPanel({ events, taskDescription }) {
           </div>
         ) : (
           <div className="vtx-stage-track">
-            <span className="vtx-dot vtx-done" title="Vertex em execucao">v</span>
+            <span className="vtx-dot vtx-done" title="OpenClaude em execucao">v</span>
             {items.slice(1).map((_, idx) => (
               <span key={idx} className="vtx-dot vtx-active" title="..." />
             ))}
@@ -415,7 +415,7 @@ export function VertexProgressPanel({ events, taskDescription }) {
 
         <div className="vtx-current-card">
           <span className="vtx-current-badge">{done ? "Entrega pronta" : currentLabel}</span>
-          <span className="vtx-current-file">{done ? "Projeto revisado e pronto" : currentFileShort || (vertexPlan && dynamicTrack ? dynamicTrack.find(d => d.active)?.label || "Preparando..." : "Preparando entrega...")}</span>
+          <span className="vtx-current-file">{done ? "Projeto revisado e pronto" : currentFileShort || (codeAgentPlan && dynamicTrack ? dynamicTrack.find(d => d.active)?.label || "Preparando..." : "Preparando entrega...")}</span>
         </div>
 
         {validation && (
@@ -427,8 +427,8 @@ export function VertexProgressPanel({ events, taskDescription }) {
 
         <div className="vtx-items-scroll">
           <AnimatePresence initial={false}>
-            {(vertexPlan && vertexPlan.length > 0 ? (
-              vertexPlan.map((step, idx) => {
+            {(codeAgentPlan && codeAgentPlan.length > 0 ? (
+              codeAgentPlan.map((step, idx) => {
                 const isItemDone = idx < items.length;
                 const isItemActive = idx === items.length && running;
                 return (
@@ -465,7 +465,7 @@ export function VertexProgressPanel({ events, taskDescription }) {
                     {isItemDone ? <CheckCircle2 size={11} /> : <Loader2 size={11} className="spinner" />}
                   </span>
                   <div>
-                    <strong>{item.message?.split(" ").slice(0, 4).join(" ") || "Vertex"}</strong>
+                    <strong>{item.message?.split(" ").slice(0, 4).join(" ") || "OpenClaude"}</strong>
                     <p>{item.file ? item.file.split("/").pop() : item.message}</p>
                   </div>
                 </motion.div>
@@ -483,7 +483,7 @@ export function VertexProgressPanel({ events, taskDescription }) {
                 </span>
                 <div>
                   <strong>Preparando execucao</strong>
-                  <p>Vertex iniciando ambiente de trabalho.</p>
+                  <p>OpenClaude iniciando ambiente de trabalho.</p>
                 </div>
               </motion.div>
             ))}
@@ -496,12 +496,12 @@ export function VertexProgressPanel({ events, taskDescription }) {
 
 function actorLabel(actor) {
   if (actor === "deepseek") return "DeepSeek";
-  if (actor === "vertex") return "Vertex";
+  if (actor === "openclaude" || actor === "vertex") return "OpenClaude";
   return "Vortax";
 }
 
 function actorIcon(actor) {
-  if (actor === "vertex") return <Code2 size={14} />;
+  if (actor === "openclaude" || actor === "vertex") return <Code2 size={14} />;
   if (actor === "deepseek") return <Bot size={14} />;
   return <Sparkles size={14} />;
 }
@@ -522,14 +522,15 @@ export function AiExchangePanel({ events }) {
       className="ai-exchange-panel"
       count={exchanges.length}
       storageKey="vortax.inspector.ai_exchange.collapsed"
-      title="DeepSeek ↔ Vertex"
+      title="DeepSeek ↔ OpenClaude"
     >
       <div className="ai-exchange-list">
         {exchanges.map((event, index) => {
           const payload = event.payload || {};
           const actor = payload.actor || "vortax";
+          const actorClass = actor === "vertex" ? "openclaude" : actor;
           return (
-            <div className={`ai-exchange-item ${actor}`} key={`${event.created_at}-${index}`}>
+            <div className={`ai-exchange-item ${actorClass}`} key={`${event.created_at}-${index}`}>
               <div className="ai-exchange-icon">{actorIcon(actor)}</div>
               <div>
                 <strong>

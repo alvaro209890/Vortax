@@ -5,9 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 import { scaleIn } from "../animations/variants.js";
 
-function isVertexCommand(command) {
+function isCodeAgentCommand(command) {
   let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
-  return text.split(/\s+/)[0] === "vertex";
+  return text.split(/\s+/)[0] === "openclaude";
 }
 
 const stageLabels = {
@@ -19,14 +19,14 @@ const stageLabels = {
   installing: "Preparando dependências",
   reading_file: "Lendo arquivos",
   configuring: "Configurando projeto",
-  executing: "Executando Vertex",
+  executing: "Executando OpenClaude",
   validating: "Abrindo no navegador",
   done: "Projeto pronto",
   error: "Correção necessária",
 };
 
 const stageDescriptions = {
-  starting: "Abrindo Vertex e preparando a pasta da conversa.",
+  starting: "Abrindo OpenClaude e preparando a pasta da conversa.",
   planning: "Estimando arquitetura, arquivos e próximos passos.",
   creating: "Gerando estrutura inicial e entradas principais.",
   writing_file: "Escrevendo código e recursos do projeto.",
@@ -72,9 +72,9 @@ function ProgrammingSimulation({ progress }) {
   }, [payload.files, activeFile]);
 
   return (
-    <div className="programming-stream" aria-label="Vertex programando">
+    <div className="programming-stream" aria-label="OpenClaude programando">
       <div className="programming-stream-header">
-        <span><Code2 size={15} /> Vertex programando</span>
+        <span><Code2 size={15} /> OpenClaude programando</span>
         <small>{label}</small>
       </div>
       <div className="programming-stream-grid">
@@ -107,7 +107,7 @@ function ProgrammingSimulation({ progress }) {
       </div>
       <div className="programming-legend">
         <span>Leitura estimada</span>
-        <p>{stageDescriptions[stage] || "A etapa é inferida pelos eventos emitidos pelo Vertex."}</p>
+        <p>{stageDescriptions[stage] || "A etapa é inferida pelos eventos emitidos pelo OpenClaude."}</p>
       </div>
     </div>
   );
@@ -136,28 +136,28 @@ export function ScreenView({ events, connectionState }) {
   }, [frames.length, isModalOpen]);
 
   const selectedFrame = frames[selectedIndex] || null;
-  const latestVertexProgress = useMemo(
+  const latestCodeAgentProgress = useMemo(
     () => latestEvent(events, (event) => event.type === "vertex_progress"),
     [events],
   );
-  const lastVertexCall = useMemo(
+  const lastCodeAgentCall = useMemo(
     () => latestEvent(
       events,
-      (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isVertexCommand(event.payload?.params?.command),
+      (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isCodeAgentCommand(event.payload?.params?.command),
     ),
     [events],
   );
-  const lastVertexResult = useMemo(
+  const lastCodeAgentResult = useMemo(
     () => latestEvent(events, (event) => event.type === "tool_result" && event.payload?.name === "shell_run"),
     [events],
   );
-  const vertexRunning = useMemo(() => {
-    return Boolean(lastVertexCall && (!lastVertexResult || lastVertexResult.created_at < lastVertexCall.created_at));
-  }, [lastVertexCall, lastVertexResult]);
+  const codeAgentRunning = useMemo(() => {
+    return Boolean(lastCodeAgentCall && (!lastCodeAgentResult || lastCodeAgentResult.created_at < lastCodeAgentCall.created_at));
+  }, [lastCodeAgentCall, lastCodeAgentResult]);
   const image = selectedFrame?.payload?.image_base64;
-  const imageAfterVertex = Boolean(lastVertexCall && selectedFrame?.created_at && selectedFrame.created_at > lastVertexCall.created_at);
-  const latestStage = latestVertexProgress?.payload?.stage;
-  const programmingMode = vertexRunning && !imageAfterVertex && !["validating", "done"].includes(latestStage);
+  const imageAfterCodeAgent = Boolean(lastCodeAgentCall && selectedFrame?.created_at && selectedFrame.created_at > lastCodeAgentCall.created_at);
+  const latestStage = latestCodeAgentProgress?.payload?.stage;
+  const programmingMode = codeAgentRunning && !imageAfterCodeAgent && !["validating", "done"].includes(latestStage);
   const caption = selectedFrame?.payload?.caption || selectedFrame?.payload?.title || "Tela do navegador";
   const canGoBack = selectedIndex > 0;
   const canGoForward = selectedIndex < frames.length - 1;
@@ -179,7 +179,7 @@ export function ScreenView({ events, connectionState }) {
     >
       <div className="screen-view">
         {programmingMode ? (
-          <ProgrammingSimulation progress={latestVertexProgress} />
+          <ProgrammingSimulation progress={latestCodeAgentProgress} />
         ) : image ? (
           <>
             <button className="screen-nav left" disabled={!canGoBack} onClick={goPrevious} title="Print anterior" type="button">
@@ -194,7 +194,7 @@ export function ScreenView({ events, connectionState }) {
         ) : (
           <div className="screen-placeholder">
             <Monitor size={34} />
-            <p>{vertexRunning ? "Abrindo o navegador para testar o projeto." : "Os prints do stream aparecem aqui."}</p>
+            <p>{codeAgentRunning ? "Abrindo o navegador para testar o projeto." : "Os prints do stream aparecem aqui."}</p>
           </div>
         )}
       </div>

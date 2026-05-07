@@ -162,7 +162,7 @@ async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int) -> d
         },
     )
     question = (
-        "Analise esta captura do site criado pelo Vertex como revisor de frontend. "
+        "Analise esta captura do site criado pelo OpenClaude como revisor de frontend. "
         "Procure bugs visuais ou funcionais aparentes: pagina em branco, erros visiveis, elementos sobrepostos, "
         "texto cortado, layout quebrado, conteudo fora da tela, contraste ruim, botoes ilegíveis ou estado incompleto. "
         "Responda no JSON esperado pelo sistema; se houver bug, descreva exatamente o que corrigir em suggested_action. "
@@ -186,12 +186,12 @@ async def _scroll_state() -> dict[str, Any]:
     return await browser_tool.get_scroll_state()
 
 
-async def validate_web_project_after_vertex(
+async def validate_web_project_after_code_agent(
     task_id: str,
     command: str,
     bus: Any,
     *,
-    vertex_result: dict[str, Any] | None = None,
+    agent_result: dict[str, Any] | None = None,
     max_viewports: int = 8,
 ) -> dict[str, Any]:
     project_dir = settings.WORKSPACE_PATH / task_id

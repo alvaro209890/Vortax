@@ -15,7 +15,7 @@ const stageLabels = {
   done: "Entrega pronta",
 };
 
-function vertexProgressSummary(events) {
+function codeAgentProgressSummary(events) {
   const progressEvents = events.filter((event) => event.type === "vertex_progress");
   if (progressEvents.length === 0) return null;
 
@@ -40,14 +40,14 @@ export function ShellOutput({ events }) {
     .filter((event) => event.type === "shell_stdout" || event.type === "shell_stderr")
     .slice(-200);
 
-  const vertexProgress = vertexProgressSummary(events);
+  const codeAgentProgress = codeAgentProgressSummary(events);
   const hasInteractivePrompt = events.some((event) => event.type === "shell_interactive_prompt");
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [shellLines.length, vertexProgress?.stage]);
+  }, [shellLines.length, codeAgentProgress?.stage]);
 
-  if (shellLines.length === 0 && !vertexProgress) return null;
+  if (shellLines.length === 0 && !codeAgentProgress) return null;
 
   return (
     <motion.div
@@ -59,13 +59,13 @@ export function ShellOutput({ events }) {
       <div className="shell-output-header">
         <Terminal size={14} />
         <span>Terminal</span>
-        {vertexProgress && !vertexProgress.done && (
+        {codeAgentProgress && !codeAgentProgress.done && (
           <span className="shell-stage-badge">
             <Loader2 size={12} />
-            {stageLabels[vertexProgress.stage] || vertexProgress.stage}
+            {stageLabels[codeAgentProgress.stage] || codeAgentProgress.stage}
           </span>
         )}
-        {vertexProgress?.done && (
+        {codeAgentProgress?.done && (
           <span className="shell-stage-badge done">
             {stageLabels.done}
           </span>
@@ -73,26 +73,26 @@ export function ShellOutput({ events }) {
         <small>{shellLines.length} linhas</small>
       </div>
 
-      {vertexProgress && (
-        <div className="vertex-progress-bar">
-          <div className="vertex-progress-steps">
-            {vertexProgress.stage !== "done" ? (
+      {codeAgentProgress && (
+        <div className="code-agent-progress-bar">
+          <div className="code-agent-progress-steps">
+            {codeAgentProgress.stage !== "done" ? (
               <>
                 <Loader2 size={12} className="spinner" />
                 <span>
-                  {vertexProgress.file ? (
-                    <><FileText size={12} /> {vertexProgress.file}</>
+                  {codeAgentProgress.file ? (
+                    <><FileText size={12} /> {codeAgentProgress.file}</>
                   ) : (
-                    vertexProgress.message
+                    codeAgentProgress.message
                   )}
                 </span>
               </>
             ) : (
-              <span className="vertex-done-msg">{vertexProgress.message}</span>
+              <span className="code-agent-done-msg">{codeAgentProgress.message}</span>
             )}
-            {vertexProgress.interactiveRounds > 0 && (
-              <span className="vertex-interactive-note">
-                {vertexProgress.interactiveRounds} resposta(s) automática(s)
+            {codeAgentProgress.interactiveRounds > 0 && (
+              <span className="code-agent-interactive-note">
+                {codeAgentProgress.interactiveRounds} resposta(s) automática(s)
               </span>
             )}
           </div>

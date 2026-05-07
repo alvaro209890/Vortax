@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from config import settings
-from services.project_validation import detect_project_profile, validate_project_after_vertex
+from services.project_validation import detect_project_profile, validate_project_after_code_agent
 
 
 class FakeBus:
@@ -36,11 +36,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\n" + "Documentacao completa do script. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-python-ok",
-                    "vertex 'crie um script python'",
+                    "openclaude 'crie um script python'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -59,11 +59,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "DOCUMENTACAO.md").write_text("# Script Python\n\n" + "Documentacao completa do script. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-python-bug",
-                    "vertex 'crie um script python'",
+                    "openclaude 'crie um script python'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -82,11 +82,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\n" + "Documentacao completa do site. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-site-bug",
-                    "vertex 'crie um site html'",
+                    "openclaude 'crie um site html'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -104,11 +104,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "index.html").write_text("<!doctype html><title>Site</title>", encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-site-no-doc",
-                    "vertex 'crie um site html'",
+                    "openclaude 'crie um site html'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -126,11 +126,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "main.py").write_text("print('ok')\n", encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-python-no-doc",
-                    "vertex 'crie um script python'",
+                    "openclaude 'crie um script python'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -149,11 +149,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\n" + "Documentacao completa do projeto. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-site-doc",
-                    "vertex 'crie um site html'",
+                    "openclaude 'crie um site html'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -170,11 +170,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "relatorio.md").write_text("# Relatorio\n\n" + "Conteudo completo do relatorio. " * 8, encoding="utf-8")
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-pdf",
-                    "vertex 'gere um relatorio em PDF'",
+                    "openclaude 'gere um relatorio em PDF'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace
@@ -193,11 +193,11 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 300)
                 bus = FakeBus()
 
-                result = await validate_project_after_vertex(
+                result = await validate_project_after_code_agent(
                     "task-pdf-ok",
-                    "vertex 'gere um relatorio em PDF'",
+                    "openclaude 'gere um relatorio em PDF'",
                     bus,
-                    vertex_result={"success": True},
+                    agent_result={"success": True},
                 )
             finally:
                 settings.WORKSPACE_PATH = previous_workspace

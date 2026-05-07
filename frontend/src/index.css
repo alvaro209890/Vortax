@@ -968,7 +968,7 @@ small {
 
 .message.assistant .message-avatar {
   background: rgba(8, 198, 93, 0.1);
-  color: #08C65D; /* Vertex Green */
+  color: #08C65D; /* OpenClaude green */
   border: 1px solid rgba(8, 198, 93, 0.25);
   box-shadow: 0 0 12px rgba(8, 198, 93, 0.15);
 }
@@ -3105,8 +3105,8 @@ small {
   background: #10D86C;
 }
 
-/* Vertex Terminal — Integrado ao AgentActivity */
-.vertex-terminal {
+/* OpenClaude terminal — integrated into AgentActivity */
+.code-agent-terminal {
   border: 1px solid rgba(8, 198, 93, 0.16);
   border-radius: 12px;
   background: #080E12;
@@ -3115,16 +3115,16 @@ small {
   transition: all 0.22s ease;
 }
 
-.activity-vertex-slot .vertex-terminal {
+.activity-code-agent-slot .code-agent-terminal {
   margin-bottom: 0;
 }
 
-.vertex-terminal.done {
+.code-agent-terminal.done {
   border-color: rgba(52, 211, 153, 0.18);
   opacity: 0.92;
 }
 
-.vertex-terminal-header {
+.code-agent-terminal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3140,28 +3140,28 @@ small {
   transition: background 0.15s ease;
 }
 
-.vertex-terminal-header:hover {
+.code-agent-terminal-header:hover {
   background: rgba(8, 198, 93, 0.08);
 }
 
-.vertex-terminal-title {
+.code-agent-terminal-title {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
 }
 
-.vertex-terminal-title svg {
+.code-agent-terminal-title svg {
   color: var(--accent-blue);
   flex-shrink: 0;
 }
 
-.vertex-terminal-title .spinner {
+.code-agent-terminal-title .spinner {
   color: var(--accent-blue);
   animation: spin 1s linear infinite;
 }
 
-.vertex-stage-pill {
+.code-agent-stage-pill {
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
@@ -3173,12 +3173,12 @@ small {
   white-space: nowrap;
 }
 
-.vertex-stage-pill.done {
+.code-agent-stage-pill.done {
   background: rgba(52, 211, 153, 0.15);
   color: var(--accent-green);
 }
 
-.vertex-terminal-meta {
+.code-agent-terminal-meta {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3187,7 +3187,7 @@ small {
   flex-shrink: 0;
 }
 
-.vertex-current-file {
+.code-agent-current-file {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3198,18 +3198,18 @@ small {
   white-space: nowrap;
 }
 
-.vertex-terminal-body {
+.code-agent-terminal-body {
   max-height: 340px;
   overflow: hidden;
   transition: max-height 0.26s ease, opacity 0.2s ease;
 }
 
-.vertex-terminal.collapsed .vertex-terminal-body {
+.code-agent-terminal.collapsed .code-agent-terminal-body {
   max-height: 0;
   opacity: 0;
 }
 
-.vertex-terminal-progress {
+.code-agent-terminal-progress {
   padding: 8px 11px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   display: flex;
@@ -3217,13 +3217,13 @@ small {
   gap: 6px;
 }
 
-.vertex-progress-track {
+.code-agent-progress-track {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.vertex-progress-dot {
+.code-agent-progress-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -3232,17 +3232,17 @@ small {
   transition: all 0.3s ease;
 }
 
-.vertex-progress-dot.reached {
+.code-agent-progress-dot.reached {
   background: var(--accent-blue);
   box-shadow: 0 0 6px rgba(8, 198, 93, 0.4);
 }
 
-.vertex-progress-dot.done {
+.code-agent-progress-dot.done {
   background: var(--accent-green);
   box-shadow: 0 0 6px rgba(52, 211, 153, 0.4);
 }
 
-.vertex-progress-dot:not(:last-child)::after {
+.code-agent-progress-dot:not(:last-child)::after {
   content: "";
   display: block;
   width: 28px;
@@ -3253,7 +3253,7 @@ small {
   top: -4px;
 }
 
-.vertex-progress-label {
+.code-agent-progress-label {
   font-size: 11px;
   color: var(--text-secondary);
   overflow: hidden;
@@ -3261,7 +3261,7 @@ small {
   white-space: nowrap;
 }
 
-.vertex-terminal-lines {
+.code-agent-terminal-lines {
   margin: 0;
   padding: 10px 11px;
   max-height: 260px;
@@ -3274,16 +3274,16 @@ small {
   flex-direction: column;
 }
 
-.vertex-terminal-lines span {
+.code-agent-terminal-lines span {
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-.vertex-terminal-lines span.stderr {
+.code-agent-terminal-lines span.stderr {
   color: var(--accent-danger);
 }
 
-/* ── Vertex Toast (canto inferior direito) ──────────────────────────── */
+/* ── OpenClaude toast (canto inferior direito) ──────────────────────── */
 
 .vtx-toast {
   position: fixed;
@@ -3536,7 +3536,7 @@ small {
   overflow-wrap: anywhere;
 }
 
-/* ── keep existing vertex-terminal styles below ── */
+/* ── legacy code-agent terminal styles below ── */
 
 .ai-exchange-list {
   display: flex;
@@ -3564,7 +3564,7 @@ small {
   color: var(--accent-blue);
 }
 
-.ai-exchange-item.vertex .ai-exchange-icon {
+.ai-exchange-item.openclaude .ai-exchange-icon {
   background: rgba(251, 191, 36, 0.11);
   color: var(--accent-warn);
 }

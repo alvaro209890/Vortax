@@ -62,7 +62,7 @@ def _normalize_extension(value: str) -> str | None:
 
 
 def document_extensions_from_text(text: str) -> list[str]:
-    """Return requested final-file extensions mentioned by the user/Vertex prompt."""
+    """Return requested final-file extensions mentioned by the user/code-agent prompt."""
     value = str(text or "")
     found: list[str] = []
 

@@ -49,8 +49,12 @@ class Settings(BaseSettings):
     SCREENSHOT_INTERVAL: int = 5
     STREAM_SCREENSHOT_INTERVAL: int = 2
     SHELL_TIMEOUT_SECONDS: int = 30
-    SHELL_VERTEX_TIMEOUT_SECONDS: int = 300
-    VERTEX_STATIC_READY_SECONDS: float = 4.0
+    SHELL_CODE_AGENT_TIMEOUT_SECONDS: int = 300
+    SHELL_VERTEX_TIMEOUT_SECONDS: int = 300  # legacy env fallback
+    CODE_AGENT_STATIC_READY_SECONDS: float = 4.0
+    VERTEX_STATIC_READY_SECONDS: float = 4.0  # legacy env fallback
+    CODE_AGENT_STATIC_INCOMPLETE_SECONDS: float = 45.0
+    VERTEX_STATIC_INCOMPLETE_SECONDS: float = 45.0  # legacy env fallback
     PROJECT_VALIDATION_TIMEOUT_SECONDS: int = 60
 
     CHROME_BINARY: str = "/usr/bin/google-chrome"

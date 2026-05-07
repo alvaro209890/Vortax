@@ -11,7 +11,7 @@ from services.context_manager import prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action, request_direct_chat_response
 from services.document_artifacts import (
     artifact_profile as document_artifact_profile,
-    document_context_for_vertex,
+    document_context_for_code_agent,
     is_document_edit_request,
     resolve_document_target,
     valid_markdown_files,
@@ -33,7 +33,7 @@ from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
 from services.task_store import TaskStore
 from services.task_plan_store import direct_response_steps, fallback_steps, task_plan_store
-from tools.tool_executor import compact_tool_result, execute_tool
+from tools.tool_executor import CODE_AGENT_COMMAND, CODE_AGENT_LABEL, compact_tool_result, execute_tool
 from services.web_validation import web_intent_from_command
 
 
@@ -348,11 +348,24 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
     return ""
 
 
-def _is_vertex_shell_call(event: dict[str, Any]) -> bool:
-    return _vertex_shell_command(event) is not None
+def _is_code_agent_shell_call_from_params(params: dict[str, Any]) -> bool:
+    """Detecta se os params de uma acao shell_run contem chamada ao agente de codigo."""
+    command = str(params.get("command") or "").strip()
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    for part in parts:
+        if part == CODE_AGENT_COMMAND or part.endswith(f"/{CODE_AGENT_COMMAND}"):
+            return True
+    return False
 
 
-def _vertex_shell_command(event: dict[str, Any]) -> str | None:
+def _is_code_agent_shell_call(event: dict[str, Any]) -> bool:
+    return _code_agent_shell_command(event) is not None
+
+
+def _code_agent_shell_command(event: dict[str, Any]) -> str | None:
     if event.get("type") != "tool_call":
         return None
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
@@ -369,17 +382,17 @@ def _vertex_shell_command(event: dict[str, Any]) -> str | None:
         if cd_path.is_absolute() or ".." in cd_path.parts:
             return None
         parts = parts[3:]
-    return command if bool(parts) and parts[0] == "vertex" else None
+    return command if bool(parts) and parts[0] == CODE_AGENT_COMMAND else None
 
 
-def _looks_like_creation_vertex_command(command: str) -> bool:
+def _looks_like_creation_code_agent_command(command: str) -> bool:
     try:
         parts = shlex.split(str(command or ""))
     except ValueError:
         return False
     if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
         parts = parts[3:]
-    if not parts or parts[0] != "vertex":
+    if not parts or parts[0] != CODE_AGENT_COMMAND:
         return False
     if any(part in {"--version", "-v", "--help", "help"} for part in parts[1:]):
         return False
@@ -431,20 +444,20 @@ def _looks_like_creation_vertex_command(command: str) -> bool:
     )
 
 
-def _latest_vertex_call(events: list[dict[str, Any]]) -> tuple[int, str] | None:
+def _latest_code_agent_call(events: list[dict[str, Any]]) -> tuple[int, str] | None:
     latest: tuple[int, str] | None = None
     for event in events:
-        command = _vertex_shell_command(event)
+        command = _code_agent_shell_command(event)
         if command is not None:
             latest = (int(event.get("event_id") or 0), command)
     return latest
 
 
-def _latest_validation_payload(events: list[dict[str, Any]], latest_vertex_id: int, event_type: str) -> dict[str, Any] | None:
+def _latest_validation_payload(events: list[dict[str, Any]], latest_code_agent_id: int, event_type: str) -> dict[str, Any] | None:
     latest: dict[str, Any] | None = None
     for event in events:
         event_id = int(event.get("event_id") or 0)
-        if event_id <= latest_vertex_id or event.get("type") != event_type:
+        if event_id <= latest_code_agent_id or event.get("type") != event_type:
             continue
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         latest = payload
@@ -452,16 +465,16 @@ def _latest_validation_payload(events: list[dict[str, Any]], latest_vertex_id: i
 
 
 def _latest_web_validation_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
-    latest_call = _latest_vertex_call(events)
+    latest_call = _latest_code_agent_call(events)
     if latest_call is None:
         return {"required": False, "status": "not_required"}
-    latest_vertex_id, command = latest_call
-    latest_result = _latest_validation_payload(events, latest_vertex_id, "web_validation_result")
+    latest_code_agent_id, command = latest_call
+    latest_result = _latest_validation_payload(events, latest_code_agent_id, "web_validation_result")
 
     if latest_result is None:
-        if not _looks_like_creation_vertex_command(command):
+        if not _looks_like_creation_code_agent_command(command):
             return {"required": False, "status": "not_required"}
-        return {"required": True, "status": "pending", "reason": "Site criado pelo Vertex ainda nao passou pela revisao visual."}
+        return {"required": True, "status": "pending", "reason": f"Site criado pelo {CODE_AGENT_LABEL} ainda nao passou pela revisao visual."}
 
     if not latest_result.get("requires_validation"):
         return {"required": False, "status": str(latest_result.get("status") or "skipped"), "result": latest_result}
@@ -475,15 +488,15 @@ def _latest_web_validation_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
-    latest_call = _latest_vertex_call(events)
+def _latest_code_agent_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_call = _latest_code_agent_call(events)
     if latest_call is None:
         return {"required": False, "status": "not_required"}
 
-    latest_vertex_id, command = latest_call
-    web_result = _latest_validation_payload(events, latest_vertex_id, "web_validation_result")
-    project_result = _latest_validation_payload(events, latest_vertex_id, "project_validation_result")
-    creation_command = _looks_like_creation_vertex_command(command)
+    latest_code_agent_id, command = latest_call
+    web_result = _latest_validation_payload(events, latest_code_agent_id, "web_validation_result")
+    project_result = _latest_validation_payload(events, latest_code_agent_id, "project_validation_result")
+    creation_command = _looks_like_creation_code_agent_command(command)
 
     pending_reasons: list[str] = []
     failed_bugs: list[str] = []
@@ -493,9 +506,9 @@ def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
     for label, result in (("web_validation", web_result), ("project_validation", project_result)):
         if result is None:
             if label == "project_validation" and creation_command:
-                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela revisao automatica.")
+                pending_reasons.append(f"Projeto criado pelo {CODE_AGENT_LABEL} ainda nao passou pela revisao automatica.")
             elif label == "web_validation" and creation_command:
-                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela revisao visual.")
+                pending_reasons.append(f"Projeto criado pelo {CODE_AGENT_LABEL} ainda nao passou pela revisao visual.")
             continue
 
         requires_validation = bool(result.get("requires_validation"))
@@ -720,7 +733,7 @@ def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -
     return (
         "Controle automatico de relatorio: nao finalize ainda. "
         "Este pedido tecnico deve anexar um Markdown bonito e legivel no chat. "
-        f"Use shell_run com vertex para criar {filename} no diretorio atual. "
+        f"Use shell_run com {CODE_AGENT_COMMAND} para criar {filename} no diretorio atual. "
         "O arquivo deve conter titulo claro, resumo executivo, contexto do pedido, achados/decisoes principais, "
         "estrutura tecnica ou arquivos relevantes, como executar/testar quando houver software, validacao feita, limites e proximos passos. "
         "Depois observe a validacao e so finalize quando o Markdown existir e estiver nao vazio. "
@@ -732,7 +745,7 @@ def _format_document_gate_instruction(description: str, profile: dict[str, Any])
     parts = [
         "Controle automatico de documento: nao finalize ainda.",
         "O usuario pediu um arquivo final no chat e o artefato valido ainda nao existe.",
-        "Use shell_run com vertex para criar ou atualizar o documento no diretorio atual.",
+        f"Use shell_run com {CODE_AGENT_COMMAND} para criar ou atualizar o documento no diretorio atual.",
     ]
     if profile.get("wants_pdf"):
         parts.append(
@@ -759,13 +772,13 @@ def _format_document_research_gate_instruction(description: str, status: dict[st
     if queries:
         pieces.append("Pesquise e abra fontes com estas consultas: " + " | ".join(queries[:5]) + ".")
     pieces.append("Use browser_google_search, abra resultados relevantes e salve evidencias com browser_extract_article ou browser_extract_text.")
-    pieces.append("Depois chame Vertex com as fontes pesquisadas para criar o Markdown/PDF e so finalize quando o arquivo aparecer no card.")
+    pieces.append(f"Depois chame {CODE_AGENT_LABEL} com as fontes pesquisadas para criar o Markdown/PDF e so finalize quando o arquivo aparecer no card.")
     pieces.append(f"Pedido original: {description}")
     return " ".join(pieces)
 
 
 def _generated_file_response_payload(task_id: str, result: str, events: list[dict[str, Any]]) -> dict[str, Any]:
-    latest_call = _latest_vertex_call(events)
+    latest_call = _latest_code_agent_call(events)
     command = latest_call[1] if latest_call else ""
     files = [
         file
@@ -793,7 +806,7 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
     include_markdown = bool(docs) and (
         is_web_project
         or bool(report_profile.get("requires_markdown"))
-        or _looks_like_creation_vertex_command(command)
+        or _looks_like_creation_code_agent_command(command)
         or ".md" in requested_extensions
         or pdf_requested
         or not requested_extensions
@@ -843,7 +856,7 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
 def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
     sources = database.list_sources(task_id)[:8]
     files = database.list_generated_files(task_id)
-    document_context = document_context_for_vertex(task_id, _latest_user_prompt(history), files, sources)
+    document_context = document_context_for_code_agent(task_id, _latest_user_prompt(history), files, sources)
     if not sources and not document_context:
         return history
     lines = []
@@ -856,12 +869,12 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
         detail = snippet or excerpt
         lines.append(f"- [{source_type} {score}/100] {title}: {source.get('url')}" + (f" — {detail[:520]}" if detail else ""))
     source_context = (
-        "Fontes ja abertas e salvas nesta conversa. IMPORTANTE: Se voce for criar software com Vertex, "
+        f"Fontes ja abertas e salvas nesta conversa. IMPORTANTE: Se voce for criar software com {CODE_AGENT_LABEL}, "
         "USE estas fontes para enriquecer o prompt. Extraia destas fontes: tendencias de design, exemplos "
         "de layout, paleta de cores, estrutura de navegacao, tecnologias recomendadas e boas praticas. "
         "Se houver resultado de vision_analyze no historico, ELE contem analise visual com cores exatas, "
-        "estrutura de layout, estilo visual, tipografia e elementos de UI — incorpore TUDO no prompt do Vertex. "
-        "Monte um prompt detalhado para o Vertex que inclua referencias concretas extraidas das fontes "
+        f"estrutura de layout, estilo visual, tipografia e elementos de UI — incorpore TUDO no prompt do {CODE_AGENT_LABEL}. "
+        f"Monte um prompt detalhado para o {CODE_AGENT_LABEL} que inclua referencias concretas extraidas das fontes "
         "(ex: 'crie um site inspirado nas referencias de [URL], usando paleta de cores similar, layout com "
         "hero section, navegacao superior, secao de depoimentos e rodape com contato'). "
         "Reutilize antes de pesquisar de novo quando responder ao mesmo tema; "
@@ -938,7 +951,7 @@ async def _answer_simple_prompt(
     bus: EventBus,
 ) -> None:
     await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Respondendo"})
-    await bus.publish(task_id, "agent_progress", {"label": "Resposta rapida", "detail": "Sem planner e sem Vertex para pergunta simples."})
+    await bus.publish(task_id, "agent_progress", {"label": "Resposta rapida", "detail": f"Sem planner e sem {CODE_AGENT_LABEL} para pergunta simples."})
     direct = await request_direct_chat_response(history, mode="direct")
     await _finish_text_response(task_id, description, direct["content"], store, bus)
 
@@ -1060,7 +1073,7 @@ async def _inject_pre_research_if_needed(
             "agent_progress",
             {
                 "label": "Pesquisa de referencias concluida",
-                "detail": "Dados coletados. O DeepSeek usara as referencias ao planejar a criacao com Vertex.",
+                "detail": f"Dados coletados. O DeepSeek usara as referencias ao planejar a criacao com {CODE_AGENT_LABEL}.",
             },
         )
     return _history_with_research_context(task_id, history)
@@ -1114,7 +1127,7 @@ async def _inject_document_research_if_needed(
 
     required = int(profile.get("required_sources") or 3)
     subject = str(profile.get("subject") or description)
-    existing = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+    existing = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50)
     if len(existing) >= required:
         return _history_with_research_context(task_id, history)
 
@@ -1127,7 +1140,7 @@ async def _inject_document_research_if_needed(
     seen_urls: set[str] = set()
 
     for query in queries[:5]:
-        current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+        current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50)
         if len(current) >= required:
             break
         await bus.publish(
@@ -1144,7 +1157,7 @@ async def _inject_document_research_if_needed(
         except Exception:
             continue
         for result in list(search.get("results") or [])[:4]:
-            current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40)
+            current = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50)
             if len(current) >= required:
                 break
             href = str(result.get("href") or result.get("url") or "").strip()
@@ -1170,7 +1183,7 @@ async def _inject_document_research_if_needed(
                 continue
             await _save_extracted_source(task_id, bus, article, str(result.get("title") or ""))
 
-    found = len(relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=40))
+    found = len(relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50))
     await bus.publish(
         task_id,
         "agent_progress",
@@ -1206,7 +1219,7 @@ async def _inject_people_research_if_needed(
     # Verifica se ja tem fontes
     existing_sources = database.list_sources(task_id)
     if existing_sources:
-        relevant = relevant_sources_for_query(person_name, existing_sources, limit=3, min_quality=40)
+        relevant = relevant_sources_for_query(person_name, existing_sources, limit=3, min_quality=50)
         if len(relevant) >= profile.get("required_sources", 3):
             return _history_with_research_context(task_id, history)
 
@@ -1387,6 +1400,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         # Pesquisa automatica de pessoas antes do loop ReAct
         history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
 
+        MAX_CODE_AGENT_CALLS = 3
+        code_agent_call_count = 0
+
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):
                 await _cleanup_project_runtime(task_id, bus, "Tarefa parada; preview interno fechado.")
@@ -1398,45 +1414,68 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
             action_name = str(action.get("action", "")).strip()
             if action_name == "finish":
-                validation_gate = _latest_vertex_quality_gate(bus.history(task_id))
-                if validation_gate.get("required") and validation_gate.get("status") != "passed":
-                    status = str(validation_gate.get("status") or "pending")
-                    if status == "blocked":
-                        reason = str(validation_gate.get("reason") or "Revisao automatica obrigatoria indisponivel.")
-                        raise DeepSeekError(reason)
-
-                    bugs = validation_gate.get("bugs") or []
-                    bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Revisao automatica ainda nao foi aprovada.")
-                    await _start_plan_step(task_id, "validate", bus)
-                    await _append_plan_evidence(
-                        task_id,
-                        "validate",
-                        bus,
-                        {"status": status, "summary": bug_text[:500]},
-                    )
+                # Limite de chamadas ao agente de codigo: forcar finalizacao se ja chamou demais
+                if code_agent_call_count >= MAX_CODE_AGENT_CALLS:
                     await bus.publish(
                         task_id,
                         "agent_progress",
                         {
-                            "label": "Corrigindo bugs do projeto",
-                            "detail": "A tarefa nao pode finalizar antes da revisao automatica passar.",
+                            "label": "Finalizando",
+                            "detail": f"Limite de chamadas ao {CODE_AGENT_LABEL} atingido ({MAX_CODE_AGENT_CALLS}x). Entregando o que foi produzido.",
                         },
                     )
-                    history.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Controle automatico de revisao da entrega: nao finalize ainda. "
-                                f"Status da revisao do projeto: {status}. "
-                                f"Problemas encontrados: {bug_text}. "
-                                "Use shell_run com vertex para corrigir exatamente esses bugs no projeto atual. "
-                                "Isso vale para sites, sistemas, APIs, scripts Python, apps Node e qualquer outro codigo criado. "
-                                "Depois da correcao, o Vortax repetira a revisao automatica e so entao podera finalizar. "
-                                "Para HTML/CSS/JS estatico, nao suba servidor manual; o Vortax abrira o preview interno."
-                            ),
-                        }
-                    )
-                    continue
+                    result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
+                    research_prompt = _latest_user_prompt(history) or description
+                    research_status = cross_check_status(research_prompt, database.list_sources(task_id))
+                    result = result + _format_research_note(research_status)
+                    await _finish_text_response(task_id, description, result, store, bus)
+                    return
+
+                # Gate de validacao de projeto (so para codigo, nao para documentos puros)
+                has_code_files = any(
+                    str(f.get("extension") or "").lower() in {".py", ".js", ".html", ".css", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java"}
+                    for f in database.list_generated_files(task_id)
+                )
+                if has_code_files:
+                    validation_gate = _latest_code_agent_quality_gate(bus.history(task_id))
+                    if validation_gate.get("required") and validation_gate.get("status") != "passed":
+                        status = str(validation_gate.get("status") or "pending")
+                        if status == "blocked":
+                            reason = str(validation_gate.get("reason") or "Revisao automatica obrigatoria indisponivel.")
+                            raise DeepSeekError(reason)
+
+                        bugs = validation_gate.get("bugs") or []
+                        bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Revisao automatica ainda nao foi aprovada.")
+                        await _start_plan_step(task_id, "validate", bus)
+                        await _append_plan_evidence(
+                            task_id,
+                            "validate",
+                            bus,
+                            {"status": status, "summary": bug_text[:500]},
+                        )
+                        await bus.publish(
+                            task_id,
+                            "agent_progress",
+                            {
+                                "label": "Corrigindo bugs do projeto",
+                                "detail": "A tarefa nao pode finalizar antes da revisao automatica passar.",
+                            },
+                        )
+                        history.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Controle automatico de revisao da entrega: nao finalize ainda. "
+                                    f"Status da revisao do projeto: {status}. "
+                                    f"Problemas encontrados: {bug_text}. "
+                                    f"Use shell_run com {CODE_AGENT_COMMAND} para corrigir exatamente esses bugs no projeto atual. "
+                                    "Isso vale para sites, sistemas, APIs, scripts Python, apps Node e qualquer outro codigo criado. "
+                                    "Depois da correcao, o Vortax repetira a revisao automatica e so entao podera finalizar. "
+                                    "Para HTML/CSS/JS estatico, nao suba servidor manual; o Vortax abrira o preview interno."
+                                ),
+                            }
+                        )
+                        continue
 
                 result = str(action.get("result") or action.get("params", {}).get("result") or "Tarefa concluida.")
                 document_profile = document_artifact_profile(description)
@@ -1455,7 +1494,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                         str(document_research.get("subject") or description),
                         database.list_sources(task_id),
                         limit=required,
-                        min_quality=40,
+                        min_quality=50,
                     )
                     if len(found_sources) < required:
                         await bus.publish(
@@ -1477,40 +1516,32 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                         )
                         continue
 
-                if document_profile.get("requires_artifact") and not _has_requested_document_artifact(task_id, document_profile):
+                # Gates de documento unificados: documento e relatorio sao tratados juntos
+                needs_document = document_profile.get("requires_artifact") and not _has_requested_document_artifact(task_id, document_profile)
+                report_profile = report_artifact_profile(description)
+                needs_report = report_profile.get("requires_markdown") and not _has_markdown_artifact(task_id)
+
+                if needs_document or needs_report:
+                    label = "Preparando arquivo final"
+                    detail = "A resposta precisa anexar o PDF/Markdown solicitado antes de finalizar."
+                    if needs_document and needs_report:
+                        combined = {**report_profile, **document_profile}
+                        gate_content = _format_document_gate_instruction(description, combined)
+                    elif needs_document:
+                        gate_content = _format_document_gate_instruction(description, document_profile)
+                    else:
+                        gate_content = _format_report_gate_instruction(description, report_profile)
+                        label = "Preparando relatorio"
+                        detail = "A resposta tecnica precisa anexar um Markdown legivel antes de finalizar."
+
                     await bus.publish(
                         task_id,
                         "agent_progress",
-                        {
-                            "label": "Preparando arquivo final",
-                            "detail": "A resposta precisa anexar o PDF/Markdown solicitado antes de finalizar.",
-                        },
+                        {"label": label, "detail": detail},
                     )
-                    history.append(
-                        {
-                            "role": "user",
-                            "content": _format_document_gate_instruction(description, document_profile),
-                        }
-                    )
+                    history.append({"role": "user", "content": gate_content})
                     continue
 
-                report_profile = report_artifact_profile(description)
-                if report_profile.get("requires_markdown") and not _has_markdown_artifact(task_id):
-                    await bus.publish(
-                        task_id,
-                        "agent_progress",
-                        {
-                            "label": "Preparando relatorio",
-                            "detail": "A resposta tecnica precisa anexar um Markdown legivel antes de finalizar.",
-                        },
-                    )
-                    history.append(
-                        {
-                            "role": "user",
-                            "content": _format_report_gate_instruction(description, report_profile),
-                        }
-                    )
-                    continue
                 research_prompt = _latest_user_prompt(history) or description
                 research_status = cross_check_status(research_prompt, database.list_sources(task_id))
                 if not research_status.get("satisfied"):
@@ -1567,6 +1598,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 bus=bus,
                 description=str(action.get("description") or action_name),
             )
+
+            if action_name == "shell_run" and _is_code_agent_shell_call_from_params(action_params):
+                code_agent_call_count += 1
 
             # Checa se foi interrompido apos a ferramenta (o usuario pode ter clicado stop durante)
             if store.is_stopped(task_id):

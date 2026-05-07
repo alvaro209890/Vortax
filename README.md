@@ -1,6 +1,6 @@
 # Vortax
 
-**Agente de IA web local** — inspirado no fluxo do Manus. Converse em um chat e veja a IA operar este computador: pesquisar na web, navegar em páginas, extrair conteúdo, capturar screenshots, **desenvolver software completo usando o Vertex CLI** e gerenciar arquivos — tudo em tempo real.
+**Agente de IA web local** — inspirado no fluxo do Manus. Converse em um chat e veja a IA operar este computador: pesquisar na web, navegar em páginas, extrair conteúdo, capturar screenshots, **desenvolver software completo usando o OpenClaude** e gerenciar arquivos — tudo em tempo real.
 
 > Versão MVP local em LAN. Sem autenticação, sem hospedagem externa.
 
@@ -8,16 +8,16 @@
 
 ---
 
-## Vertex CLI — Motor de Desenvolvimento de Software
+## OpenClaude — Motor de Desenvolvimento de Software
 
-O Vortax usa o **Vertex CLI** como motor para desenvolver software, sites, scripts e qualquer projeto de código que você pedir.
+O Vortax usa o **OpenClaude** como motor para desenvolver software, sites, scripts e qualquer projeto de código que você pedir.
 
-O Vertex é um assistente de codificação por terminal que roda localmente. Ele entende linguagem natural e cria arquivos completos de código. Quando você pede "Crie um site de portfólio" ou "Faça uma API em Python", o agente do Vortax:
+O OpenClaude é um assistente de codificação por terminal que roda localmente. Ele entende linguagem natural e cria arquivos completos de código. Quando você pede "Crie um site de portfólio" ou "Faça uma API em Python", o agente do Vortax:
 
-1. Abre o terminal e executa o comando `vertex` com suas instruções
-2. O Vertex CLI desenvolve o projeto completo dentro da pasta persistente da conversa (`WORKSPACE_PATH/<task_id>/`)
+1. Abre o terminal e executa o comando `openclaude` com suas instruções
+2. O OpenClaude desenvolve o projeto completo dentro da pasta persistente da conversa (`WORKSPACE_PATH/<task_id>/`)
 3. O Vortax valida o projeto antes de deixar a IA finalizar
-4. Se aparecer bug, erro de build, sintaxe quebrada, asset ausente ou problema visual, o agente manda o Vertex corrigir e valida novamente
+4. Se aparecer bug, erro de build, sintaxe quebrada, asset ausente ou problema visual, o agente manda o OpenClaude corrigir e valida novamente
 5. Os arquivos gerados aparecem automaticamente no chat
 6. Você pode baixar cada arquivo individualmente ou todos juntos em um arquivo **.zip**
 
@@ -29,34 +29,36 @@ Quando você pede algo como "Crie um site de vendas moderno", o Vortax automatic
 2. Pesquisa no Google, abre a melhor referência e extrai o conteúdo completo
 3. Analisa visualmente a página (cores, layout, tipografia, estilo)
 4. Alimenta o DeepSeek com esse contexto
-5. O DeepSeek monta um prompt enriquecido para o Vertex: "Crie um site inspirado nas referências [URL], com paleta de cores similar, layout com hero section, navegação superior..."
+5. O DeepSeek monta um prompt enriquecido para o OpenClaude: "Crie um site inspirado nas referências [URL], com paleta de cores similar, layout com hero section, navegação superior..."
 
 Para pedidos simples ("Crie uma calculadora em Python"), a pesquisa é pulada automaticamente.
 
-### Como usar o Vertex diretamente
+### Como usar o OpenClaude diretamente
 
-O Vertex CLI está disponível como comando global do sistema neste computador:
+O OpenClaude está disponível como comando global do sistema neste computador:
 
 ```bash
-# Abrir o chat interativo do Vertex
-vertex
+# Abrir o chat interativo do OpenClaude
+openclaude
 
 # Execução direta de uma tarefa
-vertex "Crie um sistema de login em Python com Flask e SQLite"
+openclaude -p --no-session-persistence "Crie um sistema de login em Python com Flask e SQLite"
 ```
 
 No Vortax, essa chamada é feita automaticamente pelo agente quando você solicita desenvolvimento de software.
 
-### Onde está instalado
+### Execução no Vortax
 
-- **Vertex CLI:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-cli` (v1.2.6)
-- **Vertex Server:** `/media/server/HD Backup/Servidores_NAO_MEXA/vertex-server`
+- **Comando:** `openclaude` disponível no `PATH` do sistema.
+- **Versão validada:** `0.9.2 (OpenClaude)`.
+- **Modo usado pelo backend:** `openclaude -p --permission-mode bypassPermissions --dangerously-skip-permissions --no-session-persistence`.
+- **Modelo/provider:** definidos pelo próprio wrapper instalado; o Vortax não sobrescreve `--model`, `--provider` ou `--agent`.
 
 ---
 
 ## Download de Arquivos
 
-Tudo que o agente (ou o Vertex CLI) criar durante uma conversa fica armazenado e disponível para download:
+Tudo que o agente (ou o OpenClaude) criar durante uma conversa fica armazenado e disponível para download:
 
 - **Download individual** — cada arquivo gerado aparece no painel "Arquivos" com link direto
 - **Download completo em ZIP** — um botão de download reúne todos os arquivos da conversa em um único `.zip`
@@ -73,7 +75,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 ## Funcionalidades
 
 - **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
-- **Resposta rápida sem planner** — perguntas simples são respondidas direto no chat, sem passar por Vertex ou ciclo ReAct
+- **Resposta rápida sem planner** — perguntas simples são respondidas direto no chat, sem passar por OpenClaude ou ciclo ReAct
 - **Exatas com tools** — matemática, física, química, estatística e contas usam `exact_solve`; se o enunciado vier por imagem, o Vortax faz OCR/visão e resolve a partir da transcrição
 - **Contexto por conversa** — cada chat mantém estado de contexto, estimativa de tokens e compactação automática
 - **Navegação web** — Google Chrome do sistema via CDP, pesquisa estruturada, extração de artigos
@@ -81,7 +83,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
 - **Cache de pesquisa por conversa** — antes de chamar o Google, o executor reutiliza fontes boas já salvas para a mesma consulta
 - **Verificação cruzada automática** — preço, versão, documentação, notícia, comparação e dados sensíveis exigem múltiplas fontes e marcação de divergências
-- **Pesquisa automática pré-criação** — antes de criar software, o Vortax pesquisa tendências, abre referências e alimenta o DeepSeek com contexto visual e de design para prompts enriquecidos ao Vertex
+- **Pesquisa automática pré-criação** — antes de criar software, o Vortax pesquisa tendências, abre referências e alimenta o DeepSeek com contexto visual e de design para prompts enriquecidos ao OpenClaude
 - **Pesquisa inteligente de pessoas** — detecção automática de pedidos sobre pessoas, consultas em LinkedIn, GitHub, Wikipedia, currículos e notícias, com no mínimo 3 fontes antes de responder
 - **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
 - **Painel de atividade enxuto** — timeline lateral mostra só marcos úteis, sem ruído de stdout, status repetido ou screenshots intermediários
@@ -89,10 +91,10 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Indicador de digitação** — enquanto a IA prepara a resposta, o chat mostra os três pontos animados no balão do Vortax
 - **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete, com pesquisa automática prévia para criação de software e pessoas
-- **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
-- **Validação pós-Vertex** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
-- **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, envia os bugs ao Vertex e repete a validação
-- **Stream detalhado do Vertex** — card com etapa atual, legenda estimada, arquivo atual, trilha de progresso e status da validação
+- **Desenvolvimento de software** — usa o OpenClaude via shell_run para criar projetos completos
+- **Validação pós-OpenClaude** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
+- **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, envia os bugs ao OpenClaude e repete a validação
+- **Stream detalhado do OpenClaude** — card com etapa atual, legenda estimada, arquivo atual, trilha de progresso e status da validação
 - **Shell seguro** — comandos com whitelist, bloqueio de padrões perigosos e workspace isolada
 - **Download em ZIP** — todos os arquivos gerados na conversa em um único arquivo
 - **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
@@ -113,9 +115,9 @@ Usuário na LAN (http://IP:5173)
                                  │                       │
                                  ▼                       ▼
             ┌────────────────────────────┐   ┌──────────────────────┐
-            │    Ferramentas Locais      │   │   Vertex CLI         │
+            │    Ferramentas Locais      │   │   OpenClaude         │
             │  • Chrome CDP (Playwright) │   │   (via shell_run)    │
-            │  • Shell seguro + Vertex   │   │                      │
+            │  • Shell seguro            │   │                      │
             │  • Visão (Groq/Llama 4)    │   │                      │
             │  • Exatas (exact_solve)    │   │                      │
             └────────────────────────────┘   └──────────────────────┘
@@ -156,7 +158,7 @@ Vortax/
 - Node.js 18+
 - Google Chrome instalado
 - Chave de API DeepSeek (ou roda em modo mock)
-- Vertex CLI instalado (para desenvolvimento de software)
+- OpenClaude instalado (para desenvolvimento de software)
 
 ## Instalação e execução
 
@@ -271,7 +273,7 @@ PUBLIC_HOSTS=vortax-api.cursar.space
 | Navegador | Playwright + Google Chrome CDP |
 | IA (planejamento) | DeepSeek V4 Flash |
 | IA (visão) | Groq + Llama 4 Scout |
-| Motor de software | Vertex CLI via shell_run |
+| Motor de software | OpenClaude via shell_run |
 | Shell | Whitelist, bloqueio de padrões perigosos, timeout |
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
@@ -280,12 +282,12 @@ PUBLIC_HOSTS=vortax-api.cursar.space
 
 ## Validação e Correção Automática
 
-Depois de cada execução do Vertex, o Vortax registra eventos de validação:
+Depois de cada execução do OpenClaude, o Vortax registra eventos de validação:
 
 - `web_validation_*` para sites, interfaces, dashboards e apps web;
 - `project_validation_*` para qualquer projeto de código, incluindo Python, Node/JS, scripts, APIs e sistemas locais.
 
-O runner só permite finalizar quando a validação obrigatória passa. Se houver bug, o próprio histórico enviado ao planner inclui os problemas encontrados e obriga uma nova chamada ao Vertex para correção no projeto atual.
+O runner só permite finalizar quando a validação obrigatória passa. Se houver bug, o próprio histórico enviado ao planner inclui os problemas encontrados e obriga uma nova chamada ao OpenClaude para correção no projeto atual.
 
 Checagens atuais:
 
@@ -306,7 +308,7 @@ npm run build
 
 ## Contexto e Compactação
 
-O Vortax mantém contexto por conversa no SQLite, inspirado na lógica de sessão do Vertex:
+O Vortax mantém contexto por conversa no SQLite, inspirado na lógica de sessão do OpenClaude:
 
 - cada `task_id` tem um registro em `conversation_contexts`;
 - o backend estima tokens por histórico textual, imagens e resumo compactado;

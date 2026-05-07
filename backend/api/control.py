@@ -36,7 +36,7 @@ def _iter_process_cmdlines() -> list[tuple[int, str]]:
 
 
 def _kill_runner_and_children(task_id: str) -> bool:
-    """Cancela o runner asyncio e mata subprocessos shell/vertex ativos."""
+    """Cancela o runner asyncio e mata subprocessos shell/openclaude ativos."""
     stopped = False
 
     # Cancela o runner task
@@ -69,7 +69,7 @@ def _kill_runner_and_children(task_id: str) -> bool:
         if pid == os.getpid():
             continue
         projects_root = str(settings.WORKSPACE_PATH)
-        if task_id in cmdline or ("vertex" in cmdline and projects_root in cmdline):
+        if task_id in cmdline or ("openclaude" in cmdline and projects_root in cmdline):
             stopped = True
             try:
                 os.kill(pid, signal.SIGTERM)

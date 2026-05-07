@@ -54,7 +54,7 @@ function statusLabel(status) {
   return "Pronto";
 }
 
-const vertexStageLabels = {
+const codeAgentStageLabels = {
   starting: "Preparando ambiente",
   planning: "Planejando arquitetura",
   creating: "Criando estrutura",
@@ -69,8 +69,8 @@ const vertexStageLabels = {
   error: "Corrigindo falha",
 };
 
-const vertexStageDescriptions = {
-  starting: "Abrindo a sessao do Vertex na pasta da conversa.",
+const codeAgentStageDescriptions = {
+  starting: "Abrindo a sessao do OpenClaude na pasta da conversa.",
   planning: "Separando requisitos em arquivos, componentes e validacoes.",
   creating: "Montando a base do projeto antes de editar detalhes.",
   writing_file: "Aplicando alteracoes em arquivos reais do workspace.",
@@ -90,8 +90,8 @@ function fileName(value) {
 
 function compactCommand(command = "") {
   const value = String(command).trim().replace(/^cd\s+[^&]+\s*&&\s*/, "");
-  if (!value) return "vertex --workspace tarefa";
-  if (/^vertex\b/.test(value)) return "vertex --workspace tarefa";
+  if (!value) return "openclaude --workspace tarefa";
+  if (/^openclaude\b/.test(value)) return "openclaude --workspace tarefa";
   return value.length > 72 ? `${value.slice(0, 69)}...` : value;
 }
 
@@ -153,14 +153,14 @@ function latestBrowserActivity(events) {
   };
 }
 
-function isVertexShell(event) {
+function isCodeAgentShell(event) {
   const command = String(event?.payload?.params?.command || "").trim();
-  return /\bvertex\b/.test(command.replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, ""));
+  return /\bopenclaude\b/.test(command.replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, ""));
 }
 
 function latestPreview(events) {
   const frame = latestEvent(events, (event) => event.type === "screen_frame" && event.payload?.image_base64);
-  const vertex = latestEvent(events, (event) => event.type === "vertex_progress");
+  const codeAgent = latestEvent(events, (event) => event.type === "vertex_progress");
   const shell = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run");
   const browser = latestBrowserActivity(events);
   const candidates = [];
@@ -179,11 +179,11 @@ function latestPreview(events) {
   if (browser) {
     candidates.push(browser);
   }
-  if (vertex) {
+  if (codeAgent) {
     candidates.push({
-      createdAt: eventTime(vertex),
-      file: vertex.payload?.file,
-      label: vertex.payload?.message || "Vertex trabalhando",
+      createdAt: eventTime(codeAgent),
+      file: codeAgent.payload?.file,
+      label: codeAgent.payload?.message || "OpenClaude trabalhando",
       mode: "editor",
       using: "Editor",
     });
@@ -191,9 +191,9 @@ function latestPreview(events) {
   if (shell) {
     candidates.push({
       createdAt: eventTime(shell),
-      label: isVertexShell(shell) ? "Vertex iniciando" : shell.payload?.description || shell.payload?.params?.command || "Terminal",
-      mode: isVertexShell(shell) ? "editor" : "terminal",
-      using: isVertexShell(shell) ? "Editor" : "Terminal",
+      label: isCodeAgentShell(shell) ? "OpenClaude iniciando" : shell.payload?.description || shell.payload?.params?.command || "Terminal",
+      mode: isCodeAgentShell(shell) ? "editor" : "terminal",
+      using: isCodeAgentShell(shell) ? "Editor" : "Terminal",
     });
   }
 
@@ -257,7 +257,7 @@ function CodingWorkspace({ snapshot }) {
         </div>
         <span className="computer-ide-title">
           <Code2 size={13} />
-          Vertex Workspace
+          OpenClaude Workspace
         </span>
         <span className={`computer-ide-status ${snapshot.status === "done" ? "done" : "running"}`}>
           {snapshot.status === "done" ? "salvo" : "ao vivo"}
@@ -372,15 +372,15 @@ function latestPayload(events, predicate) {
 }
 
 function buildCodingSnapshot(events, preview) {
-  const vertexEvents = events.filter((event) => event.type === "vertex_progress");
-  const latestVertex = vertexEvents[vertexEvents.length - 1]?.payload || {};
+  const codeAgentEvents = events.filter((event) => event.type === "vertex_progress");
+  const latestCodeAgent = codeAgentEvents[codeAgentEvents.length - 1]?.payload || {};
   const filesPayload = latestPayload(events, (event) => event.type === "files_created" && event.payload?.files?.length);
-  const realFiles = normalizeFiles(latestVertex.files?.length ? latestVertex.files : filesPayload?.files || []);
+  const realFiles = normalizeFiles(latestCodeAgent.files?.length ? latestCodeAgent.files : filesPayload?.files || []);
   const lastShellCall = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run");
   const lastShellResult = latestEvent(events, (event) => event.type === "tool_result" && event.payload?.name === "shell_run");
-  const hasCodingActivity = vertexEvents.length > 0 || Boolean(lastShellCall) || realFiles.length > 0;
-  const activeFile = fileName(latestVertex.file || realFiles[0]) || (hasCodingActivity ? "App.jsx" : "");
-  const stage = hasCodingActivity ? latestVertex.stage || "executing" : preview.mode || "idle";
+  const hasCodingActivity = codeAgentEvents.length > 0 || Boolean(lastShellCall) || realFiles.length > 0;
+  const activeFile = fileName(latestCodeAgent.file || realFiles[0]) || (hasCodingActivity ? "App.jsx" : "");
+  const stage = hasCodingActivity ? latestCodeAgent.stage || "executing" : preview.mode || "idle";
   const shellEvents = events
     .filter((event) => event.type === "shell_stdout" || event.type === "shell_stderr")
     .slice(-5);
@@ -390,12 +390,12 @@ function buildCodingSnapshot(events, preview) {
   const files = realFiles.length
     ? realFiles.slice(0, 5)
     : ["src/App.jsx", "src/index.css", "package.json", "README.md"];
-  const status = latestVertex.status || (lastShellResult ? "done" : lastShellCall ? "running" : "idle");
-  const stageLabel = hasCodingActivity ? vertexStageLabels[stage] || "Programando" : preview.label || "Computador pronto";
-  const stageDetail = latestVertex.message
+  const status = latestCodeAgent.status || (lastShellResult ? "done" : lastShellCall ? "running" : "idle");
+  const stageLabel = hasCodingActivity ? codeAgentStageLabels[stage] || "Programando" : preview.label || "Computador pronto";
+  const stageDetail = latestCodeAgent.message
     || validation?.summary
     || validation?.reason
-    || vertexStageDescriptions[stage]
+    || codeAgentStageDescriptions[stage]
     || "Acompanhando a sessao de desenvolvimento.";
   const command = hasCodingActivity ? compactCommand(lastShellCall?.payload?.params?.command) : "Computador do Vortax";
   const terminalLines = shellEvents.length
@@ -453,22 +453,22 @@ function visibleProgressSteps(steps, terminal) {
   return steps.slice(0, Math.min(steps.length, lastIndex + 2));
 }
 
-function buildVertexProgress(events, agentStatus) {
-  const vertexEvents = events.filter((event) => event.type === "vertex_progress");
-  const latestVertex = vertexEvents[vertexEvents.length - 1]?.payload || null;
+function buildCodeAgentProgress(events, agentStatus) {
+  const codeAgentEvents = events.filter((event) => event.type === "vertex_progress");
+  const latestCodeAgent = codeAgentEvents[codeAgentEvents.length - 1]?.payload || null;
   const delegated = events.some((event) =>
     event.type === "ai_exchange"
     && event.payload?.actor === "deepseek"
-    && event.payload?.target === "vertex"
+    && (event.payload?.target === "openclaude" || event.payload?.target === "vertex")
   );
-  const shellVertex = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isVertexShell(event));
-  const active = delegated || shellVertex || vertexEvents.length > 0;
+  const shellCodeAgent = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run" && isCodeAgentShell(event));
+  const active = delegated || shellCodeAgent || codeAgentEvents.length > 0;
   if (!active) return null;
 
-  const done = latestVertex?.status === "done" || latestVertex?.stage === "done";
+  const done = latestCodeAgent?.status === "done" || latestCodeAgent?.stage === "done";
   const filesPayload = latestPayload(events, (event) => event.type === "files_created" && event.payload?.files?.length);
-  const files = filesPayload?.files || latestVertex?.files || [];
-  const fileName = latestVertex?.file || files[0]?.path || files[0]?.name || "";
+  const files = filesPayload?.files || latestCodeAgent?.files || [];
+  const fileName = latestCodeAgent?.file || files[0]?.path || files[0]?.name || "";
   const validationStarted = events.some((event) =>
     event.type === "web_validation_started"
     || event.type === "project_validation_started"
@@ -481,43 +481,43 @@ function buildVertexProgress(events, agentStatus) {
   const validationStatus = validationResult?.status || "";
   const validationFailed = validationStatus === "failed" || validationStatus === "blocked";
   const validationDone = ["passed", "skipped"].includes(validationStatus) || done;
-  const hasWriting = vertexEvents.some((event) =>
+  const hasWriting = codeAgentEvents.some((event) =>
     ["writing_file", "creating", "editing", "installing", "executing", "configuring"].includes(event.payload?.stage)
   ) || files.length > 0;
-  const hasPlanning = vertexEvents.some((event) =>
+  const hasPlanning = codeAgentEvents.some((event) =>
     ["starting", "planning"].includes(event.payload?.stage)
-  ) || delegated || shellVertex;
+  ) || delegated || shellCodeAgent;
   const terminal = ["done", "stopped", "error", "idle"].includes(agentStatus) || done;
 
   const steps = [
     progressStep(
-      "vertex-delegation",
-      "Delegar ao Vertex",
-      "DeepSeek enviou a parte de codigo para o Vertex CLI.",
+      "openclaude-delegation",
+      "Delegar ao OpenClaude",
+      "DeepSeek enviou a parte de codigo para o OpenClaude.",
       phaseStatus(active, hasPlanning || hasWriting || done),
     ),
     progressStep(
-      "vertex-plan",
+      "openclaude-plan",
       "Planejar projeto",
-      latestVertex?.stage === "planning" ? latestVertex.message : "Definir estrutura, arquivos e criterios de entrega.",
+      latestCodeAgent?.stage === "planning" ? latestCodeAgent.message : "Definir estrutura, arquivos e criterios de entrega.",
       phaseStatus(hasPlanning, hasWriting || validationStarted || done),
     ),
     progressStep(
-      "vertex-write",
+      "openclaude-write",
       "Criar arquivos",
-      fileName ? `Trabalhando em ${String(fileName).split("/").pop()}.` : files.length ? `${files.length} arquivo(s) sincronizados.` : latestVertex?.message || "Escrever e ajustar a entrega.",
+      fileName ? `Trabalhando em ${String(fileName).split("/").pop()}.` : files.length ? `${files.length} arquivo(s) sincronizados.` : latestCodeAgent?.message || "Escrever e ajustar a entrega.",
       phaseStatus(hasWriting, files.length > 0 || validationStarted || done),
     ),
     progressStep(
-      "vertex-validate",
+      "openclaude-validate",
       "Validar entrega",
       validationResult?.reason || validationResult?.summary || (validationStarted ? "Revisao automatica em andamento." : "Aguardar revisao automatica do Vortax."),
       phaseStatus(validationStarted, validationDone, validationFailed),
     ),
     progressStep(
-      "vertex-return",
+      "openclaude-return",
       "Devolver resultado",
-      done ? latestVertex?.message || "Vertex devolveu a entrega ao Vortax." : "A resposta final sera montada apos a revisao.",
+      done ? latestCodeAgent?.message || "OpenClaude devolveu a entrega ao Vortax." : "A resposta final sera montada apos a revisao.",
       phaseStatus(done, done),
     ),
   ];
@@ -525,7 +525,7 @@ function buildVertexProgress(events, agentStatus) {
   return {
     doneCount: steps.filter((step) => step.status === "passed").length,
     steps: visibleProgressSteps(steps, terminal),
-    title: "Trabalho do Vertex",
+    title: "Trabalho do OpenClaude",
     totalCount: steps.length,
   };
 }
@@ -542,10 +542,10 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
   const livePreview = useMemo(() => latestPreview(events), [events]);
   const preview = livePlayback ? livePreview : selectedFrame || livePreview;
   const codingSnapshot = useMemo(() => buildCodingSnapshot(events, preview), [events, preview]);
-  const vertexProgress = useMemo(() => buildVertexProgress(events, agentStatus), [agentStatus, events]);
+  const codeAgentProgress = useMemo(() => buildCodeAgentProgress(events, agentStatus), [agentStatus, events]);
   const firstEvent = events.find((event) => event.type === "user_message" || event.type === "task_created");
   const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
-  const planningFallbackSteps = busy && !vertexProgress && !livePlan.hasSteps
+  const planningFallbackSteps = busy && !codeAgentProgress && !livePlan.hasSteps
     ? [
       progressStep(
         "instant-plan",
@@ -568,9 +568,9 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     ]
     : [];
   const planSteps = livePlan.visibleSteps?.length ? livePlan.visibleSteps : livePlan.steps || [];
-  const progressSteps = vertexProgress?.steps || (planSteps.length ? planSteps : planningFallbackSteps);
-  const progressTotal = vertexProgress?.totalCount || livePlan.totalCount || planningFallbackSteps.length || 0;
-  const progressDone = vertexProgress?.doneCount || livePlan.doneCount || 0;
+  const progressSteps = codeAgentProgress?.steps || (planSteps.length ? planSteps : planningFallbackSteps);
+  const progressTotal = codeAgentProgress?.totalCount || livePlan.totalCount || planningFallbackSteps.length || 0;
+  const progressDone = codeAgentProgress?.doneCount || livePlan.doneCount || 0;
   const total = progressTotal || livePlan.totalCount || 0;
   const done = progressDone || livePlan.doneCount || 0;
   const terminalLabel = agentStatus === "done"
@@ -705,7 +705,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
 
               <div className="computer-progress-card">
                 <div className="computer-progress-head">
-                  <strong>{vertexProgress?.title || "Progresso da tarefa"}</strong>
+                  <strong>{codeAgentProgress?.title || "Progresso da tarefa"}</strong>
                   <span>{progressDone}/{progressTotal || 1}</span>
                 </div>
                 <div className="computer-progress-list">

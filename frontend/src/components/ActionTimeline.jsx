@@ -26,14 +26,14 @@ const hiddenTypes = new Set([
   "dev_server_stopped",
 ]);
 
-const importantVertexStages = new Set(["starting", "validating", "done", "error"]);
+const importantCodeAgentStages = new Set(["starting", "validating", "done", "error"]);
 
 function iconFor(event) {
   const tool = event.payload?.name || event.payload?.tool;
   if (event.type === "error") return <AlertTriangle size={16} />;
   if (event.type === "screen_frame") return <Monitor size={16} />;
   if (event.type === "vertex_progress") return <Code2 size={16} />;
-  if (event.type === "ai_exchange") return event.payload?.actor === "vertex" ? <Code2 size={16} /> : <Bot size={16} />;
+  if (event.type === "ai_exchange") return ["openclaude", "vertex"].includes(event.payload?.actor) ? <Code2 size={16} /> : <Bot size={16} />;
   if (event.type === "web_validation_started" || event.type === "web_validation_step") return <Monitor size={16} />;
   if (event.type === "web_validation_result") {
     return event.payload?.status === "passed" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />;
@@ -56,8 +56,8 @@ function titleFor(event) {
   if (event.type === "tool_call") return toolTitle(payload.name, "Executando");
   if (event.type === "tool_result") return toolTitle(payload.name, "Resultado");
   if (event.type === "screen_frame") return "Tela atualizada";
-  if (event.type === "vertex_progress") return "Vertex trabalhando";
-  if (event.type === "ai_exchange") return "DeepSeek ↔ Vertex";
+  if (event.type === "vertex_progress") return "OpenClaude trabalhando";
+  if (event.type === "ai_exchange") return "DeepSeek ↔ OpenClaude";
   if (event.type === "web_validation_started") return "Revisao do site";
   if (event.type === "web_validation_step") return payload.label || "Testando site";
   if (event.type === "web_validation_result") return payload.status === "passed" ? "Site revisado" : "Ajustes no site";
@@ -139,7 +139,7 @@ function isHighSignalEvent(event) {
   if (hiddenTypes.has(event.type)) return false;
   if (event.type === "vertex_progress") {
     const stage = event.payload?.stage || event.payload?.current_stage;
-    return importantVertexStages.has(stage);
+    return importantCodeAgentStages.has(stage);
   }
   if (event.type === "tool_call") {
     const tool = event.payload?.name;

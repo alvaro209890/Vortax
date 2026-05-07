@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import signal
+import shlex
 import subprocess
 import termios
 from pathlib import Path
@@ -31,9 +32,9 @@ SHELL_WHITELIST = {
     "curl", "wget", "git", "pandoc", "ffmpeg", "libreoffice", "convert",
     "grep", "find", "wc", "head", "tail", "sort", "uniq", "awk", "sed", "cut", "tr",
     "df", "free", "uname",
-    # Vertex CLI
-    "vertex",
-    # Node.js ecosystem (vertex depende disso)
+    # OpenClaude code agent
+    "openclaude",
+    # Node.js ecosystem (openclaude depende disso)
     "which", "whereis", "dirname", "basename", "readlink",
     # Gerenciamento de arquivos na workspace
     "rm", "rmdir",
@@ -74,15 +75,15 @@ BLOCKED_PATTERNS = [
 
 BLOCKED_RM_PATTERN = re.compile(r"\brm\b")
 
-# ── Vertex CLI progress patterns ───────────────────────────────────────────
-# O Vertex emite linhas como:
+# ── Code agent progress patterns ───────────────────────────────────────────
+# O OpenClaude pode emitir linhas como:
 #   "Planejando a tarefa..."
 #   "Criando arquivo src/index.html"
 #   "Instalando dependências..."
 #   "Executando testes..."
 #   "Tarefa concluída"
 
-VERTEX_PROGRESS_PATTERNS = [
+CODE_AGENT_PROGRESS_PATTERNS = [
     (re.compile(r"\b(planejando|analisando|entendendo|lendo|mapeando|investigando)\b", re.IGNORECASE), "planning"),
     (re.compile(r"\b(criando|escrevendo|gerando)\s+(o\s+)?(arquivo|ficheiro|file)\b", re.IGNORECASE), "writing_file"),
     (re.compile(r"\b(criando|escrevendo|gerando)\b", re.IGNORECASE), "creating"),
@@ -95,7 +96,7 @@ VERTEX_PROGRESS_PATTERNS = [
     (re.compile(r"\b(verificando|validando|checando|chequeando)\b", re.IGNORECASE), "validating"),
 ]
 
-VERTEX_SIMULATED_PROGRESS = [
+CODE_AGENT_SIMULATED_PROGRESS = [
     ("planning", "Analisando o pedido e separando as partes do projeto."),
     ("creating", "Montando a estrutura de pastas e arquivos."),
     ("writing_file", "Escrevendo os arquivos principais da interface."),
@@ -163,7 +164,7 @@ TUI_ARTIFACT_PATTERNS = [
     re.compile(r"^esctointerrupt", re.IGNORECASE),
     re.compile(r"vertex-api\.cursar\.space.*painel", re.IGNORECASE),
     re.compile(r"^8;;", re.IGNORECASE),
-    re.compile(r"^\d+;.*vertex", re.IGNORECASE),
+    re.compile(r"^\d+;.*(?:vertex|openclaude)", re.IGNORECASE),
     re.compile(r"^;?id=", re.IGNORECASE),
 ]
 
@@ -415,16 +416,20 @@ def _has_blocked_patterns(command: str) -> str | None:
 
 
 def _shell_timeout(command: str) -> float:
-    if "vertex" in command:
-        return float(getattr(settings, "SHELL_VERTEX_TIMEOUT_SECONDS", 300) or 300)
+    if "openclaude" in command:
+        return float(
+            getattr(settings, "SHELL_CODE_AGENT_TIMEOUT_SECONDS", None)
+            or getattr(settings, "SHELL_VERTEX_TIMEOUT_SECONDS", 300)
+            or 300
+        )
     return float(getattr(settings, "SHELL_TIMEOUT_SECONDS", 30) or 30)
 
 
-def _is_vertex_executable(executable: str) -> bool:
-    return executable == "vertex"
+def _is_code_agent_executable(executable: str) -> bool:
+    return executable == "openclaude"
 
 
-def _is_noninteractive_vertex_command(command: str) -> bool:
+def _is_noninteractive_code_agent_command(command: str) -> bool:
     return bool(re.search(r"(^|\s)(-p|--print)(\s|$)", command))
 
 
@@ -475,7 +480,7 @@ async def _publish_ai_exchange(
     )
 
 
-async def _publish_vertex_terminal_frame(
+async def _publish_code_agent_terminal_frame(
     task_id: str,
     bus: Any,
     terminal_lines: list[dict[str, str]],
@@ -494,9 +499,9 @@ async def _publish_vertex_terminal_frame(
             "message": (
                 "Entrega pronta."
                 if status == "done"
-                else "Vertex encontrou um erro."
+                else "OpenClaude encontrou um erro."
                 if status == "error"
-                else "Vertex esta executando a tarefa."
+                else "OpenClaude esta executando a tarefa."
             ),
             "status": status,
             "current_stage": current_stage,
@@ -515,7 +520,7 @@ def _set_pty_size(fd: int, rows: int = 32, cols: int = 120) -> None:
         pass
 
 
-def _make_vertex_preexec(slave_fd: int):
+def _make_code_agent_preexec(slave_fd: int):
     def _preexec() -> None:
         os.setsid()
         try:
@@ -607,13 +612,13 @@ def _looks_like_foreground_dev_server(command: str) -> bool:
     )
 
 
-def _parse_vertex_progress(line: str) -> dict[str, Any] | None:
-    """Tenta extrair progresso estruturado de uma linha de stdout do Vertex CLI."""
+def _parse_code_agent_progress(line: str) -> dict[str, Any] | None:
+    """Tenta extrair progresso estruturado de uma linha de stdout do agente de codigo."""
     stripped = line.strip()
     if not stripped:
         return None
 
-    for pattern, stage in VERTEX_PROGRESS_PATTERNS:
+    for pattern, stage in CODE_AGENT_PROGRESS_PATTERNS:
         if pattern.search(stripped):
             # Tenta extrair nome de arquivo se for writing_file/reading_file
             file_name = None
@@ -706,8 +711,8 @@ async def _ask_deepseek_for_response(
                 task_id,
                 bus,
                 actor="deepseek",
-                target="vertex",
-                message=f"DeepSeek respondeu ao prompt interativo do Vertex: {content}",
+                target="openclaude",
+                message=f"DeepSeek respondeu ao prompt interativo do OpenClaude: {content}",
                 kind="auto_response",
             )
         return content[:500]
@@ -715,7 +720,7 @@ async def _ask_deepseek_for_response(
         return None
 
 
-async def _run_vertex_pty(
+async def _run_code_agent_pty(
     cmd: str,
     *,
     cwd_path: Path,
@@ -743,7 +748,7 @@ async def _run_vertex_pty(
             stderr=slave_fd,
             text=False,
             env=env,
-            preexec_fn=_make_vertex_preexec(slave_fd),
+            preexec_fn=_make_code_agent_preexec(slave_fd),
             close_fds=True,
         )
     except OSError as exc:
@@ -757,7 +762,7 @@ async def _run_vertex_pty(
 
     terminal_lines: list[dict[str, str]] = []
     stdout_lines: list[str] = []
-    latest_vertex_stage: str | None = None
+    latest_code_agent_stage: str | None = None
     interactive_rounds = 0
     current_line = ""
     recent_text = ""
@@ -782,12 +787,12 @@ async def _run_vertex_pty(
         await _publish_ai_exchange(
             task_id,
             bus,
-            actor="vertex",
+            actor="openclaude",
             target="deepseek",
-            message="Vertex iniciou em uma CLI com TTY real.",
+            message="OpenClaude iniciou em uma CLI com TTY real.",
             kind="start",
         )
-        await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running")
+        await _publish_code_agent_terminal_frame(task_id, bus, terminal_lines, status="running")
 
     def _check_stopped() -> bool:
         nonlocal stopped
@@ -819,17 +824,17 @@ async def _run_vertex_pty(
         if not force and now - last_terminal_frame_at < _terminal_frame_interval():
             return
         last_terminal_frame_at = now
-        await _publish_vertex_terminal_frame(
+        await _publish_code_agent_terminal_frame(
             task_id or "",
             bus,
             _frame_lines(),
             status=status,
-            current_stage=latest_vertex_stage,
+            current_stage=latest_code_agent_stage,
             files=last_file_summary.get("root_files") or [],
         )
 
     async def _publish_terminal_line(line: str) -> None:
-        nonlocal latest_vertex_stage, last_output_at
+        nonlocal latest_code_agent_stage, last_output_at
         stripped = _display_terminal_line(line)
         if not stripped or _is_spinner_noise(stripped):
             return
@@ -841,14 +846,14 @@ async def _run_vertex_pty(
         terminal_lines.append({"stream": "stdout", "line": display})
         if bus and task_id:
             await bus.publish(task_id, "shell_stdout", {"line": display})
-            progress = _parse_vertex_progress(stripped)
+            progress = _parse_code_agent_progress(stripped)
             if progress:
-                latest_vertex_stage = str(progress.get("stage") or "")
+                latest_code_agent_stage = str(progress.get("stage") or "")
                 await bus.publish(task_id, "vertex_progress", progress)
                 await _publish_ai_exchange(
                     task_id,
                     bus,
-                    actor="vertex",
+                    actor="openclaude",
                     target="deepseek",
                     message=progress["message"],
                     kind="progress",
@@ -856,7 +861,7 @@ async def _run_vertex_pty(
             await _publish_terminal_frame(force=False)
 
     async def _publish_simulated_progress(*, force: bool = False) -> None:
-        nonlocal latest_vertex_stage, last_simulated_progress_at, simulated_progress_index
+        nonlocal latest_code_agent_stage, last_simulated_progress_at, simulated_progress_index
         if not bus or not task_id:
             return
         now = loop.time()
@@ -864,12 +869,12 @@ async def _run_vertex_pty(
             return
         last_simulated_progress_at = now
         elapsed = max(0, int(now - (deadline - timeout)))
-        target_index = min(elapsed // 8, len(VERTEX_SIMULATED_PROGRESS) - 1)
+        target_index = min(elapsed // 8, len(CODE_AGENT_SIMULATED_PROGRESS) - 1)
         if target_index <= simulated_progress_index and not force:
             return
         simulated_progress_index = target_index
-        stage, message = VERTEX_SIMULATED_PROGRESS[target_index]
-        latest_vertex_stage = stage
+        stage, message = CODE_AGENT_SIMULATED_PROGRESS[target_index]
+        latest_code_agent_stage = stage
         await bus.publish(
             task_id,
             "vertex_progress",
@@ -900,7 +905,7 @@ async def _run_vertex_pty(
             if len(current_line) > 400:
                 current_line = current_line[-400:]
 
-    async def _interrupt_vertex_group(pgid: int) -> None:
+    async def _interrupt_code_agent_group(pgid: int) -> None:
         try:
             os.write(master_fd, b"\x03")
         except OSError:
@@ -941,7 +946,7 @@ async def _run_vertex_pty(
                         await _publish_terminal_line(
                             "Servidor local em foreground detectado; Vortax encerrou o processo e usara o preview interno."
                         )
-                        await _interrupt_vertex_group(pgid)
+                        await _interrupt_code_agent_group(pgid)
                         break
                     if not file_summary.get("has_package_json"):
                         snapshot = (
@@ -953,8 +958,16 @@ async def _run_vertex_pty(
                             static_snapshot_since = now
                         stable_for = now - (static_snapshot_since or now)
                         quiet_for = now - last_output_at
-                        ready_seconds = float(getattr(settings, "VERTEX_STATIC_READY_SECONDS", 4.0) or 4.0)
-                        incomplete_seconds = float(getattr(settings, "VERTEX_STATIC_INCOMPLETE_SECONDS", 45.0) or 45.0)
+                        ready_seconds = float(
+                            getattr(settings, "CODE_AGENT_STATIC_READY_SECONDS", None)
+                            or getattr(settings, "VERTEX_STATIC_READY_SECONDS", 4.0)
+                            or 4.0
+                        )
+                        incomplete_seconds = float(
+                            getattr(settings, "CODE_AGENT_STATIC_INCOMPLETE_SECONDS", None)
+                            or getattr(settings, "VERTEX_STATIC_INCOMPLETE_SECONDS", 45.0)
+                            or 45.0
+                        )
                         if stable_for >= ready_seconds and quiet_for >= min(ready_seconds, 2.0):
                             static_missing_assets = missing_local_asset_refs(cwd_path)
                             if static_missing_assets and stable_for < incomplete_seconds:
@@ -963,15 +976,15 @@ async def _run_vertex_pty(
                             if static_missing_assets:
                                 static_project_incomplete = True
                                 await _publish_terminal_line(
-                                    "Projeto estatico incompleto: ha referencias locais sem arquivo. Vortax pedira correcao ao Vertex."
+                                    "Projeto estatico incompleto: ha referencias locais sem arquivo. Vortax pedira correcao ao OpenClaude."
                                 )
-                                await _interrupt_vertex_group(pgid)
+                                await _interrupt_code_agent_group(pgid)
                                 break
                             static_project_detected_success = True
                             await _publish_terminal_line(
-                                "Projeto estatico detectado; Vortax encerrou o Vertex e iniciara a revisao no Chrome."
+                                "Projeto estatico detectado; Vortax encerrou o OpenClaude e iniciara a revisao no Chrome."
                             )
-                            await _interrupt_vertex_group(pgid)
+                            await _interrupt_code_agent_group(pgid)
                             break
 
             try:
@@ -1007,7 +1020,7 @@ async def _run_vertex_pty(
                     await _publish_ai_exchange(
                         task_id,
                         bus,
-                        actor="vertex",
+                        actor="openclaude",
                         target="deepseek",
                         message=prompt_snapshot,
                         kind="prompt",
@@ -1033,12 +1046,12 @@ async def _run_vertex_pty(
 
     returncode = process.returncode if process.returncode is not None else -1
     if bus and task_id:
-        await _publish_vertex_terminal_frame(
+        await _publish_code_agent_terminal_frame(
             task_id,
             bus,
             _frame_lines(),
             status="done" if returncode == 0 or server_detected_success or static_project_detected_success else "error",
-            current_stage=latest_vertex_stage,
+            current_stage=latest_code_agent_stage,
             files=last_file_summary.get("root_files") or [],
         )
 
@@ -1088,7 +1101,7 @@ async def run_shell(
     Fluxo:
     1. Validação de segurança (whitelist, blocked patterns, rm restriction)
     2. Execução com Popen + streaming stdout/stderr via EventBus
-    3. Parse de progresso do Vertex CLI → eventos vertex_progress
+    3. Parse de progresso do OpenClaude → eventos vertex_progress (nome legado)
     4. Detecção de prompts interativos → consulta DeepSeek para auto-resposta
     5. Listagem de arquivos criados
     """
@@ -1122,8 +1135,8 @@ async def run_shell(
 
     cwd = str(_project_dir(task_id))
     cwd_path = _project_dir(task_id)
-    is_vertex = _is_vertex_executable(executable)
-    is_dev_server = False if is_vertex else _is_dev_server_command(cmd)
+    is_code_agent = _is_code_agent_executable(executable)
+    is_dev_server = False if is_code_agent else _is_dev_server_command(cmd)
 
     env = os.environ.copy()
     runtime_tmp = settings.RUNTIME_PATH / "tmp"
@@ -1131,8 +1144,8 @@ async def run_shell(
     env.setdefault("TMPDIR", str(runtime_tmp))
     env.setdefault("TEMP", str(runtime_tmp))
     env.setdefault("TMP", str(runtime_tmp))
-    if is_vertex:
-        env["VERTEX_OUTPUT_DIR"] = cwd
+    if is_code_agent:
+        env["OPENCLAUDE_OUTPUT_DIR"] = cwd
     # Para dev servers, adiciona CI=true e FORCE_COLOR=0 para evitar prompts
     if is_dev_server:
         env["CI"] = "true"
@@ -1140,8 +1153,8 @@ async def run_shell(
         env["BROWSER"] = "none"  # Evita abrir navegador automatico (create-react-app etc)
 
     timeout = _shell_timeout(cmd)
-    if is_vertex:
-        return await _run_vertex_pty(
+    if is_code_agent:
+        return await _run_code_agent_pty(
             cmd,
             cwd_path=cwd_path,
             env=env,
@@ -1171,17 +1184,17 @@ async def run_shell(
         return _shell_error(f"Erro ao executar comando: {exc}")
 
     terminal_lines: list[dict[str, str]] = []
-    latest_vertex_stage: str | None = None
-    if is_vertex and bus and task_id:
+    latest_code_agent_stage: str | None = None
+    if is_code_agent and bus and task_id:
         await _publish_ai_exchange(
             task_id,
             bus,
-            actor="vertex",
+            actor="openclaude",
             target="deepseek",
-            message="Vertex iniciou a execucao local da tarefa.",
+            message="OpenClaude iniciou a execucao local da tarefa.",
             kind="start",
         )
-        await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running")
+        await _publish_code_agent_terminal_frame(task_id, bus, terminal_lines, status="running")
 
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
@@ -1209,7 +1222,7 @@ async def run_shell(
         return False
 
     async def _publish_line(line: str, event_type: str) -> None:
-        nonlocal detected_port, latest_vertex_stage
+        nonlocal detected_port, latest_code_agent_stage
         stripped = line.rstrip("\n\r")
         if not stripped:
             return
@@ -1217,7 +1230,7 @@ async def run_shell(
             return
         display = _redact_local_urls(stripped)
         await bus.publish(task_id, event_type, {"line": display})
-        if is_vertex:
+        if is_code_agent:
             stream = "stderr" if event_type == "shell_stderr" else "stdout"
             terminal_lines.append({"stream": stream, "line": display})
 
@@ -1225,21 +1238,21 @@ async def run_shell(
         if is_dev_server and detected_port is None and event_type == "shell_stdout":
             detected_port = _extract_port_from_output(stripped)
 
-        if is_vertex and event_type == "shell_stdout":
-            progress = _parse_vertex_progress(stripped)
+        if is_code_agent and event_type == "shell_stdout":
+            progress = _parse_code_agent_progress(stripped)
             if progress:
-                latest_vertex_stage = str(progress.get("stage") or "")
+                latest_code_agent_stage = str(progress.get("stage") or "")
                 await bus.publish(task_id, "vertex_progress", progress)
                 await _publish_ai_exchange(
                     task_id,
                     bus,
-                    actor="vertex",
+                    actor="openclaude",
                     target="deepseek",
                     message=progress["message"],
                     kind="progress",
                 )
-        if is_vertex:
-            await _publish_vertex_terminal_frame(task_id, bus, terminal_lines, status="running", current_stage=latest_vertex_stage)
+        if is_code_agent:
+            await _publish_code_agent_terminal_frame(task_id, bus, terminal_lines, status="running", current_stage=latest_code_agent_stage)
 
     async def _drain_and_interact(stream, lines_list: list[str], event_type: str) -> None:
         """Le um stream com detecção de prompts interativos e auto-resposta."""
@@ -1287,11 +1300,11 @@ async def run_shell(
                             "shell_interactive_prompt",
                             {"prompt": prompt_snapshot[:500], "round": interactive_rounds},
                         )
-                        if is_vertex:
+                        if is_code_agent:
                             await _publish_ai_exchange(
                                 task_id,
                                 bus,
-                                actor="vertex",
+                                actor="openclaude",
                                 target="deepseek",
                                 message=prompt_snapshot,
                                 kind="prompt",
@@ -1431,13 +1444,13 @@ async def run_shell(
         await loop.run_in_executor(None, process.wait)
 
     returncode = process.returncode if process.returncode is not None else -1
-    if is_vertex and bus and task_id:
-        await _publish_vertex_terminal_frame(
+    if is_code_agent and bus and task_id:
+        await _publish_code_agent_terminal_frame(
             task_id,
             bus,
             terminal_lines,
             status="done" if returncode == 0 else "error",
-            current_stage=latest_vertex_stage,
+            current_stage=latest_code_agent_stage,
         )
     stdout_full = "".join(stdout_lines)
     stderr_full = "".join(stderr_lines)
@@ -1465,10 +1478,14 @@ async def run_shell(
     return result
 
 
-async def run_vertex(task_description: str, task_id: str | None = None) -> dict[str, Any]:
-    """Executa o Vertex CLI com uma descricao de tarefa de desenvolvimento."""
-    safe_desc = str(task_description).replace("'", "'\\''")[:500]
-    cmd = f"vertex '{safe_desc}'"
+async def run_code_agent(task_description: str, task_id: str | None = None) -> dict[str, Any]:
+    """Executa o OpenClaude com uma descricao de tarefa de desenvolvimento."""
+    safe_desc = shlex.quote(str(task_description)[:500])
+    cmd = (
+        "openclaude -p --permission-mode bypassPermissions "
+        "--dangerously-skip-permissions --no-session-persistence "
+        f"{safe_desc}"
+    )
     return await run_shell(cmd, task_id=task_id)
 
 
