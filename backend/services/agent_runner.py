@@ -729,6 +729,46 @@ def _has_requested_document_artifact(task_id: str, profile: dict[str, Any]) -> b
     return bool(profile.get("wants_pdf") or profile.get("wants_markdown"))
 
 
+def _has_deliverable_files(task_id: str) -> bool:
+    return any(
+        not str(file.get("path") or "").startswith("versions/") and int(file.get("size_bytes") or 0) > 0
+        for file in database.list_generated_files(task_id)
+    )
+
+
+def _fallback_result_for_generated_files(task_id: str) -> str:
+    files = [
+        file
+        for file in database.list_generated_files(task_id)
+        if not str(file.get("path") or "").startswith("versions/") and int(file.get("size_bytes") or 0) > 0
+    ]
+    if not files:
+        return "Pronto. A entrega foi gerada pelo Vortax."
+    names = ", ".join(Path(str(file.get("path") or "arquivo")).name for file in files[:3])
+    return f"Pronto. Gerei o arquivo solicitado ({names}) e anexei no chat para leitura ou download."
+
+
+async def _finish_generated_files_after_model_error(
+    task_id: str,
+    description: str,
+    error: Exception,
+    store: TaskStore,
+    bus: EventBus,
+) -> bool:
+    if not _has_deliverable_files(task_id):
+        return False
+    await bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Finalizando entrega",
+            "detail": "O modelo retornou JSON invalido apos gerar o arquivo; entregando os arquivos ja criados.",
+        },
+    )
+    await _finish_text_response(task_id, description, _fallback_result_for_generated_files(task_id), store, bus)
+    return True
+
+
 def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -> str:
     filename = str(profile.get("preferred_filename") or "RELATORIO_TECNICO.md")
     return (
@@ -1644,12 +1684,16 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
         await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
         return
     except DeepSeekError as exc:
+        if await _finish_generated_files_after_model_error(task_id, description, exc, store, bus):
+            return
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
         await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
     except Exception as exc:
+        if isinstance(exc, json.JSONDecodeError) and await _finish_generated_files_after_model_error(task_id, description, exc, store, bus):
+            return
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
         await _fail_running_plan_step(task_id, bus, str(exc))

@@ -5,12 +5,15 @@ from pathlib import Path
 
 import database as database_module
 import services.agent_runner as agent_runner_module
+import services.context_manager as context_manager_module
 import services.event_bus as event_bus_module
 import services.task_plan_store as task_plan_store_module
+import services.task_store as task_store_module
 from config import settings
 from database import Database
 from services.agent_runner import (
     _complete_supported_steps_before_delivery,
+    _finish_generated_files_after_model_error,
     _generated_file_response_payload,
     _latest_code_agent_quality_gate,
     _latest_web_validation_gate,
@@ -18,7 +21,7 @@ from services.agent_runner import (
 )
 from services.event_bus import EventBus
 from services.task_plan_store import TaskPlanStore
-from services.task_store import utc_now
+from services.task_store import TaskStore, utc_now
 
 
 class AgentHistoryTests(unittest.TestCase):
@@ -153,8 +156,14 @@ class GeneratedFilePayloadTests(unittest.TestCase):
         self.db = Database()
         self.original_database = database_module.database
         self.original_runner_database = agent_runner_module.database
+        self.original_event_bus_database = event_bus_module.database
+        self.original_task_store_database = task_store_module.database
+        self.original_context_database = context_manager_module.database
         database_module.database = self.db
         agent_runner_module.database = self.db
+        event_bus_module.database = self.db
+        task_store_module.database = self.db
+        context_manager_module.database = self.db
         self.task_id = "task-documents"
         now = utc_now()
         self.db.create_task(
@@ -170,6 +179,9 @@ class GeneratedFilePayloadTests(unittest.TestCase):
     def tearDown(self) -> None:
         database_module.database = self.original_database
         agent_runner_module.database = self.original_runner_database
+        event_bus_module.database = self.original_event_bus_database
+        task_store_module.database = self.original_task_store_database
+        context_manager_module.database = self.original_context_database
         database_module.settings.DATABASE_BASE_PATH = self.original_base
         settings.WORKSPACE_PATH = self.original_workspace
         self.db.close()
@@ -251,6 +263,36 @@ class GeneratedFilePayloadTests(unittest.TestCase):
         self.assertEqual([item["path"] for item in payload["documents"]], ["relatorio.pdf", "relatorio.md"])
         self.assertTrue(payload["documents"][0]["primary"])
         self.assertEqual(payload["documents"][0]["kind"], "pdf")
+
+    def test_finishes_generated_file_delivery_after_model_json_error(self) -> None:
+        task_dir = settings.WORKSPACE_PATH / self.task_id
+        task_dir.mkdir(parents=True)
+        (task_dir / "relatorio.md").write_text("# Relatorio\n\nConteudo pronto para entrega.", encoding="utf-8")
+        self._sync_files(
+            [
+                {"path": "relatorio.md", "size_bytes": 39, "extension": ".md", "modified_at": 1},
+            ]
+        )
+        bus = EventBus()
+        store = TaskStore()
+
+        finished = asyncio.run(
+            _finish_generated_files_after_model_error(
+                self.task_id,
+                "gere um markdown",
+                ValueError("JSON invalido"),
+                store,
+                bus,
+            )
+        )
+
+        self.assertTrue(finished)
+        self.assertEqual(self.db.get_task(self.task_id)["status"], "done")
+        events = self.db.list_events(self.task_id)
+        final_events = [event for event in events if event["type"] == "assistant_message_done"]
+        self.assertTrue(final_events)
+        self.assertEqual(final_events[-1]["payload"]["documents"][0]["path"], "relatorio.md")
+        self.assertIn("Gerei o arquivo solicitado", final_events[-1]["payload"]["content"])
 
 
 class SupportedStepCompletionTests(unittest.TestCase):
