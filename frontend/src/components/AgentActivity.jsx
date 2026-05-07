@@ -460,15 +460,17 @@ export function AgentActivity({ events, status, taskDescription }) {
       <motion.div
         className="activity-steps"
         aria-label="Tasks da atividade"
-        variants={staggerContainer}
-        initial="hidden"
-        animate={collapsed ? "hidden" : "visible"}
+        initial={false}
+        animate={{ opacity: collapsed ? 0 : 1 }}
+        transition={{ duration: 0.18 }}
       >
         {steps.map((step) => (
           <motion.button
             className={`activity-step ${step.state} ${expandedTaskId === step.id ? "expanded" : ""}`}
             key={step.id}
-            variants={fadeInUp}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 22 }}
             layout
             whileHover={{ x: 2 }}
             whileTap={{ scale: 0.995 }}
@@ -485,12 +487,9 @@ export function AgentActivity({ events, status, taskDescription }) {
         ))}
 
         {hasVertexActivity && (
-          <motion.div
-            className="activity-vertex-slot"
-            variants={fadeInUp}
-          >
+          <div className="activity-vertex-slot">
             <VertexProgressPanel events={events} />
-          </motion.div>
+          </div>
         )}
       </motion.div>
     </motion.section>
