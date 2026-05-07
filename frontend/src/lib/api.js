@@ -4,6 +4,15 @@ const defaultBaseUrl = `${window.location.protocol}//${window.location.hostname}
 export const API_BASE_URL = explicitBaseUrl || defaultBaseUrl;
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");
 
+export function fileDownloadUrl(taskId, path) {
+  const safeTaskId = encodeURIComponent(taskId || "");
+  const safePath = String(path || "")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `${API_BASE_URL}/api/files/task/${safeTaskId}/${safePath}`;
+}
+
 async function request(path, options = {}) {
   const headers = options.body instanceof FormData
     ? { ...(options.headers || {}) }

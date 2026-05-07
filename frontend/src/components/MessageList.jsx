@@ -1,10 +1,34 @@
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, User } from "lucide-react";
+import { Download, FileText, Sparkles, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
+import { fileDownloadUrl } from "../lib/api.js";
+
+function MessageDownloads({ downloads = [], taskId }) {
+  const items = downloads.filter((item) => item?.path);
+  if (!taskId || items.length === 0) return null;
+
+  return (
+    <div className="message-downloads">
+      {items.map((item) => (
+        <a
+          className="message-download-btn"
+          download
+          href={fileDownloadUrl(taskId, item.path)}
+          key={item.path}
+          title={`Baixar ${item.name || item.path}`}
+        >
+          <FileText size={15} />
+          <span>{item.name || item.path}</span>
+          <Download size={14} />
+        </a>
+      ))}
+    </div>
+  );
+}
 
 export function MessageList({ isTyping = false, messages }) {
   const endRef = useRef(null);
@@ -40,6 +64,7 @@ export function MessageList({ isTyping = false, messages }) {
                   </ReactMarkdown>
                 </div>
               ) : null}
+              <MessageDownloads downloads={message.downloads} taskId={message.taskId} />
               {message.images?.length > 0 && (
                 <div className="message-images">
                   {message.images.map((image, index) => (

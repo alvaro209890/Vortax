@@ -6,6 +6,7 @@ import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
+import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { MessageList } from "./components/MessageList.jsx";
 import { ScreenView } from "./components/ScreenView.jsx";
@@ -43,7 +44,10 @@ function buildMessages(task, events) {
       id: `${event.type}-${event.created_at}-${index}`,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
+      downloads: event.payload.downloads || [],
+      documentation: event.payload.documentation || null,
       images: event.payload.images || [],
+      taskId: event.task_id || task.id,
     }));
 
   if (messages.length > 0) return messages;
@@ -361,6 +365,7 @@ export default function App() {
       inspector={
         <>
           <ScreenView events={currentEvents} connectionState={connectionState} />
+          <DocumentationPanel files={files} taskId={activeTaskId} />
           <AiExchangePanel events={currentEvents} />
           <ActionTimeline events={currentEvents} />
           <SourceList error={taskError} loading={taskLoading} sources={sources} />

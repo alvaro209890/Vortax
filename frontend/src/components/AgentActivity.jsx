@@ -301,11 +301,14 @@ export function VertexProgressPanel({ events }) {
 
       <motion.div
         className="vertex-progress-body"
+        initial={false}
         animate={{
-          maxHeight: collapsed ? 0 : 600,
           opacity: collapsed ? 0 : 1,
+          x: collapsed ? -8 : 0,
+          maxWidth: collapsed ? 0 : 360,
+          maxHeight: collapsed ? 0 : 560,
         }}
-        transition={{ duration: 0.24, ease: "easeInOut" }}
+        transition={{ duration: 0.22, ease: "easeInOut" }}
       >
         <div className="vertex-live-legend">
           <div className="vertex-live-main">

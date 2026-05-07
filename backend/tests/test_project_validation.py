@@ -77,6 +77,7 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
                 task_dir = settings.WORKSPACE_PATH / "task-site-bug"
                 task_dir.mkdir()
                 (task_dir / "index.html").write_text('<script src="missing.js"></script>', encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\nDocumentacao.", encoding="utf-8")
                 bus = FakeBus()
 
                 result = await validate_project_after_vertex(
@@ -90,6 +91,72 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertTrue(any("missing.js" in bug for bug in result["bugs"]))
+
+    async def test_site_project_requires_markdown_documentation(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-site-no-doc"
+                task_dir.mkdir()
+                (task_dir / "index.html").write_text("<!doctype html><title>Site</title>", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_vertex(
+                    "task-site-no-doc",
+                    "vertex 'crie um site html'",
+                    bus,
+                    vertex_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("DOCUMENTACAO.md" in bug for bug in result["bugs"]))
+
+    async def test_site_project_passes_with_markdown_documentation(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-site-doc"
+                task_dir.mkdir()
+                (task_dir / "index.html").write_text("<!doctype html><title>Site</title>", encoding="utf-8")
+                (task_dir / "DOCUMENTACAO.md").write_text("# Site\n\nDocumentacao do projeto.", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_vertex(
+                    "task-site-doc",
+                    "vertex 'crie um site html'",
+                    bus,
+                    vertex_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "passed")
+
+    async def test_document_request_requires_requested_extension(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-pdf"
+                task_dir.mkdir()
+                (task_dir / "relatorio.md").write_text("# Relatorio", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_vertex(
+                    "task-pdf",
+                    "vertex 'gere um relatorio em PDF'",
+                    bus,
+                    vertex_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any(".pdf" in bug for bug in result["bugs"]))
 
 
 if __name__ == "__main__":

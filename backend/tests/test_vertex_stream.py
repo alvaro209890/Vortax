@@ -69,6 +69,7 @@ class VertexStreamTests(unittest.TestCase):
         self.assertIn("LINK_LOCAL_DO_SITE", command)
         self.assertIn("vertex -p", command)
         self.assertIn("index.html", command)
+        self.assertIn("DOCUMENTACAO.md", command)
 
     def test_augments_vertex_command_after_safe_cd(self) -> None:
         command = _augment_vertex_command_for_local_site("cd workspace/app && vertex 'crie uma landing page'")
@@ -93,6 +94,12 @@ class VertexStreamTests(unittest.TestCase):
         self.assertIn("VALIDACAO_AUTOMATICA_VORTAX", command)
         self.assertIn("python3 -m py_compile", command)
         self.assertIn("vertex -p", command)
+
+    def test_augments_document_prompt_with_file_delivery_instruction(self) -> None:
+        command = _augment_vertex_command_for_quality("vertex 'gere um relatorio em PDF'")
+
+        self.assertIn("arquivo/documento final (.pdf)", command)
+        self.assertIn("pronto para download", command)
 
     def test_does_not_augment_vertex_version_check_with_quality_gate(self) -> None:
         command = _augment_vertex_command_for_quality("vertex --version")

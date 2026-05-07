@@ -8,12 +8,18 @@ from config import settings
 from database import database
 from services.context_manager import prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action, request_direct_chat_response
+from services.document_intent import (
+    document_extensions_from_text,
+    downloadable_document_files,
+    markdown_documentation_files,
+)
 from services.event_bus import EventBus
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.mock_runner import run_mock_task
 from services.research_policy import cross_check_status
 from services.task_store import TaskStore
 from tools.tool_executor import compact_tool_result, execute_tool
+from services.web_validation import web_intent_from_command
 
 
 def _message_history_from_events(events: list[dict[str, Any]], fallback_description: str) -> list[dict[str, str]]:
@@ -274,6 +280,52 @@ def _format_research_note(status: dict[str, Any]) -> str:
     return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas; nenhuma divergencia automatica evidente foi detectada."
 
 
+def _file_payload(file: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": file.get("path"),
+        "name": Path(str(file.get("path") or "arquivo")).name,
+        "extension": file.get("extension") or Path(str(file.get("path") or "")).suffix.lower(),
+        "size_bytes": int(file.get("size_bytes") or file.get("size") or 0),
+        "project_name": file.get("project_name"),
+    }
+
+
+def _generated_file_response_payload(task_id: str, result: str, events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_call = _latest_vertex_call(events)
+    if latest_call is None:
+        return {"content": result}
+
+    _, command = latest_call
+    files = database.list_generated_files(task_id)
+    requested_extensions = document_extensions_from_text(command)
+    docs = markdown_documentation_files(files)
+    requested_downloads = downloadable_document_files(files, requested_extensions)
+    is_web_project = web_intent_from_command(command)
+
+    downloads: list[dict[str, Any]] = []
+    for file in [*requested_downloads, *(docs if is_web_project else [])]:
+        payload = _file_payload(file)
+        if payload["path"] and all(existing.get("path") != payload["path"] for existing in downloads):
+            downloads.append(payload)
+
+    if not downloads and not docs:
+        return {"content": result}
+
+    payload: dict[str, Any] = {"content": result, "downloads": downloads[:8]}
+    if docs:
+        payload["documentation"] = _file_payload(docs[0])
+
+    if is_web_project and docs:
+        payload["content"] = (
+            "Pronto. Criei o site solicitado, validei o projeto e gerei a documentacao em Markdown. "
+            "Abra o card Documentacao para ler no Vortax ou use o botao abaixo para baixar."
+        )
+    elif requested_downloads:
+        payload["content"] = "Pronto. Gerei o arquivo solicitado. Use o botao abaixo para baixar."
+
+    return payload
+
+
 def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
     sources = database.list_sources(task_id)[:8]
     if not sources:
@@ -303,8 +355,10 @@ async def _finish_text_response(
     store: TaskStore,
     bus: EventBus,
 ) -> None:
-    store.update_status(task_id, "done", result=result)
-    await bus.publish(task_id, "assistant_message_done", {"content": result})
+    payload = _generated_file_response_payload(task_id, result, bus.history(task_id))
+    final_content = str(payload.get("content") or result)
+    store.update_status(task_id, "done", result=final_content)
+    await bus.publish(task_id, "assistant_message_done", payload)
     _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
     if final_compacted:
         await bus.publish(task_id, "context_compacted", final_context)

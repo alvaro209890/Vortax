@@ -644,6 +644,40 @@ small {
   text-decoration: underline;
 }
 
+.message-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.message-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 9px 11px;
+  border: 1px solid rgba(8, 198, 93, 0.25);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 198, 93, 0.08);
+  color: var(--accent-blue);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.message-download-btn:hover {
+  background: rgba(8, 198, 93, 0.14);
+  text-decoration: none;
+}
+
+.message-download-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .typing-dots {
   display: inline-flex;
   align-items: center;
@@ -1905,6 +1939,111 @@ small {
   background: var(--bg-surface);
 }
 
+/* Documentation */
+.documentation-panel {
+  margin-bottom: 16px;
+}
+
+.documentation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.documentation-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.documentation-file.active,
+.documentation-file:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-color: rgba(8, 198, 93, 0.25);
+}
+
+.documentation-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.documentation-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+.documentation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.documentation-card-header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.documentation-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 198, 93, 0.1);
+  color: var(--accent-blue);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.documentation-download:hover {
+  background: rgba(8, 198, 93, 0.16);
+}
+
+.documentation-content {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.documentation-content h1,
+.documentation-content h2,
+.documentation-content h3 {
+  margin: 0;
+  line-height: 1.25;
+}
+
+.documentation-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 .sources-panel {
   margin-bottom: 24px;
 }
@@ -2360,6 +2499,22 @@ small {
   overflow-y: auto;
   overflow-x: hidden;
   max-height: 300px;
+}
+
+.vertex-progress-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.vertex-progress-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.vertex-progress-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 320px;
+  margin: 4px 0;
 }
 
 .vertex-progress-list::-webkit-scrollbar {
