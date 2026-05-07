@@ -25,6 +25,27 @@ from tools.vision import vision_tool
 ToolCallable = Callable[..., Awaitable[dict[str, Any]]]
 
 
+LOCAL_PREVIEW_RE = re.compile(
+    r"(?:LINK_LOCAL_DO_SITE:\s*)?https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:/[^\s\"'<>)]*)?",
+    re.IGNORECASE,
+)
+
+
+def _redact_local_preview(value: Any) -> Any:
+    if isinstance(value, str):
+        return LOCAL_PREVIEW_RE.sub("preview interno do Vortax", value)
+    if isinstance(value, list):
+        return [_redact_local_preview(item) for item in value]
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"local_urls", "dev_server_url", "url_template"}:
+                continue
+            redacted[key] = _redact_local_preview(item)
+        return redacted
+    return value
+
+
 TOOLS: dict[str, ToolCallable] = {
     "browser_navigate": browser_tool.navigate,
     "browser_get_state": browser_tool.get_state,
@@ -48,12 +69,15 @@ TOOLS: dict[str, ToolCallable] = {
 
 
 def compact_tool_result(result: dict[str, Any]) -> dict[str, Any]:
-    compact = dict(result)
+    compact = _redact_local_preview(dict(result))
+    compact.pop("local_urls", None)
+    compact.pop("dev_server_url", None)
+    compact.pop("dev_server_port", None)
     if compact.get("tty"):
         if compact.get("missing_assets"):
             compact["stdout"] = "Vertex retornou projeto incompleto; ha referencias locais ausentes."
         else:
-            compact["stdout"] = "Vertex executou a tarefa. O andamento esta disponivel em vertex_progress e a validacao em web_validation_result."
+            compact["stdout"] = "Vertex executou a tarefa. O andamento esta disponivel em vertex_progress e a revisao em web_validation_result."
         compact["stderr"] = str(compact.get("stderr") or "")[:500]
     if "image_base64" in compact:
         compact["image_base64"] = "[base64-image]"
@@ -238,10 +262,10 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
     prompt = " ".join(prompt_parts).strip()
     instructions = [
         "Obrigatorio para o Vortax: crie os arquivos do site dentro do diretorio atual. "
-        "Para HTML/CSS/JavaScript estatico, NAO inicie servidor local e NAO rode modulo de servidor HTTP do Python; "
+        "Para HTML/CSS/JavaScript estatico, NAO inicie servidor temporario e NAO rode modulo de servidor HTTP do Python; "
         "quando o pedido mencionar HTML, CSS e JavaScript/JS, crie obrigatoriamente arquivos separados index.html, style.css e script.js. "
         "Nao deixe href/src apontando para arquivos locais inexistentes. "
-        "Garanta que exista um index.html funcional, pois o Vortax abrira o preview local automaticamente. "
+        "Garanta que exista um index.html funcional, pois o Vortax abrira o preview interno automaticamente. "
         "Revise responsividade, estados de botoes, erros no console, textos cortados e arquivos vazios antes de finalizar."
     ]
     prompt_upper = prompt.upper()
@@ -253,8 +277,8 @@ def _augment_vertex_command_for_local_site(command: str) -> str:
         )
     if "LINK_LOCAL_DO_SITE" not in prompt:
         instructions.append(
-            "Somente se o projeto realmente exigir dev server, imprima uma linha exatamente no formato "
-            "LINK_LOCAL_DO_SITE: http://127.0.0.1:PORTA ou LINK_LOCAL_DO_SITE: http://localhost:PORTA e finalize."
+            "Somente se o projeto realmente exigir dev server para a revisao interna, informe LINK_LOCAL_DO_SITE para o Vortax testar. "
+            "Esse endereco e interno, temporario e nunca deve ser citado na resposta ao usuario."
         )
     instruction = "\n\n" + " ".join(instructions)
     return (
@@ -297,7 +321,7 @@ def _augment_vertex_command_for_quality(command: str) -> str:
             "Se for Python, garanta que todos os arquivos .py passam em python3 -m py_compile e crie testes unittest quando fizer sentido. "
             "Se for Node/JavaScript, garanta package.json valido, sintaxe JS valida e scripts build/test quando o projeto precisar. "
             "Se estiver corrigindo uma falha anterior, preserve o projeto existente e corrija exatamente os bugs descritos. "
-            "Nao finalize deixando TODO, arquivo vazio, dependencia quebrada, caminho inexistente ou instrucao que impeca a validacao local."
+            "Nao finalize deixando TODO, arquivo vazio, dependencia quebrada, caminho inexistente ou instrucao que impeca a revisao automatica."
         )
         if requested_extensions:
             extensions = ", ".join(requested_extensions)
@@ -396,7 +420,7 @@ async def execute_tool(
                         "agent_progress",
                         {
                             "label": "Usando preview interno",
-                            "detail": "Servidor manual ignorado para evitar conflito de porta; abrindo o site pelo preview do Vortax.",
+                            "detail": "Servidor manual ignorado para evitar conflito de porta; abrindo o preview interno do Vortax.",
                             "tool": "browser_navigate",
                         },
                     )
@@ -408,7 +432,7 @@ async def execute_tool(
                     await _open_static_preview_if_available(task_id, files, bus)
                     result = {
                         "success": True,
-                        "stdout": f"Preview interno do Vortax: {preview_url}",
+                        "stdout": "Preview interno do Vortax aberto para revisao.",
                         "stderr": "",
                         "returncode": 0,
                         "local_urls": [preview_url],
@@ -477,9 +501,9 @@ async def execute_tool(
                     task_id,
                     "dev_server_started",
                     {
-                        "url": shell_data["dev_server_url"],
                         "port": shell_data.get("dev_server_port"),
                         "task_id": task_id,
+                        "internal": True,
                     },
                 )
 
@@ -490,7 +514,7 @@ async def execute_tool(
                     "vertex_progress",
                     {
                         "stage": "validating",
-                        "message": "Vortax esta validando o projeto criado pelo Vertex.",
+                        "message": "Vortax esta revisando a entrega criada pelo Vertex.",
                         "status": "running",
                     },
                 )
@@ -510,13 +534,13 @@ async def execute_tool(
                 validation_status = validation.get("status") if isinstance(validation, dict) else "skipped"
                 project_validation_status = project_validation.get("status") if isinstance(project_validation, dict) else "skipped"
                 if validation_status == "failed" or project_validation_status == "failed":
-                    vertex_done_message = "Vertex concluiu o projeto, mas a validacao local encontrou bugs."
+                    vertex_done_message = "A entrega foi criada, mas a revisao encontrou pontos para corrigir."
                 elif validation_status == "blocked" or project_validation_status == "blocked":
-                    vertex_done_message = "Vertex concluiu o projeto, mas a validacao visual esta bloqueada."
+                    vertex_done_message = "A entrega foi criada, mas a revisao visual esta bloqueada."
                 elif validation_status == "passed" or project_validation_status == "passed":
-                    vertex_done_message = "Vertex concluiu o projeto e a validacao local foi aprovada."
+                    vertex_done_message = "Entrega pronta: projeto revisado, arquivos gerados e documentacao disponivel quando criada."
                 else:
-                    vertex_done_message = "Vertex concluiu o projeto."
+                    vertex_done_message = "Entrega criada pelo Vertex."
                 await bus.publish(
                     task_id,
                     "vertex_progress",

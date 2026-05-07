@@ -34,6 +34,7 @@ class VertexStreamTests(unittest.TestCase):
             "project_validation_started",
             "project_validation_step",
             "project_validation_result",
+            "dev_server_stopped",
         ):
             with self.subTest(event_type=event_type):
                 event = build_stream_event("task-1", event_type, {"status": "passed"})

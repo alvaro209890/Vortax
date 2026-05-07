@@ -35,12 +35,12 @@ const stageDescriptions = {
   reading_file: "Revisando arquivos gerados para decidir ajustes.",
   configuring: "Ajustando configurações, scripts ou integrações.",
   executing: "Rodando comandos internos e observando a saída.",
-  validating: "Abrindo preview e executando validação local.",
+  validating: "Abrindo preview e revisando a entrega.",
   done: "Entrega finalizada e resultado consolidado.",
-  error: "A validação encontrou problemas que precisam ser corrigidos.",
+  error: "A revisão encontrou problemas que precisam ser corrigidos.",
 };
 
-const simulatedFiles = ["index.html", "style.css", "script.js", "assets", "validação"];
+const simulatedFiles = ["index.html", "style.css", "script.js", "assets", "revisão"];
 
 function latestEvent(events, predicate) {
   for (let index = events.length - 1; index >= 0; index -= 1) {

@@ -197,7 +197,7 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
     if compacted:
         await event_bus.publish(task_id, "context_compacted", context_payload)
     await event_bus.publish(task_id, "context_status", context_payload)
-    await event_bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+    await event_bus.publish(task_id, "agent_status", {"status": "done", "label": "Entrega pronta"})
     return {"ok": True, "task_id": task_id, "images": saved_images, "analysis": analyses, "answer": answer}
 
 
@@ -356,17 +356,10 @@ async def delete_task(task_id: str) -> dict:
         with contextlib.suppress(asyncio.CancelledError):
             await runner
 
-    # Mata dev server se estiver rodando
-    from tools.shell import _dev_servers
-    dev_server = _dev_servers.pop(task_id, None)
-    if dev_server:
-        import os as _os
-        import signal as _signal
-        proc = dev_server["process"]
-        try:
-            _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
+    # Fecha runtimes temporarios do projeto, inclusive possiveis processos orfaos.
+    from tools.shell import stop_dev_server
+
+    await stop_dev_server(task_id)
 
     await event_bus.close_task_connections(task_id)
     deleted = task_store.delete(task_id)

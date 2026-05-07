@@ -25,7 +25,7 @@ async def run_mock_task(task_id: str, description: str, store: TaskStore, bus: E
 
         steps = [
             ("tool_call", {"name": "planner_mock", "description": "Criando plano inicial para a tarefa"}),
-            ("tool_result", {"name": "planner_mock", "result": "Plano mockado criado para validar o chat e o WebSocket."}),
+            ("tool_result", {"name": "planner_mock", "result": "Plano mockado criado para revisar o chat e o WebSocket."}),
             ("agent_status", {"status": "executing", "label": "Executando passos simulados"}),
             ("tool_call", {"name": "browser_mock", "description": "Simulando abertura do Chrome via CDP"}),
             ("screen_frame", {"caption": "Preview simulado da tela local", "image_base64": None}),
@@ -41,12 +41,12 @@ async def run_mock_task(task_id: str, description: str, store: TaskStore, bus: E
             await asyncio.sleep(0.8)
 
         result = (
-            "Fluxo local validado: o chat criou a tarefa, o backend emitiu eventos em tempo real "
+            "Fluxo validado: o chat criou a tarefa, o backend emitiu eventos em tempo real "
             f"e o stream acompanhou a solicitação: {description}"
         )
         store.update_status(task_id, "done", result=result)
         await bus.publish(task_id, "assistant_message_done", {"content": result})
-        await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+        await bus.publish(task_id, "agent_status", {"status": "done", "label": "Entrega pronta"})
     except Exception as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})

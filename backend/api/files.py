@@ -86,7 +86,7 @@ async def check_dev_server(task_id: str) -> dict:
     server = get_dev_server(task_id)
     if not server:
         return {"running": False}
-    return {"running": True, "url": server["url"], "port": server["port"]}
+    return {"running": True, "port": server["port"], "internal": True}
 
 
 @router.delete("/preview-dev/{task_id}")

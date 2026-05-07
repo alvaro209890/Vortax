@@ -155,7 +155,7 @@ async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int) -> d
         task_id,
         "screen_frame",
         {
-            "caption": f"Validacao visual - viewport {viewport_index}",
+            "caption": f"Revisao visual - viewport {viewport_index}",
             "title": frame.get("title"),
             "url": frame.get("url"),
             "image_base64": frame.get("image_base64"),
@@ -223,7 +223,7 @@ async def validate_web_project_after_vertex(
             "reason": detail,
             "bugs": [
                 detail,
-                "Crie os arquivos ausentes ou remova as referencias quebradas antes de validar o preview.",
+                "Crie os arquivos ausentes ou remova as referencias quebradas antes de revisar o preview.",
             ],
             "project": detected,
             "missing_assets": missing_assets,
@@ -235,34 +235,55 @@ async def validate_web_project_after_vertex(
         result = {
             "status": "blocked",
             "requires_validation": False,
-            "reason": "Validacao visual obrigatoria indisponivel. Defina ENABLE_VISION_TESTS=true e GROQ_API_KEY.",
+            "reason": "Revisao visual obrigatoria indisponivel. Defina ENABLE_VISION_TESTS=true e GROQ_API_KEY.",
             "project": detected,
         }
         await bus.publish(task_id, "web_validation_result", result)
         return result
 
+    internal_server_started = False
     try:
-        vertex_url = local_url_from_shell_result(vertex_result)
         if detected["type"] == "static_html":
             url = str(detected["url_template"]).format(task_id=quote(task_id))
-            await _publish_step(task_id, bus, "Abrindo preview estatico", url)
-        elif vertex_url:
-            await _publish_step(task_id, bus, "Pegando link enviado pelo Vertex", vertex_url)
-            url = vertex_url
+            await _publish_step(task_id, bus, "Abrindo preview estatico", "Preview interno do Vortax para revisao visual.")
+        elif detected["type"] == "node_dev_server":
+            from tools.shell import run_shell
+
+            await _publish_step(
+                task_id,
+                bus,
+                "Subindo preview interno",
+                "Servidor temporario usado apenas para revisar o projeto; ele sera fechado antes da entrega.",
+            )
+            server_result = await run_shell(str(detected.get("command") or "npm run dev"), task_id=task_id, bus=bus)
+            server_data = server_result.get("data", server_result) if isinstance(server_result, dict) else {}
+            url = local_url_from_shell_result(server_data)
+            internal_server_started = bool(server_data.get("success") and server_data.get("is_dev_server"))
+            if not url or not server_data.get("success"):
+                detail = str(server_data.get("stderr") or server_data.get("stdout") or "Nao foi possivel iniciar o preview interno.")
+                result = {
+                    "status": "failed",
+                    "requires_validation": True,
+                    "reason": "Nao foi possivel iniciar o preview interno para revisar o site.",
+                    "bugs": [detail[:500]],
+                    "project": detected,
+                }
+                await bus.publish(task_id, "web_validation_result", result)
+                return result
         else:
             result = {
                 "status": "failed",
                 "requires_validation": True,
-                "reason": "Vertex nao enviou LINK_LOCAL_DO_SITE com URL local para o Vortax testar.",
+                "reason": "Nao foi possivel abrir um preview interno para o Vortax testar.",
                 "bugs": [
-                    "Execute o site localmente e imprima uma linha no formato LINK_LOCAL_DO_SITE: http://127.0.0.1:PORTA para o Vortax abrir e testar."
+                    "Crie um index.html estatico funcional ou configure um script dev que o Vortax consiga iniciar temporariamente para revisao interna."
                 ],
                 "project": detected,
             }
             await bus.publish(task_id, "web_validation_result", result)
             return result
 
-        await _publish_step(task_id, bus, "Abrindo site no Chrome", url)
+        await _publish_step(task_id, bus, "Abrindo site no Chrome", "Preview interno para revisao visual.")
         await browser_tool.navigate(url, task_id=task_id)
         await browser_tool.scroll_to_top(task_id=task_id)
 
@@ -286,7 +307,7 @@ async def validate_web_project_after_vertex(
                 break
             seen_positions.add(y)
 
-            await _publish_step(task_id, bus, f"Analisando viewport {viewport_index}", state.get("url") or url)
+            await _publish_step(task_id, bus, f"Analisando viewport {viewport_index}", "Revisando a tela renderizada.")
             analysis = await _capture_and_analyze(task_id, bus, viewport_index)
             analyses.append(analysis)
             if analysis["has_bug"]:
@@ -328,8 +349,20 @@ async def validate_web_project_after_vertex(
             "status": "failed",
             "requires_validation": True,
             "reason": f"{type(exc).__name__}: {exc}",
-            "bugs": [f"Falha ao executar validacao visual: {type(exc).__name__}: {exc}"],
+            "bugs": [f"Falha ao executar revisao visual: {type(exc).__name__}: {exc}"],
             "project": detected,
         }
         await bus.publish(task_id, "web_validation_result", result)
         return result
+    finally:
+        if internal_server_started:
+            from tools.shell import stop_dev_server
+
+            stopped = await stop_dev_server(task_id)
+            if stopped:
+                await _publish_step(
+                    task_id,
+                    bus,
+                    "Preview interno encerrado",
+                    "Servidor temporario do projeto fechado apos a revisao.",
+                )

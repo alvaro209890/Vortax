@@ -16,6 +16,8 @@ const hiddenTypes = new Set([
   "context_compacted",
   "web_validation_step",
   "project_validation_step",
+  "dev_server_started",
+  "dev_server_stopped",
 ]);
 
 const importantVertexStages = new Set(["starting", "validating", "done", "error"]);
@@ -50,13 +52,14 @@ function titleFor(event) {
   if (event.type === "screen_frame") return "Tela atualizada";
   if (event.type === "vertex_progress") return "Vertex trabalhando";
   if (event.type === "ai_exchange") return "DeepSeek ↔ Vertex";
-  if (event.type === "web_validation_started") return "Validacao do site";
+  if (event.type === "web_validation_started") return "Revisao do site";
   if (event.type === "web_validation_step") return payload.label || "Testando site";
-  if (event.type === "web_validation_result") return payload.status === "passed" ? "Site aprovado" : "Bugs no site";
-  if (event.type === "project_validation_started") return "Validacao do projeto";
-  if (event.type === "project_validation_result") return payload.status === "passed" ? "Projeto aprovado" : "Bugs no projeto";
+  if (event.type === "web_validation_result") return payload.status === "passed" ? "Site revisado" : "Ajustes no site";
+  if (event.type === "project_validation_started") return "Revisao do projeto";
+  if (event.type === "project_validation_result") return payload.status === "passed" ? "Projeto revisado" : "Ajustes no projeto";
   if (event.type === "shell_interactive_prompt") return "Prompt interativo";
-  if (event.type === "dev_server_started") return "Servidor iniciado";
+  if (event.type === "dev_server_started") return "Preview interno iniciado";
+  if (event.type === "dev_server_stopped") return "Preview interno encerrado";
   if (event.type === "files_created") return "Arquivos gerados";
   if (event.type === "source_saved") return "Fonte salva";
   if (event.type === "assistant_message_done") return "Resposta final";
@@ -84,21 +87,22 @@ function labelFor(event) {
   if (event.type === "source_saved") return `${payload.title || payload.url} (${payload.quality_score || 0}/100)`;
   if (event.type === "vertex_progress") return payload.file ? `Criando ${payload.file}` : payload.message;
   if (event.type === "ai_exchange") return payload.message;
-  if (event.type === "web_validation_started") return "Executando e analisando o site localmente antes de concluir.";
+  if (event.type === "web_validation_started") return "Abrindo o preview e revisando o site antes de concluir.";
   if (event.type === "web_validation_result") {
     if (payload.status === "passed") return `${payload.viewports_checked || 0} viewport(s) analisada(s) com visao.`;
-    return (payload.bugs || []).join("; ") || payload.reason || "Validacao visual falhou.";
+    return (payload.bugs || []).join("; ") || payload.reason || "Revisao visual encontrou ajustes.";
   }
   if (event.type === "project_validation_started") {
     const project = payload.project || {};
     return `${project.file_count || 0} arquivo(s); tipo detectado: ${project.kind || "generico"}.`;
   }
   if (event.type === "project_validation_result") {
-    if (payload.status === "passed") return payload.reason || "Checagens locais aprovadas.";
-    return (payload.bugs || []).join("; ") || payload.reason || "Validacao do projeto falhou.";
+    if (payload.status === "passed") return payload.reason || "Entrega revisada e pronta.";
+    return (payload.bugs || []).join("; ") || payload.reason || "Revisao do projeto encontrou ajustes.";
   }
   if (event.type === "shell_interactive_prompt") return payload.prompt;
-  if (event.type === "dev_server_started") return payload.url;
+  if (event.type === "dev_server_started") return "Servidor temporario usado apenas para revisao interna.";
+  if (event.type === "dev_server_stopped") return payload.reason || "Servidor temporario encerrado.";
   if (event.type === "files_created") {
     const fileCount = payload.files?.length || 0;
     const projectCount = payload.projects?.length || 0;
@@ -122,7 +126,7 @@ function summarizeToolResult(result) {
   if (result.title && result.url) return `${result.title} - ${result.url}`;
   if (result.text) return result.text.slice(0, 180);
   if (result.error) return result.error;
-  return "Concluido";
+  return "Pronto";
 }
 
 function isHighSignalEvent(event) {

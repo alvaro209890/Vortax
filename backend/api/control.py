@@ -45,7 +45,8 @@ def _kill_runner_and_children(task_id: str) -> bool:
         stopped = True
 
     # Mata dev servers em background
-    from tools.shell import _dev_servers
+    from tools.shell import _dev_servers, _kill_orphan_dev_processes
+    stopped = _kill_orphan_dev_processes(task_id) or stopped
     dev_server = _dev_servers.pop(task_id, None)
     if dev_server:
         stopped = True

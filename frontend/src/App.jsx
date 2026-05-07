@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlus, StopCircle, Trash2 } from "lucide-react";
 
-import { AgentActivity, AiExchangePanel } from "./components/AgentActivity.jsx";
+import { AgentActivity, AiExchangePanel, VertexProgressPanel } from "./components/AgentActivity.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
@@ -33,7 +33,7 @@ import {
 const welcomeMessage = {
   id: "welcome",
   role: "assistant",
-  content: "Envie uma tarefa para validar o chat local e acompanhar o stream de execucao.",
+  content: "Descreva uma tarefa e acompanhe o Vortax pesquisar, criar, revisar e entregar o resultado.",
 };
 
 function buildMessages(task, events) {
@@ -280,14 +280,15 @@ export default function App() {
   }
 
   return (
-    <ChatShell
+    <>
+      <ChatShell
       sidebar={
         <>
           <div className="brand">
             <img className="brand-logo" src="/vortax-logo.png" alt="Vortax" />
             <div>
               <strong>Vortax</strong>
-              <span>LAN MVP</span>
+              <span>Agente autonomo</span>
             </div>
           </div>
           <StatusBadge status={backendStatus} label={`Backend ${backendStatus}`} />
@@ -337,8 +338,8 @@ export default function App() {
         <>
           <header className="chat-header">
             <div>
-              <span className="panel-label">Chat local</span>
-              <h1>Controle este PC pela rede local</h1>
+              <span className="panel-label">Agente IA</span>
+              <h1>Crie, pesquise e execute tarefas com IA</h1>
             </div>
             <div className="chat-header-actions">
               {agentBusy && (
@@ -373,6 +374,8 @@ export default function App() {
           <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
         </>
       }
-    />
+      />
+      <VertexProgressPanel events={currentEvents} />
+    </>
   );
 }

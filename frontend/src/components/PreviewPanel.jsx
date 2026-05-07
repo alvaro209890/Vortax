@@ -1,82 +1,37 @@
-import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Eye, EyeOff, Globe, Loader2, RefreshCw } from "lucide-react";
+import { useMemo } from "react";
+import { ExternalLink, Eye, EyeOff, Globe } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 import { usePersistentState } from "../hooks/usePersistentState.js";
 import { API_BASE_URL } from "../lib/api.js";
 
-function detectPreviewType(files, events) {
+function detectPreviewType(files) {
   const indexFile = files.find(
     (f) => f.path === "index.html" || f.path.endsWith("/index.html")
   );
-  // Check dev server events
-  const devServerEvent = [...events].reverse().find(
-    (e) => e.type === "dev_server_started"
-  );
-  if (devServerEvent?.payload) {
-    return {
-      type: "dev_server",
-      url: devServerEvent.payload.url,
-      port: devServerEvent.payload.port,
-    };
-  }
   if (indexFile) {
     return { type: "static_html", path: indexFile.path };
   }
   return null;
 }
 
-export function PreviewPanel({ files, events, taskId }) {
+export function PreviewPanel({ files, taskId }) {
   const [visible, setVisible] = usePersistentState("vortax.inspector.preview.visible", true);
-  const [devServerStatus, setDevServerStatus] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
 
   const preview = useMemo(
-    () => detectPreviewType(files, events),
-    [files, events]
+    () => detectPreviewType(files),
+    [files]
   );
 
   const previewUrl = useMemo(() => {
     if (!taskId || !preview) return null;
-    if (preview.type === "dev_server") return preview.url;
     const encodedPath = preview.path === "index.html"
       ? ""
       : String(preview.path || "").split("/").map((part) => encodeURIComponent(part)).join("/");
     return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId)}/${encodedPath}`;
   }, [taskId, preview]);
 
-  // Check dev server status on mount and when preview changes
-  useEffect(() => {
-    if (!taskId || preview?.type !== "dev_server") return;
-    const checkStatus = async () => {
-      try {
-        const resp = await fetch(`${API_BASE_URL}/api/files/preview-dev/${encodeURIComponent(taskId)}`);
-        const data = await resp.json();
-        setDevServerStatus(data);
-      } catch {
-        setDevServerStatus(null);
-      }
-    };
-    checkStatus();
-    const interval = setInterval(checkStatus, 10000);
-    return () => clearInterval(interval);
-  }, [taskId, preview?.type]);
-
-  async function handleRefresh() {
-    if (!taskId || preview?.type !== "dev_server") return;
-    setRefreshing(true);
-    try {
-      await fetch(`${API_BASE_URL}/api/files/preview-dev/${encodeURIComponent(taskId)}`, { method: "DELETE" });
-      setDevServerStatus(null);
-    } catch {
-      // ignore
-    }
-    setRefreshing(false);
-  }
-
   if (!preview || !previewUrl) return null;
-
-  const isDevServer = preview.type === "dev_server";
 
   return (
     <CollapsiblePanel
@@ -86,11 +41,6 @@ export function PreviewPanel({ files, events, taskId }) {
       titleIcon={<Globe size={14} />}
     >
       <div className="preview-header-actions">
-        {isDevServer && (
-          <small className={devServerStatus?.running ? "live" : ""}>
-            {devServerStatus?.running ? `:${preview.port}` : "offline"}
-          </small>
-        )}
         <a
           href={previewUrl}
           target="_blank"
@@ -111,20 +61,6 @@ export function PreviewPanel({ files, events, taskId }) {
 
       {visible && (
         <div className="preview-body">
-          {isDevServer && !devServerStatus?.running && (
-            <div className="preview-dev-banner">
-              <Loader2 size={13} className="spinner" />
-              <span>Aguardando servidor iniciar...</span>
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                title="Reiniciar servidor"
-              >
-                <RefreshCw size={13} className={refreshing ? "spinner" : ""} />
-              </button>
-            </div>
-          )}
           <iframe
             key={`${taskId}-${preview.type}`}
             src={previewUrl}

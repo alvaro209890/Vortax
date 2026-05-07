@@ -2321,230 +2321,260 @@ small {
   color: var(--accent-danger);
 }
 
-.activity-vertex-slot {
-  margin-top: 2px;
+/* ── Vertex Toast (canto inferior direito) ──────────────────────────── */
+
+.vtx-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  border: 1px solid rgba(8, 198, 93, 0.2);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  z-index: 900;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  transition: border-color 0.3s ease;
 }
 
-.vertex-progress-panel {
-  border: 1px solid rgba(8, 198, 93, 0.16);
-  border-radius: 10px;
-  background: #080E12;
-  overflow: visible;
-  margin-bottom: 16px;
-  position: relative;
+.vtx-toast.vtx-done {
+  border-color: rgba(52, 211, 153, 0.25);
 }
 
-.activity-vertex-slot .vertex-progress-panel {
-  margin-bottom: 0;
-}
-
-.vertex-progress-panel.done {
-  border-color: rgba(52, 211, 153, 0.2);
-}
-
-.vertex-progress-header {
+.vtx-toast-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   width: 100%;
-  padding: 9px 11px;
+  padding: 10px 14px;
   border: none;
-  background: rgba(8, 198, 93, 0.04);
+  background: var(--bg-surface);
   color: var(--text-primary);
-  font-size: 12px;
-  text-align: left;
+  font-size: 13px;
   cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
 }
 
-.vertex-progress-title,
-.vertex-progress-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
+.vtx-toast-bar:hover {
+  background: var(--bg-surface-hover);
 }
 
-.vertex-progress-title svg,
-.vertex-progress-icon svg {
+.vtx-toast-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(8, 198, 93, 0.12);
   color: var(--accent-blue);
   flex-shrink: 0;
 }
 
-.vertex-progress-title .spinner,
-.vertex-progress-item:not(.done) .vertex-progress-icon svg {
-  animation: spin 1s linear infinite;
+.vtx-toast.vtx-done .vtx-toast-icon {
+  background: rgba(52, 211, 153, 0.12);
+  color: var(--accent-green);
 }
 
-.vertex-progress-meta {
+.vtx-toast-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.vtx-toast-stats {
   color: var(--text-muted);
   font-size: 11px;
   flex-shrink: 0;
 }
 
-.vertex-progress-body {
+.vtx-toast-chevron {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.vtx-toast-body {
+  overflow: hidden;
+}
+
+.vtx-toast.vtx-collapsed .vtx-toast-body {
+  max-height: 0 !important;
+  opacity: 0 !important;
+}
+
+.vtx-stage-track {
   display: flex;
-  flex-direction: column;
-  gap: 0;
-  position: absolute;
-  top: 0;
-  left: calc(100% + 8px);
-  width: 360px;
-  max-height: 80vh;
-  overflow: hidden;
-  border: 1px solid rgba(8, 198, 93, 0.18);
-  border-radius: var(--radius-lg);
-  background: var(--bg-panel);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
-  z-index: 500;
-  transition: opacity 0.18s ease, transform 0.18s ease, max-width 0.22s ease;
+  gap: 4px;
+  padding: 10px 14px 6px;
+  justify-content: center;
 }
 
-.vertex-progress-panel.collapsed .vertex-progress-body {
-  max-width: 0;
-  max-height: 0;
-  opacity: 0;
-  transform: translateX(-8px);
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.vertex-live-legend {
+.vtx-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-  gap: 8px;
-  padding: 10px 11px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(255, 255, 255, 0.018);
+  place-items: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: transparent;
+  transition: all 0.3s ease;
+  position: relative;
 }
 
-.vertex-live-main,
-.vertex-live-estimate,
-.vertex-live-validation {
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.025);
+.vtx-dot.vtx-done {
+  background: rgba(52, 211, 153, 0.25);
+  color: var(--accent-green);
 }
 
-.vertex-live-validation {
-  grid-column: 1 / -1;
-  border-color: rgba(251, 191, 36, 0.18);
+.vtx-dot.vtx-active {
+  background: var(--accent-blue);
+  box-shadow: 0 0 10px rgba(8, 198, 93, 0.45);
+  color: #fff;
+}
+
+.vtx-dot.vtx-future {
+  opacity: 0.25;
+}
+
+.vtx-current-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(8, 198, 93, 0.15);
+  border-radius: 10px;
+  background: rgba(8, 198, 93, 0.06);
+}
+
+.vtx-current-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.vtx-current-file {
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.vtx-validation {
+  margin: 0 14px 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.18);
   background: rgba(251, 191, 36, 0.06);
 }
 
-.vertex-live-validation.ok {
-  border-color: rgba(52, 211, 153, 0.18);
+.vtx-validation.ok {
+  border-color: rgba(52, 211, 153, 0.2);
   background: rgba(52, 211, 153, 0.06);
 }
 
-.vertex-live-validation.error {
+.vtx-validation.error {
   border-color: rgba(248, 113, 113, 0.22);
   background: rgba(248, 113, 113, 0.08);
 }
 
-.vertex-live-legend small {
+.vtx-validation small {
   display: block;
-  margin-bottom: 3px;
-  color: var(--accent-blue);
+  margin-bottom: 2px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.3px;
+  color: var(--accent-warn);
 }
 
-.vertex-live-validation.error small {
+.vtx-validation.ok small {
+  color: var(--accent-green);
+}
+
+.vtx-validation.error small {
   color: var(--accent-danger);
 }
 
-.vertex-live-validation.ok small {
-  color: var(--accent-green);
-}
-
-.vertex-live-legend strong {
-  display: block;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.vertex-live-legend p {
-  margin: 3px 0 0;
+.vtx-validation p {
+  margin: 0;
   color: var(--text-secondary);
   font-size: 11px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
-.vertex-stage-rail {
-  display: grid;
-  grid-template-columns: repeat(11, minmax(0, 1fr));
-  gap: 5px;
-  padding: 0 11px 10px;
+.vtx-items-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 4px 6px 8px 14px;
+  padding-right: 8px;
 }
 
-.vertex-stage-rail span {
-  height: 4px;
-  border-radius: 999px;
+.vtx-items-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.vtx-items-scroll::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
 }
 
-.vertex-stage-rail span.reached {
-  background: rgba(8, 198, 93, 0.5);
-}
-
-.vertex-stage-rail span.active {
-  background: var(--accent-blue);
-  box-shadow: 0 0 10px rgba(8, 198, 93, 0.35);
-}
-
-.vertex-progress-item {
+.vtx-item {
   display: grid;
-  grid-template-columns: 22px 1fr;
+  grid-template-columns: 20px 1fr;
   gap: 8px;
-  padding: 9px 11px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  align-items: flex-start;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.vertex-progress-item.done .vertex-progress-icon svg {
+.vtx-item-dot {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.vtx-item-dot-done {
+  background: rgba(52, 211, 153, 0.15);
   color: var(--accent-green);
 }
 
-.vertex-progress-list {
-  overflow-y: auto;
-  overflow-x: hidden;
-  max-height: 320px;
-  margin: 4px 0;
-}
-
-.vertex-progress-list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.vertex-progress-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-}
-
-.vertex-progress-icon {
-  display: flex;
-  align-items: flex-start;
-  padding-top: 1px;
-}
-
-.vertex-progress-item strong {
+.vtx-item strong {
   display: block;
   font-size: 12px;
   color: var(--text-primary);
+  font-weight: 500;
 }
 
-.vertex-progress-item p {
+.vtx-item p {
   margin: 2px 0 0;
   color: var(--text-secondary);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
+
+/* ── keep existing vertex-terminal styles below ── */
 
 .ai-exchange-list {
   display: flex;
@@ -2673,18 +2703,6 @@ small {
 
   .activity-steps {
     padding-bottom: 1px;
-  }
-
-  .vertex-live-legend {
-    grid-template-columns: 1fr;
-  }
-
-  .vertex-live-validation {
-    grid-column: auto;
-  }
-
-  .vertex-stage-rail {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .composer-wrapper {

@@ -11,8 +11,8 @@ const stageLabels = {
   editing: "Editando",
   reading_file: "Lendo arquivo",
   configuring: "Configurando",
-  validating: "Verificando",
-  done: "Concluído",
+  validating: "Revisando",
+  done: "Entrega pronta",
 };
 
 function vertexProgressSummary(events) {

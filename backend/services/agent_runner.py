@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import shlex
 from typing import Any
 from pathlib import Path
@@ -20,6 +21,16 @@ from services.research_policy import cross_check_status
 from services.task_store import TaskStore
 from tools.tool_executor import compact_tool_result, execute_tool
 from services.web_validation import web_intent_from_command
+
+
+LOCAL_PREVIEW_RE = re.compile(
+    r"(?:LINK_LOCAL_DO_SITE:\s*)?https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:/[^\s\"'<>)]*)?",
+    re.IGNORECASE,
+)
+LOCAL_PREVIEW_LINE_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:LINK_LOCAL_DO_SITE\s*:\s*)?https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}.*(?:\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _message_history_from_events(events: list[dict[str, Any]], fallback_description: str) -> list[dict[str, str]]:
@@ -59,7 +70,13 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
     for message in reversed(history):
         if message.get("role") == "user":
             content = str(message.get("content") or "").strip()
-            if content and not content.startswith("Resultado da ferramenta:") and not content.startswith("Controle automatico de pesquisa:"):
+            if (
+                content
+                and not content.startswith("Resultado da ferramenta:")
+                and not content.startswith("Controle automatico de pesquisa:")
+                and not content.startswith("Controle automatico de revisao")
+                and not content.startswith("Controle automatico de validacao")
+            ):
                 return content
     return ""
 
@@ -167,7 +184,7 @@ def _latest_web_validation_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
     if latest_result is None:
         if not _looks_like_creation_vertex_command(command):
             return {"required": False, "status": "not_required"}
-        return {"required": True, "status": "pending", "reason": "Site criado pelo Vertex ainda nao passou pela validacao visual local."}
+        return {"required": True, "status": "pending", "reason": "Site criado pelo Vertex ainda nao passou pela revisao visual."}
 
     if not latest_result.get("requires_validation"):
         return {"required": False, "status": str(latest_result.get("status") or "skipped"), "result": latest_result}
@@ -199,15 +216,15 @@ def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
     for label, result in (("web_validation", web_result), ("project_validation", project_result)):
         if result is None:
             if label == "project_validation" and creation_command:
-                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela validacao automatica local.")
+                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela revisao automatica.")
             elif label == "web_validation" and creation_command:
-                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela checagem de preview/web.")
+                pending_reasons.append("Projeto criado pelo Vertex ainda nao passou pela revisao visual.")
             continue
 
         requires_validation = bool(result.get("requires_validation"))
         status = str(result.get("status") or "pending")
         if status == "blocked":
-            blocked_reasons.append(str(result.get("reason") or "Validacao bloqueada."))
+            blocked_reasons.append(str(result.get("reason") or "Revisao bloqueada."))
             continue
         if not requires_validation:
             continue
@@ -235,7 +252,7 @@ def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "required": True,
             "status": "failed",
-            "reason": "Validacao local encontrou bugs.",
+            "reason": "Revisao automatica encontrou bugs.",
             "bugs": failed_bugs[:12],
             "web_validation": web_result,
             "project_validation": project_result,
@@ -253,7 +270,7 @@ def _latest_vertex_quality_gate(events: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "required": True,
             "status": "passed",
-            "reason": "Validacao local aprovada.",
+            "reason": "Revisao automatica aprovada.",
             "bugs": [],
             "web_validation": web_result,
             "project_validation": project_result,
@@ -278,6 +295,39 @@ def _format_research_note(status: dict[str, Any]) -> str:
         categories = ", ".join(str(item.get("category")) for item in divergence.get("signals", []) if isinstance(item, dict))
         return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas. Possivel divergencia detectada em: {categories or 'dados extraidos'}."
     return f"\n\nVerificacao cruzada: {source_count} fontes relevantes consultadas; nenhuma divergencia automatica evidente foi detectada."
+
+
+def _sanitize_chat_content(content: str) -> str:
+    text = str(content or "")
+    had_local_preview = bool(LOCAL_PREVIEW_RE.search(text) or "LINK_LOCAL_DO_SITE" in text)
+    text = LOCAL_PREVIEW_LINE_RE.sub("", text)
+    text = LOCAL_PREVIEW_RE.sub("preview interno do Vortax", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if had_local_preview:
+        note = "O preview foi usado apenas para revisao interna e foi encerrado apos a entrega."
+        if note not in text:
+            text = f"{text}\n\n{note}".strip() if text else note
+    return text or "Pronto. A entrega foi gerada e revisada pelo Vortax."
+
+
+async def _cleanup_project_runtime(task_id: str, bus: EventBus, reason: str) -> None:
+    try:
+        from tools.shell import stop_dev_server
+
+        stopped = await stop_dev_server(task_id)
+    except Exception as exc:
+        await bus.publish(task_id, "error", {"message": f"Falha ao encerrar preview interno: {type(exc).__name__}: {exc}"})
+        return
+    if stopped:
+        await bus.publish(
+            task_id,
+            "agent_progress",
+            {
+                "label": "Preview interno encerrado",
+                "detail": reason,
+            },
+        )
+        await bus.publish(task_id, "dev_server_stopped", {"task_id": task_id, "reason": reason})
 
 
 def _file_payload(file: dict[str, Any]) -> dict[str, Any]:
@@ -317,7 +367,7 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
 
     if is_web_project and docs:
         payload["content"] = (
-            "Pronto. Criei o site solicitado, validei o projeto e gerei a documentacao em Markdown. "
+            "Pronto. Criei o site solicitado, revisei o projeto e gerei a documentacao em Markdown. "
             "Abra o card Documentacao para ler no Vortax ou use o botao abaixo para baixar."
         )
     elif requested_downloads:
@@ -356,14 +406,16 @@ async def _finish_text_response(
     bus: EventBus,
 ) -> None:
     payload = _generated_file_response_payload(task_id, result, bus.history(task_id))
-    final_content = str(payload.get("content") or result)
+    final_content = _sanitize_chat_content(str(payload.get("content") or result))
+    payload["content"] = final_content
     store.update_status(task_id, "done", result=final_content)
     await bus.publish(task_id, "assistant_message_done", payload)
+    await _cleanup_project_runtime(task_id, bus, "Servidor temporario do projeto fechado apos a resposta no chat.")
     _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
     if final_compacted:
         await bus.publish(task_id, "context_compacted", final_context)
     await bus.publish(task_id, "context_status", final_context)
-    await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
+    await bus.publish(task_id, "agent_status", {"status": "done", "label": "Entrega pronta"})
 
 
 async def _answer_exact_prompt(
@@ -453,6 +505,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):
+                await _cleanup_project_runtime(task_id, bus, "Tarefa parada; preview interno fechado.")
                 return
 
             await bus.publish(task_id, "agent_progress", {"label": "Planejando proximo passo", "step": iteration + 1})
@@ -465,29 +518,29 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 if validation_gate.get("required") and validation_gate.get("status") != "passed":
                     status = str(validation_gate.get("status") or "pending")
                     if status == "blocked":
-                        reason = str(validation_gate.get("reason") or "Validacao local obrigatoria indisponivel.")
+                        reason = str(validation_gate.get("reason") or "Revisao automatica obrigatoria indisponivel.")
                         raise DeepSeekError(reason)
 
                     bugs = validation_gate.get("bugs") or []
-                    bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Validacao local ainda nao foi aprovada.")
+                    bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Revisao automatica ainda nao foi aprovada.")
                     await bus.publish(
                         task_id,
                         "agent_progress",
                         {
                             "label": "Corrigindo bugs do projeto",
-                            "detail": "A tarefa nao pode finalizar antes da validacao local passar.",
+                            "detail": "A tarefa nao pode finalizar antes da revisao automatica passar.",
                         },
                     )
                     history.append(
                         {
                             "role": "user",
                             "content": (
-                                "Controle automatico de validacao local: nao finalize ainda. "
-                                f"Status da validacao do projeto: {status}. "
+                                "Controle automatico de revisao da entrega: nao finalize ainda. "
+                                f"Status da revisao do projeto: {status}. "
                                 f"Problemas encontrados: {bug_text}. "
                                 "Use shell_run com vertex para corrigir exatamente esses bugs no projeto atual. "
                                 "Isso vale para sites, sistemas, APIs, scripts Python, apps Node e qualquer outro codigo criado. "
-                                "Depois da correcao, o Vortax repetira a validacao automatica e so entao podera finalizar. "
+                                "Depois da correcao, o Vortax repetira a revisao automatica e so entao podera finalizar. "
                                 "Para HTML/CSS/JS estatico, nao suba servidor manual; o Vortax abrira o preview interno."
                             ),
                         }
@@ -569,6 +622,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         if store.is_stopped(task_id):
             store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
             await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+            await _cleanup_project_runtime(task_id, bus, "Tarefa interrompida; preview interno fechado.")
             await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
             return
 
@@ -576,13 +630,16 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
     except asyncio.CancelledError:
         store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
         await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+        await _cleanup_project_runtime(task_id, bus, "Tarefa cancelada; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
         return
     except DeepSeekError as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
+        await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
     except Exception as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
+        await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro"})

@@ -34,6 +34,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "project_validation_result",
         "shell_interactive_prompt",
         "dev_server_started",
+        "dev_server_stopped",
         "error",
         "pong",
     }

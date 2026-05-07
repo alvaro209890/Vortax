@@ -17,6 +17,12 @@ from services.project_files import missing_local_asset_refs
 # task_id -> {"process": Popen, "port": int, "url": str, "cwd": str}
 _dev_servers: dict[str, dict[str, Any]] = {}
 
+DEV_SERVER_PROCESS_RE = re.compile(
+    r"\b(npm\s+run\s+dev|npm\s+start|vite|next\s+dev|nuxt\s+dev|react-scripts\s+start|"
+    r"http-server|live-server|serve\b|python3?\s+-m\s+http\.server)\b",
+    re.IGNORECASE,
+)
+
 
 SHELL_WHITELIST = {
     "python3", "python", "pip3", "pip",
@@ -94,7 +100,7 @@ VERTEX_SIMULATED_PROGRESS = [
     ("creating", "Montando a estrutura de pastas e arquivos."),
     ("writing_file", "Escrevendo os arquivos principais da interface."),
     ("editing", "Ajustando estilos, textos e interacoes."),
-    ("validating", "Preparando o projeto para validacao local."),
+    ("validating", "Preparando a entrega para revisao final."),
 ]
 
 # ── Interactive prompt detection ────────────────────────────────────────────
@@ -144,6 +150,10 @@ PORT_DETECTION_PATTERNS = [
     re.compile(r"listening\s+on\s+.*?:(\d{4,5})", re.IGNORECASE),
 ]
 LOCAL_URL_PATTERN = re.compile(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:/[^\s\"'<>)]*)?", re.IGNORECASE)
+
+
+def _redact_local_urls(text: str) -> str:
+    return LOCAL_URL_PATTERN.sub("preview interno do Vortax", str(text or ""))
 OSC_ESCAPE_PATTERN = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 SPINNER_CHARS = set("◔◐◑◕●○◌⠁⠂⠄⠈⠐⠠⠤⠦⠧⠇⠏⠋⠙⠹⠸⠼⠴⠦⠧⠇")
@@ -481,7 +491,7 @@ async def _publish_vertex_terminal_frame(
         {
             "stage": current_stage or ("done" if status == "done" else "executing"),
             "message": (
-                "Vertex concluiu a execucao."
+                "Entrega pronta."
                 if status == "done"
                 else "Vertex encontrou um erro."
                 if status == "error"
@@ -525,6 +535,58 @@ def _process_group_commands(pgid: int) -> list[str]:
         if len(parts) == 3 and parts[1].isdigit() and int(parts[1]) == pgid:
             commands.append(parts[2])
     return commands
+
+
+def _read_process_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+
+def _process_cwd_under(pid: int, root: Path) -> bool:
+    try:
+        cwd = Path(os.readlink(f"/proc/{pid}/cwd")).resolve()
+        root_resolved = root.resolve()
+    except OSError:
+        return False
+    return cwd == root_resolved or root_resolved in cwd.parents
+
+
+def _terminate_pid_group(pid: int, *, sig: int = signal.SIGTERM) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.killpg(os.getpgid(pid), sig)
+        return True
+    except (ProcessLookupError, OSError):
+        try:
+            os.kill(pid, sig)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
+
+
+def _kill_orphan_dev_processes(task_id: str) -> bool:
+    project_dir = _project_dir(task_id).resolve()
+    killed = False
+    proc_root = Path("/proc")
+    if not proc_root.exists():
+        return False
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == os.getpid():
+            continue
+        cmdline = _read_process_cmdline(pid)
+        if not cmdline or not DEV_SERVER_PROCESS_RE.search(cmdline):
+            continue
+        if str(project_dir) not in cmdline and not _process_cwd_under(pid, project_dir):
+            continue
+        killed = _terminate_pid_group(pid) or killed
+    return killed
 
 
 def _looks_like_foreground_dev_server(command: str) -> bool:
@@ -767,13 +829,14 @@ async def _run_vertex_pty(
         stripped = _display_terminal_line(line)
         if not stripped or _is_spinner_noise(stripped):
             return
-        if _is_duplicate_terminal_line(terminal_lines, stripped):
+        display = _redact_local_urls(stripped)
+        if _is_duplicate_terminal_line(terminal_lines, display):
             return
         last_output_at = loop.time()
-        stdout_lines.append(stripped + "\n")
-        terminal_lines.append({"stream": "stdout", "line": stripped})
+        stdout_lines.append(display + "\n")
+        terminal_lines.append({"stream": "stdout", "line": display})
         if bus and task_id:
-            await bus.publish(task_id, "shell_stdout", {"line": stripped})
+            await bus.publish(task_id, "shell_stdout", {"line": display})
             progress = _parse_vertex_progress(stripped)
             if progress:
                 latest_vertex_stage = str(progress.get("stage") or "")
@@ -901,7 +964,7 @@ async def _run_vertex_pty(
                                 break
                             static_project_detected_success = True
                             await _publish_terminal_line(
-                                "Projeto estatico detectado; Vortax encerrou o Vertex e iniciara a validacao no Chrome."
+                                "Projeto estatico detectado; Vortax encerrou o Vertex e iniciara a revisao no Chrome."
                             )
                             await _interrupt_vertex_group(pgid)
                             break
@@ -1082,6 +1145,9 @@ async def run_shell(
             max_interactive_rounds=max_interactive_rounds,
         )
 
+    if is_dev_server and task_id:
+        await stop_dev_server(task_id)
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -1143,10 +1209,11 @@ async def run_shell(
             return
         if not bus or not task_id:
             return
-        await bus.publish(task_id, event_type, {"line": stripped})
+        display = _redact_local_urls(stripped)
+        await bus.publish(task_id, event_type, {"line": display})
         if is_vertex:
             stream = "stderr" if event_type == "shell_stderr" else "stdout"
-            terminal_lines.append({"stream": stream, "line": stripped})
+            terminal_lines.append({"stream": stream, "line": display})
 
         # Detecta porta do dev server
         if is_dev_server and detected_port is None and event_type == "shell_stdout":
@@ -1311,9 +1378,9 @@ async def run_shell(
             task_id,
             "dev_server_started",
             {
-                "url": dev_url,
                 "port": detected_port,
                 "task_id": task_id,
+                "internal": True,
             },
         )
 
@@ -1421,12 +1488,14 @@ def get_dev_server(task_id: str) -> dict[str, Any] | None:
 async def stop_dev_server(task_id: str) -> bool:
     """Para o dev server em background de um task_id."""
     server = _dev_servers.pop(task_id, None)
+    stopped = _kill_orphan_dev_processes(task_id)
     if not server:
-        return False
+        return stopped
     process = server["process"]
     try:
         # Tenta matar o grupo de processo (preexec_fn=os.setsid)
         os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        stopped = True
     except (ProcessLookupError, OSError):
         pass
     try:
@@ -1434,7 +1503,8 @@ async def stop_dev_server(task_id: str) -> bool:
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            stopped = True
         except (ProcessLookupError, OSError):
             pass
         process.wait()
-    return True
+    return stopped

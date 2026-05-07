@@ -35,14 +35,14 @@ def is_allowed_public_host(host: str | None, headers) -> bool:
 
 def install_lan_guard(app: FastAPI) -> None:
     if settings.ALLOW_NO_AUTH:
-        logger.warning("Vortax sem autenticacao; use apenas em rede local confiavel.")
+        logger.warning("Vortax sem autenticacao; restrinja o acesso ao backend.")
 
     @app.middleware("http")
     async def lan_only_middleware(request: Request, call_next):
         client_host = request.client.host if request.client else None
         if settings.LAN_ONLY and not is_private_client(client_host) and not is_allowed_public_host(request.headers.get("host"), request.headers):
             return JSONResponse(
-                {"detail": "Vortax MVP aceita apenas clientes de rede local."},
+                {"detail": "Acesso publico nao autorizado para este backend."},
                 status_code=403,
             )
         return await call_next(request)

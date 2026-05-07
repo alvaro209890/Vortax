@@ -149,31 +149,31 @@ function StepIcon({ state }) {
 const stageLabels = {
   starting: "Iniciando",
   planning: "Planejando",
-  writing_file: "Criando arquivo",
   creating: "Criando",
-  installing: "Instalando",
-  executing: "Executando",
+  writing_file: "Escrevendo",
   editing: "Editando",
-  reading_file: "Lendo arquivo",
+  reading_file: "Lendo",
+  installing: "Instalando",
   configuring: "Configurando",
-  validating: "Verificando",
-  done: "Concluído",
+  executing: "Executando",
+  validating: "Revisando",
+  done: "Entrega pronta",
   error: "Erro",
 };
 
-const stageDetails = {
-  starting: "Preparando a CLI, permissões e pasta persistente da conversa.",
-  planning: "Estimando estrutura, arquivos necessários e sequência de implementação.",
-  creating: "Montando pastas, arquivos base e pontos de entrada do projeto.",
-  writing_file: "Gravando arquivos de código, estilos, telas ou scripts.",
-  editing: "Refinando o que já foi criado e corrigindo inconsistências.",
-  installing: "Preparando dependências locais quando o projeto exige.",
-  executing: "Executando comandos internos do Vertex e acompanhando a saída.",
-  configuring: "Ajustando configuração, scripts, rotas ou integração local.",
-  reading_file: "Lendo arquivos gerados para decidir o próximo ajuste.",
-  validating: "O Vortax está testando o resultado antes de liberar a resposta.",
-  done: "Criação finalizada e validação local registrada no stream.",
-  error: "A validação encontrou algo que precisa voltar para correção.",
+const stageIcons = {
+  starting: "1",
+  planning: "2",
+  creating: "3",
+  writing_file: "4",
+  editing: "5",
+  reading_file: "6",
+  installing: "7",
+  configuring: "8",
+  executing: "9",
+  validating: "10",
+  done: "/",
+  error: "!",
 };
 
 const stageOrder = [
@@ -254,112 +254,118 @@ function validationLegend(events) {
   const failed = [project, web].find((item) => item?.status === "failed");
   if (failed) {
     const bug = Array.isArray(failed.bugs) ? failed.bugs[0] : failed.reason;
-    return { tone: "error", label: "Correção pendente", detail: bug || "A validação encontrou bugs." };
+    return { tone: "error", label: "Ajuste necessario", detail: bug || "A revisao encontrou algo para corrigir." };
   }
   const blocked = [project, web].find((item) => item?.status === "blocked");
-  if (blocked) return { tone: "error", label: "Validação bloqueada", detail: blocked.reason || "Configuração necessária para testar." };
+  if (blocked) return { tone: "error", label: "Revisao bloqueada", detail: blocked.reason || "Configuracao necessaria para testar a entrega." };
   const passed = [project, web].find((item) => item?.status === "passed");
-  if (passed) return { tone: "ok", label: "Validação aprovada", detail: passed.reason || "Checagens locais passaram." };
+  if (passed) return { tone: "ok", label: "Tudo pronto", detail: passed.reason || "Projeto revisado, arquivos gerados e entrega pronta para usar." };
   return null;
 }
 
 export function VertexProgressPanel({ events }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const { currentFile, currentMessage, currentStage, items, hasVertexActivity, running, done } = useVertexProgress(events);
+  const [collapsed, setCollapsed] = useState(true);
+  const { currentFile, currentStage, items, hasVertexActivity, running, done } = useVertexProgress(events);
   const validation = validationLegend(events);
 
   if (!hasVertexActivity) return null;
 
   const activeStage = currentStage || "executing";
   const activeIndex = Math.max(0, stageOrder.indexOf(activeStage));
-  const activeDetail = currentFile ? `Arquivo atual: ${currentFile}` : currentMessage || stageDetails[activeStage] || "Acompanhando a criação em tempo real.";
+  const currentLabel = stageLabels[activeStage] || "Trabalhando";
+  const currentFileShort = currentFile ? currentFile.split("/").pop() : null;
+  const activeCount = items.filter(i => i.status !== "done" && i.stage !== "done").length;
+  const doneCount = items.filter(i => i.status === "done" || i.stage === "done").length;
 
   return (
-    <div className={`vertex-progress-panel ${done ? "done" : ""} ${collapsed ? "collapsed" : ""}`}>
+    <div className={`vtx-toast ${done ? "vtx-done" : ""} ${collapsed ? "vtx-collapsed" : ""}`}>
       <button
-        className="vertex-progress-header"
+        className="vtx-toast-bar"
         onClick={() => setCollapsed((c) => !c)}
         type="button"
       >
-        <div className="vertex-progress-title">
-          <Code2 size={13} />
-          <span>Vertex</span>
-          {running && <Loader2 size={11} className="spinner" />}
-          {done && <span className="vertex-stage-pill done">Concluído</span>}
-        </div>
-        <div className="vertex-progress-meta">
-          <small>{items.length || 1} etapa(s)</small>
-          <motion.span
-            animate={{ rotate: collapsed ? -90 : 0 }}
-            transition={{ type: "spring", stiffness: 200, damping: 20 }}
-            style={{ display: "inline-flex" }}
-          >
-            <ChevronDown size={14} />
-          </motion.span>
-        </div>
+        <span className="vtx-toast-icon">
+          {running && <Loader2 size={15} className="spinner" />}
+          {done && <CheckCircle2 size={15} />}
+          {!running && !done && <Code2 size={15} />}
+        </span>
+        <span className="vtx-toast-label">
+          {done ? "Entrega pronta" : currentFileShort || currentLabel}
+        </span>
+        <span className="vtx-toast-stats">
+          {doneCount}/{items.length || 1} etapas
+        </span>
+        <motion.span
+          className="vtx-toast-chevron"
+          animate={{ rotate: collapsed ? 0 : 180 }}
+          transition={{ type: "spring", stiffness: 200, damping: 20 }}
+        >
+          <ChevronDown size={14} />
+        </motion.span>
       </button>
 
       <motion.div
-        className="vertex-progress-body"
+        className="vtx-toast-body"
         initial={false}
         animate={{
+          maxHeight: collapsed ? 0 : 500,
           opacity: collapsed ? 0 : 1,
-          x: collapsed ? -8 : 0,
-          maxWidth: collapsed ? 0 : 360,
-          maxHeight: collapsed ? 0 : 560,
         }}
-        transition={{ duration: 0.22, ease: "easeInOut" }}
+        transition={{ duration: 0.25, ease: "easeInOut" }}
       >
-        <div className="vertex-live-legend">
-          <div className="vertex-live-main">
-            <small>Agora</small>
-            <strong>{stageLabels[activeStage] || "Trabalhando"}</strong>
-            <p>{activeDetail}</p>
-          </div>
-          <div className="vertex-live-estimate">
-            <small>Estimativa</small>
-            <p>{stageDetails[activeStage] || "Inferindo etapa pelo stream do Vertex."}</p>
-          </div>
-          {validation && (
-            <div className={`vertex-live-validation ${validation.tone}`}>
-              <small>{validation.label}</small>
-              <p>{validation.detail}</p>
-            </div>
-          )}
-        </div>
-
-        <div className="vertex-stage-rail" aria-label="Etapas estimadas do Vertex">
-          {stageOrder.map((stage, index) => (
-            <motion.span
-              className={`${index <= activeIndex || done ? "reached" : ""} ${stage === activeStage ? "active" : ""}`}
-              key={stage}
-              title={stageLabels[stage]}
-              animate={stage === activeStage ? { scale: [1, 1.3, 1] } : { scale: 1 }}
-              transition={stage === activeStage ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" } : {}}
-            />
-          ))}
-        </div>
-
-        <div className="vertex-progress-list">
-          <AnimatePresence initial={false}>
-            {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => (
-              <motion.div
-                className={`vertex-progress-item ${item.status === "done" || item.stage === "done" ? "done" : ""}`}
-                key={item.id}
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0, borderTopWidth: 0 }}
-                transition={{ type: "spring", stiffness: 200, damping: 22 }}
+        <div className="vtx-stage-track">
+          {stageOrder.map((stage, idx) => {
+            const isDone = items.some(i => i.stage === stage && (i.status === "done" || i.stage === "done"));
+            const isActive = stage === activeStage;
+            const hideAfter = stage === "done" && !isDone;
+            if (hideAfter) return <span key={stage} className="vtx-dot vtx-future" />;
+            return (
+              <span
+                key={stage}
+                className={`vtx-dot ${isDone ? "vtx-done" : ""} ${isActive ? "vtx-active" : ""}`}
+                title={stageLabels[stage]}
               >
-                <div className="vertex-progress-icon">
-                  {item.status === "done" || item.stage === "done" ? <CheckCircle2 size={14} /> : <Loader2 size={14} />}
-                </div>
-                <div>
-                  <strong>{item.label}</strong>
-                  <p>{item.file ? `Arquivo: ${item.file}` : item.message}</p>
-                </div>
-              </motion.div>
-            ))}
+                {isDone ? "v" : isActive ? "·" : ""}
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="vtx-current-card">
+          <span className="vtx-current-badge">{currentLabel}</span>
+          <span className="vtx-current-file">{done ? "Projeto revisado e pronto" : currentFileShort || "Preparando entrega..."}</span>
+        </div>
+
+        {validation && (
+          <div className={`vtx-validation ${validation.tone}`}>
+            <small>{validation.label}</small>
+            <p>{validation.detail}</p>
+          </div>
+        )}
+
+        <div className="vtx-items-scroll">
+          <AnimatePresence initial={false}>
+            {(items.length ? items : [{ id: "starting", stage: "starting", label: "Iniciando", message: "Preparando execucao do Vertex.", status: "running" }]).map((item) => {
+              const isItemDone = item.status === "done" || item.stage === "done";
+              return (
+                <motion.div
+                  className={`vtx-item ${isItemDone ? "vtx-item-done" : ""}`}
+                  key={item.id}
+                  initial={{ opacity: 0, x: -12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                >
+                  <span className={`vtx-item-dot ${isItemDone ? "vtx-item-dot-done" : ""}`}>
+                    {isItemDone ? <CheckCircle2 size={11} /> : <Loader2 size={11} className="spinner" />}
+                  </span>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <p>{item.file ? item.file.split("/").pop() : item.message}</p>
+                  </div>
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
         </div>
       </motion.div>
@@ -425,9 +431,8 @@ export function AgentActivity({ events, status, taskDescription }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
   const steps = useMemo(() => buildSteps(events, status, taskDescription), [events, status, taskDescription]);
-  const { hasVertexActivity } = useVertexProgress(events);
 
-  if (steps.length === 0 && !hasVertexActivity) return null;
+  if (steps.length === 0) return null;
 
   const label = currentLabel(events, status);
   const detail = currentDetail(events);
@@ -470,12 +475,6 @@ export function AgentActivity({ events, status, taskDescription }) {
             <p>{step.detail}</p>
           </button>
         ))}
-
-        {hasVertexActivity && (
-          <div className="activity-vertex-slot">
-            <VertexProgressPanel events={events} />
-          </div>
-        )}
       </div>
     </section>
   );

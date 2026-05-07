@@ -301,7 +301,7 @@ async def validate_project_after_vertex(
         "checks": checks[-12:],
         "bugs": bugs[:12],
         "warnings": warnings[:8],
-        "reason": "Validacao automatica encontrou problemas." if bugs else "Validacao automatica aprovada.",
+        "reason": "A revisao automatica encontrou pontos para corrigir." if bugs else "Projeto revisado e pronto para usar.",
     }
     await bus.publish(task_id, "project_validation_result", result)
     return result
