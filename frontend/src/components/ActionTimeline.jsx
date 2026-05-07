@@ -4,6 +4,12 @@ import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
 
 const hiddenTypes = new Set([
   "task_created",
+  "task_plan_created",
+  "task_plan_replanned",
+  "task_step_started",
+  "task_step_updated",
+  "task_step_completed",
+  "task_step_failed",
   "user_message",
   "assistant_message_delta",
   "agent_status",

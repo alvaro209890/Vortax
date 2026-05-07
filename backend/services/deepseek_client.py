@@ -314,7 +314,9 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Se o problema de exatas estiver em imagem, use vision_analyze primeiro pedindo transcricao do enunciado, depois use exact_solve com o texto extraido e finalize com passos curtos. "
         "Perguntas simples e conceituais devem ser respondidas diretamente pelo modo rapido do backend antes de chegar aqui; se chegarem ao planner, mantenha o caminho mais curto possivel. "
         "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
-        "O Vertex CLI criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao Vertex. "
+        "O Vertex CLI criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao Vertex para garantir que o projeto seja funcional e completo. "
+        "IMPORTANTE: Sempre que o usuario pedir um codigo, script ou arquivo unico, alem de usar o Vertex para cria-lo, voce DEVE incluir o conteudo desse codigo na sua resposta final (action finish) dentro de um bloco de codigo Markdown com a linguagem correta (ex: ```python ... ```). "
+        "Isso permite que o usuario copie o codigo instantaneamente usando o botao de copiar no chat, enquanto o download oficial fica disponivel no card do Vortax. "
         "Para pedidos de arquivos finais ou documentos (.md, PDF, TXT, DOCX, CSV, XLSX, JSON, PPTX), tambem use shell_run com vertex e seja explicito sobre nome, formato, conteudo esperado e que o arquivo final precisa ficar salvo no diretorio atual para download. "
         "Quando o usuario pedir site, pagina, landing, frontend, dashboard ou interface, alem do projeto funcional, exija que o Vertex gere um DOCUMENTACAO.md em Markdown com o que foi criado, estrutura, funcionalidades e como testar. "
         "Depois de cada execucao do Vertex, o Vortax roda revisao automatica do projeto. Para scripts Python, APIs, apps Node e outros codigos, observe project_validation; "
@@ -328,7 +330,7 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Se o resultado da ferramenta trouxer web_validation.status='failed', use shell_run com vertex novamente para corrigir exatamente os bugs descritos em web_validation.bugs; "
         "so use finish quando project_validation.status='passed' para projetos de codigo e, para sites, quando web_validation.status='passed' ou web_validation.requires_validation=false. "
         "Se web_validation.status='blocked' ou project_validation.status='blocked', informe o erro de configuracao em vez de fingir que testou. "
-        "Quando finalizar site ou arquivo gerado, responda de forma proativa e curta: diga o que foi criado, cite que a documentacao/download esta disponivel no card do Vortax e nao cole o Markdown inteiro no chat. "
+        "Quando finalizar site ou arquivo gerado, responda de forma proativa e curta: diga o que foi criado, cite que a documentacao/download esta disponivel no card do Vortax e INCLUA o bloco de codigo no chat se for um script ou arquivo simples."
         "Se um preview interno foi usado, diga no maximo que a revisao foi concluida; nao forneca link local porque usuarios do Firebase Hosting nao conseguem abrir enderecos locais deste PC. "
         "Extrair texto de paginas: prefira browser_extract_article ou browser_extract_text — eles sao mais rapidos, mais baratos e mais precisos que visao computacional. "
         "Use vision_analyze SOMENTE quando o texto extraido nao for suficiente: imagens, graficos, videos, layout visual, botoes sem texto, CAPTCHA, confirmacao visual de que algo apareceu/desapareceu na tela. "
@@ -403,8 +405,12 @@ async def request_context_summary(
     return content.strip()[:max_chars]
 
 
-async def request_task_plan(description: str) -> list[dict[str, str]]:
+async def request_task_plan(description: str) -> dict[str, Any]:
     """Gera 4-6 etapas dinamicas de acompanhamento baseadas no pedido do usuario."""
+    from services.exact_solver import should_answer_directly
+    if should_answer_directly(description):
+        return {"plan": [], "vertex_steps": []}
+
     if not deepseek_configured():
         raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
 
@@ -412,7 +418,9 @@ async def request_task_plan(description: str) -> list[dict[str, str]]:
         "Voce gera planos de acompanhamento para usuarios do Vortax acompanharem o progresso do agente. "
         "Analise o pedido do usuario e produza dois conjuntos de dados em um unico JSON:\n\n"
         "1. \"plan\": 4-6 etapas curtas e sequenciais que o agente Vortax (DeepSeek) provavelmente seguira. "
-        "Cada etapa com \"label\" (2-4 palavras) e \"detail\" (1 frase).\n\n"
+        "Cada etapa com \"label\" (2-4 palavras), \"detail\" (1 frase), \"tool_hint\" "
+        "(understand, research, execute, validate ou deliver) e \"acceptance_criteria\" "
+        "(1-3 criterios objetivos para considerar a etapa concluida).\n\n"
         "2. \"vertex_steps\": Se o pedido envolver desenvolvimento de software/site/script/codigo/arquivo, "
         "produza 5-8 etapas ESPECIFICAS do que o Vertex CLI fara para criar o projeto. "
         "Exemplos de vertex_steps: \"Analisar requisitos do site\", \"Criar index.html com estrutura principal\", "
@@ -423,7 +431,7 @@ async def request_task_plan(description: str) -> list[dict[str, str]]:
         "- Pedido \"crie um site de portfolio\": plan com etapas de desenvolvimento, vertex_steps com etapas de criacao HTML/CSS/JS\n"
         "- Pedido \"pesquise noticias sobre IA\": plan com etapas de pesquisa, vertex_steps vazio []\n"
         "- Pedido \"corrija o bug no login\": plan com etapas de debug, vertex_steps com edicao de arquivos\n"
-        "Responda APENAS com JSON: {\"plan\":[{\"label\":\"...\",\"detail\":\"...\"},...],\"vertex_steps\":[{\"label\":\"...\",\"detail\":\"...\"},...]}"
+        "Responda APENAS com JSON: {\"plan\":[{\"label\":\"...\",\"detail\":\"...\",\"tool_hint\":\"execute\",\"acceptance_criteria\":[\"...\"]},...],\"vertex_steps\":[{\"label\":\"...\",\"detail\":\"...\"},...]}"
     )
 
     payload = {
@@ -454,6 +462,12 @@ async def request_task_plan(description: str) -> list[dict[str, str]]:
             result_plan.append({
                 "label": str(step.get("label") or "Etapa"),
                 "detail": str(step.get("detail") or ""),
+                "tool_hint": str(step.get("tool_hint") or ""),
+                "acceptance_criteria": [
+                    str(item)
+                    for item in (step.get("acceptance_criteria") if isinstance(step.get("acceptance_criteria"), list) else [])
+                    if str(item).strip()
+                ][:3],
             })
     if not result_plan:
         raise DeepSeekError("Plano de tasks sem etapas validas")

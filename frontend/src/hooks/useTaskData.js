@@ -6,6 +6,7 @@ const emptyTaskData = {
   activeTask: null,
   contextState: null,
   files: [],
+  plan: { steps: [] },
   pendingConfirmation: null,
   sources: [],
   taskEvents: [],
@@ -21,6 +22,7 @@ export function useTaskData(activeTaskId) {
   const [activeTask, setActiveTask] = useState(emptyTaskData.activeTask);
   const [taskEvents, setTaskEvents] = useState(emptyTaskData.taskEvents);
   const [files, setInitialFiles] = useState(emptyTaskData.files);
+  const [plan, setInitialPlan] = useState(emptyTaskData.plan);
   const [sources, setInitialSources] = useState(emptyTaskData.sources);
   const [contextState, setContextState] = useState(emptyTaskData.contextState);
   const [pendingConfirmation, setPendingConfirmation] = useState(emptyTaskData.pendingConfirmation);
@@ -31,6 +33,7 @@ export function useTaskData(activeTaskId) {
     setActiveTask(emptyTaskData.activeTask);
     setTaskEvents(emptyTaskData.taskEvents);
     setInitialFiles(emptyTaskData.files);
+    setInitialPlan(emptyTaskData.plan);
     setInitialSources(emptyTaskData.sources);
     setContextState(emptyTaskData.contextState);
     setPendingConfirmation(emptyTaskData.pendingConfirmation);
@@ -50,6 +53,7 @@ export function useTaskData(activeTaskId) {
     setActiveTask(null);
     setTaskEvents([]);
     setInitialFiles([]);
+    setInitialPlan(emptyTaskData.plan);
     setInitialSources([]);
     setContextState(null);
     setPendingConfirmation(null);
@@ -61,6 +65,7 @@ export function useTaskData(activeTaskId) {
         setActiveTask(data.task || null);
         setTaskEvents(loadedEvents);
         setInitialFiles(data.files || []);
+        setInitialPlan(data.plan || emptyTaskData.plan);
         setInitialSources(data.sources || []);
         setContextState(data.context || null);
         setPendingConfirmation(pendingConfirmationFrom(loadedEvents));
@@ -70,6 +75,7 @@ export function useTaskData(activeTaskId) {
         setActiveTask(null);
         setTaskEvents([]);
         setInitialFiles([]);
+        setInitialPlan(emptyTaskData.plan);
         setInitialSources([]);
         setContextState(null);
         setPendingConfirmation(null);
@@ -89,6 +95,7 @@ export function useTaskData(activeTaskId) {
     contextState,
     error,
     initialFiles: files,
+    initialPlan: plan,
     initialSources: sources,
     loading,
     pendingConfirmation,

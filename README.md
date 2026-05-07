@@ -21,6 +21,18 @@ O Vertex é um assistente de codificação por terminal que roda localmente. Ele
 5. Os arquivos gerados aparecem automaticamente no chat
 6. Você pode baixar cada arquivo individualmente ou todos juntos em um arquivo **.zip**
 
+### Pesquisa Automática Pré-Criação
+
+Quando você pede algo como "Crie um site de vendas moderno", o Vortax automaticamente:
+
+1. Detecta que a criação se beneficiaria de pesquisa prévia (design, tendências, referências)
+2. Pesquisa no Google, abre a melhor referência e extrai o conteúdo completo
+3. Analisa visualmente a página (cores, layout, tipografia, estilo)
+4. Alimenta o DeepSeek com esse contexto
+5. O DeepSeek monta um prompt enriquecido para o Vertex: "Crie um site inspirado nas referências [URL], com paleta de cores similar, layout com hero section, navegação superior..."
+
+Para pedidos simples ("Crie uma calculadora em Python"), a pesquisa é pulada automaticamente.
+
 ### Como usar o Vertex diretamente
 
 O Vertex CLI está disponível como comando global do sistema neste computador:
@@ -69,12 +81,14 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Fontes com qualidade** — URLs visitadas são classificadas e pontuadas automaticamente
 - **Cache de pesquisa por conversa** — antes de chamar o Google, o executor reutiliza fontes boas já salvas para a mesma consulta
 - **Verificação cruzada automática** — preço, versão, documentação, notícia, comparação e dados sensíveis exigem múltiplas fontes e marcação de divergências
+- **Pesquisa automática pré-criação** — antes de criar software, o Vortax pesquisa tendências, abre referências e alimenta o DeepSeek com contexto visual e de design para prompts enriquecidos ao Vertex
+- **Pesquisa inteligente de pessoas** — detecção automática de pedidos sobre pessoas, consultas em LinkedIn, GitHub, Wikipedia, currículos e notícias, com no mínimo 3 fontes antes de responder
 - **Galeria de screenshots** — todos os prints da sessão, com navegação e modal ampliado
 - **Painel de atividade enxuto** — timeline lateral mostra só marcos úteis, sem ruído de stdout, status repetido ou screenshots intermediários
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Indicador de digitação** — enquanto a IA prepara a resposta, o chat mostra os três pontos animados no balão do Vortax
-- **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete
+- **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete, com pesquisa automática prévia para criação de software e pessoas
 - **Desenvolvimento de software** — usa o Vertex CLI via shell_run para criar projetos completos
 - **Validação pós-Vertex** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
 - **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, envia os bugs ao Vertex e repete a validação
@@ -182,6 +196,7 @@ O runner possui um roteador antes do planner:
 
 - Perguntas simples, conceituais e curtas usam resposta direta do DeepSeek no chat, sem abrir ciclo de planejamento.
 - Pedidos de criação, correção, publicação, automação, pesquisa ou dado atual continuam no planner com ferramentas.
+- Pesquisas sobre pessoas disparam consultas automáticas em LinkedIn, GitHub, Wikipedia, currículos e notícias.
 - Perguntas de matemática/exatas chamam `exact_solve` antes de responder. A tool resolve contas, porcentagens e equações simples de forma determinística.
 - Imagens com exercícios passam primeiro por `vision_analyze`, que transcreve enunciado, números, fórmulas e unidades; depois o backend tenta `exact_solve` e usa o DeepSeek para explicar quando o problema exige raciocínio além da conta determinística.
 

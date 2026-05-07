@@ -151,6 +151,25 @@ class Database:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_generated_files_task_id_project ON generated_files(task_id, project_id, path);
+
+                CREATE TABLE IF NOT EXISTS task_steps (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    label TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    tool_hint TEXT,
+                    acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+                    evidence_json TEXT NOT NULL DEFAULT '[]',
+                    started_at TEXT,
+                    finished_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    UNIQUE(task_id, position)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_task_steps_task_id_position ON task_steps(task_id, position);
                 """
             )
 
@@ -574,6 +593,115 @@ class Database:
                 (task_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def replace_task_steps(self, task_id: str, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM task_steps WHERE task_id = ?", (task_id,))
+            for step in steps:
+                self._connection.execute(
+                    """
+                    INSERT INTO task_steps (
+                        id, task_id, position, label, detail, status, tool_hint,
+                        acceptance_criteria_json, evidence_json, started_at,
+                        finished_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        step["id"],
+                        task_id,
+                        int(step["position"]),
+                        step["label"],
+                        step.get("detail", ""),
+                        step.get("status", "pending"),
+                        step.get("tool_hint"),
+                        json.dumps(step.get("acceptance_criteria", []), ensure_ascii=False),
+                        json.dumps(step.get("evidence", []), ensure_ascii=False),
+                        step.get("started_at"),
+                        step.get("finished_at"),
+                        step["updated_at"],
+                    ),
+                )
+        return self.list_task_steps(task_id)
+
+    def list_task_steps(self, task_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, task_id, position, label, detail, status, tool_hint,
+                       acceptance_criteria_json, evidence_json, started_at,
+                       finished_at, updated_at
+                FROM task_steps
+                WHERE task_id = ?
+                ORDER BY position ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        steps = []
+        for row in rows:
+            step = dict(row)
+            step["acceptance_criteria"] = json.loads(step.pop("acceptance_criteria_json") or "[]")
+            step["evidence"] = json.loads(step.pop("evidence_json") or "[]")
+            steps.append(step)
+        return steps
+
+    def get_task_step(self, step_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT id, task_id, position, label, detail, status, tool_hint,
+                       acceptance_criteria_json, evidence_json, started_at,
+                       finished_at, updated_at
+                FROM task_steps
+                WHERE id = ?
+                """,
+                (step_id,),
+            ).fetchone()
+        if not row:
+            return None
+        step = dict(row)
+        step["acceptance_criteria"] = json.loads(step.pop("acceptance_criteria_json") or "[]")
+        step["evidence"] = json.loads(step.pop("evidence_json") or "[]")
+        return step
+
+    def update_task_step(self, step_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        if not updates:
+            return self.get_task_step(step_id)
+
+        allowed = {
+            "status",
+            "detail",
+            "tool_hint",
+            "acceptance_criteria",
+            "evidence",
+            "started_at",
+            "finished_at",
+            "updated_at",
+        }
+        fields = []
+        values = []
+        for key, value in updates.items():
+            if key not in allowed:
+                continue
+            if key == "acceptance_criteria":
+                fields.append("acceptance_criteria_json = ?")
+                values.append(json.dumps(value or [], ensure_ascii=False))
+            elif key == "evidence":
+                fields.append("evidence_json = ?")
+                values.append(json.dumps(value or [], ensure_ascii=False))
+            else:
+                fields.append(f"{key} = ?")
+                values.append(value)
+
+        if not fields:
+            return self.get_task_step(step_id)
+
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"UPDATE task_steps SET {', '.join(fields)} WHERE id = ?",
+                (*values, step_id),
+            )
+        return self.get_task_step(step_id)
 
     def close(self) -> None:
         with self._lock:

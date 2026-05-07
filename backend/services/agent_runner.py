@@ -19,6 +19,7 @@ from services.exact_solver import format_exact_answer, is_exact_prompt, should_a
 from services.mock_runner import run_mock_task
 from services.research_policy import cross_check_status
 from services.task_store import TaskStore
+from services.task_plan_store import fallback_steps, task_plan_store
 from tools.tool_executor import compact_tool_result, execute_tool
 from services.web_validation import web_intent_from_command
 
@@ -64,6 +65,132 @@ def _progress_label(action_name: str, description: str) -> str:
     if action_name.startswith("browser_"):
         return "Operando o navegador"
     return description or action_name
+
+
+def _action_plan_hint(action_name: str, params: dict[str, Any] | None = None) -> str:
+    if action_name.startswith("browser_"):
+        return "research"
+    if action_name == "shell_run":
+        return "execute"
+    if action_name in {"vision_analyze", "exact_solve"}:
+        return "execute"
+    return "execute"
+
+
+def _tool_evidence(action_name: str, result: dict[str, Any]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {"tool": action_name}
+    if result.get("success") is False or result.get("error"):
+        evidence["status"] = "failed"
+        evidence["summary"] = str(result.get("error") or "Ferramenta retornou erro.")[:360]
+        return evidence
+    evidence["status"] = "ok"
+    if result.get("query") and isinstance(result.get("results"), list):
+        evidence["summary"] = f"{len(result['results'])} resultado(s) encontrados para {result['query']}."
+    elif result.get("file_summary"):
+        summary = result["file_summary"]
+        evidence["summary"] = f"{summary.get('file_count', 0)} arquivo(s) gerados; tipo {summary.get('project_type', 'generico')}."
+    elif result.get("title") and result.get("url"):
+        evidence["summary"] = f"{result['title']} - {result['url']}"
+    elif result.get("stdout"):
+        evidence["summary"] = str(result.get("stdout"))[:360]
+    elif result.get("text"):
+        evidence["summary"] = str(result.get("text"))[:360]
+    else:
+        evidence["summary"] = "Ferramenta executada."
+    return evidence
+
+
+async def _ensure_plan(task_id: str, description: str, bus: EventBus) -> None:
+    if task_plan_store.list_steps(task_id):
+        return
+    steps = task_plan_store.replace_plan(task_id, fallback_steps(description), description)
+    await bus.publish(task_id, "task_plan_created", {"steps": steps, "fallback": True})
+
+
+async def _start_plan_step(task_id: str, hint: str, bus: EventBus) -> dict[str, Any] | None:
+    before = task_plan_store.find_for_hint(task_id, hint)
+    if before and before.get("status") == "running":
+        return before
+    step = task_plan_store.start_step(task_id, hint=hint)
+    if step:
+        await bus.publish(task_id, "task_step_started", {"step": step})
+    return step
+
+
+async def _complete_plan_step(
+    task_id: str,
+    hint: str,
+    bus: EventBus,
+    *,
+    status: str = "passed",
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    step = task_plan_store.complete_step(task_id, hint=hint, status=status, evidence=evidence)
+    if step:
+        event_type = "task_step_failed" if status == "failed" else "task_step_completed"
+        await bus.publish(task_id, event_type, {"step": step})
+    return step
+
+
+async def _append_plan_evidence(
+    task_id: str,
+    hint: str,
+    bus: EventBus,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    step = task_plan_store.append_evidence(task_id, evidence, hint=hint)
+    if step:
+        await bus.publish(task_id, "task_step_updated", {"step": step})
+    return step
+
+
+async def _fail_running_plan_step(task_id: str, bus: EventBus, message: str) -> None:
+    running = next((step for step in task_plan_store.list_steps(task_id) if step.get("status") == "running"), None)
+    if not running:
+        return
+    step = task_plan_store.complete_step(
+        task_id,
+        hint=str(running.get("tool_hint") or ""),
+        status="failed",
+        evidence={"status": "failed", "summary": message[:360]},
+    )
+    if step:
+        await bus.publish(task_id, "task_step_failed", {"step": step})
+
+
+async def _sync_validation_plan(task_id: str, bus: EventBus, result: dict[str, Any]) -> None:
+    validations = [
+        item
+        for item in (result.get("web_validation"), result.get("project_validation"))
+        if isinstance(item, dict) and item.get("requires_validation")
+    ]
+    if not validations:
+        return
+    await _start_plan_step(task_id, "validate", bus)
+    failed = [item for item in validations if item.get("status") == "failed"]
+    blocked = [item for item in validations if item.get("status") == "blocked"]
+    passed = [item for item in validations if item.get("status") == "passed"]
+    if failed or blocked:
+        issues: list[str] = []
+        for item in [*failed, *blocked]:
+            bugs = item.get("bugs") if isinstance(item.get("bugs"), list) else []
+            issues.extend(str(bug) for bug in bugs[:5])
+            if not bugs and item.get("reason"):
+                issues.append(str(item["reason"]))
+        await _append_plan_evidence(
+            task_id,
+            "validate",
+            bus,
+            {"status": "failed", "summary": "; ".join(issues)[:500] or "Validacao encontrou problemas."},
+        )
+        return
+    if passed and len(passed) == len(validations):
+        await _complete_plan_step(
+            task_id,
+            "validate",
+            bus,
+            evidence={"status": "ok", "summary": "Validacao automatica aprovada."},
+        )
 
 
 def _latest_user_prompt(history: list[dict[str, str]]) -> str:
@@ -365,12 +492,17 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
     if docs:
         payload["documentation"] = _file_payload(docs[0])
 
-    if is_web_project and docs:
+    # Se o resultado ja tem um bloco de codigo ou e longo, nao sobrescrevemos com a mensagem padrao
+    # Isso permite que o codigo apareça no chat com o botao de copiar
+    has_code = "```" in result
+    is_short = len(result.strip()) < 50
+
+    if is_web_project and docs and (is_short or not has_code):
         payload["content"] = (
             "Pronto. Criei o site solicitado, revisei o projeto e gerei a documentacao em Markdown. "
             "Abra o card Documentacao para ler no Vortax ou use o botao abaixo para baixar."
         )
-    elif requested_downloads:
+    elif requested_downloads and (is_short or not has_code):
         payload["content"] = "Pronto. Gerei o arquivo solicitado. Use o botao abaixo para baixar."
 
     return payload
@@ -413,11 +545,18 @@ async def _finish_text_response(
     store: TaskStore,
     bus: EventBus,
 ) -> None:
+    await _start_plan_step(task_id, "deliver", bus)
     payload = _generated_file_response_payload(task_id, result, bus.history(task_id))
     final_content = _sanitize_chat_content(str(payload.get("content") or result))
     payload["content"] = final_content
     store.update_status(task_id, "done", result=final_content)
     await bus.publish(task_id, "assistant_message_done", payload)
+    await _complete_plan_step(
+        task_id,
+        "deliver",
+        bus,
+        evidence={"status": "ok", "summary": "Resposta final entregue ao usuario."},
+    )
     await _cleanup_project_runtime(task_id, bus, "Servidor temporario do projeto fechado apos a resposta no chat.")
     _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
     if final_compacted:
@@ -486,18 +625,15 @@ async def _inject_pre_research_if_needed(
     bus: EventBus,
 ) -> list[dict[str, str]]:
     """Analisa o pedido e, se for criacao de software viavel para pesquisa, executa
-    pesquisa web automatica e alimenta o historico para o DeepSeek usar ao planejar."""
+    pesquisa web automatica e alimenta o historico para o DeepSeek usar ao planejar.
+    IMPORTANTE: Nao usa execute_tool para nao poluir o historico do DeepSeek com
+    tool_results indesejados. Usa o browser_tool diretamente."""
     from services.research_policy import relevant_sources_for_query, software_research_profile
+    from tools.browser import browser_tool
 
     profile = software_research_profile(description)
     if not profile.get("is_software_request") or not profile.get("requires_pre_research"):
         return history
-
-    # Verifica se o historico ja tem resultados de pesquisa (evita repetir)
-    for msg in history:
-        content = str(msg.get("content") or "")
-        if "Resultado da ferramenta:" in content and "browser_google_search" in content:
-            return history
 
     research_queries = profile.get("research_queries", [])
     if not research_queries:
@@ -510,6 +646,12 @@ async def _inject_pre_research_if_needed(
         if len(relevant) >= 2:
             return _history_with_research_context(task_id, history)
 
+    import logging
+    from datetime import datetime, timezone
+
+    logger = logging.getLogger("vortax.preresearch")
+    _now = lambda: datetime.now(timezone.utc).isoformat()
+
     await bus.publish(
         task_id,
         "agent_status",
@@ -517,7 +659,7 @@ async def _inject_pre_research_if_needed(
     )
 
     pesquisa_feita = False
-    for query in research_queries[:2]:
+    for query in research_queries[:1]:  # So 1 consulta — 1 e suficiente
         await bus.publish(
             task_id,
             "agent_progress",
@@ -528,83 +670,49 @@ async def _inject_pre_research_if_needed(
             },
         )
         try:
-            from tools.tool_executor import execute_tool
-
-            search_result = await execute_tool(
-                "browser_google_search",
-                {"query": query, "hl": "pt-BR"},
-                task_id=task_id,
-                bus=bus,
-                description=f"Pesquisa automatica de referencias: {query}",
+            search_result = await browser_tool.google_search(query, hl="pt-BR")
+            results = search_result.get("results", [])
+            if not results:
+                continue
+            pesquisa_feita = True
+            best = results[0]
+            await bus.publish(
+                task_id,
+                "agent_progress",
+                {
+                    "label": "Abrindo referencia",
+                    "detail": f"Abrindo: {best.get('title') or best.get('href', 'resultado')}",
+                    "tool": "browser_navigate",
+                },
             )
-            if search_result.get("success"):
-                pesquisa_feita = True
-                data = search_result.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    best = results[0]
-                    await bus.publish(
-                        task_id,
-                        "agent_progress",
-                        {
-                            "label": "Abrindo referencia",
-                            "detail": f"Abrindo: {best.get('title') or best.get('href', 'resultado')}",
-                            "tool": "browser_navigate",
-                        },
-                    )
-                    await execute_tool(
-                        "browser_navigate",
-                        {"url": best.get("href")},
-                        task_id=task_id,
-                        bus=bus,
-                        description="Abrindo melhor resultado da pesquisa",
-                    )
-                    await bus.publish(
-                        task_id,
-                        "agent_progress",
-                        {
-                            "label": "Extraindo referencia",
-                            "detail": "Extraindo conteudo da pagina de referencia",
-                            "tool": "browser_extract_article",
-                        },
-                    )
-                    await execute_tool(
-                        "browser_extract_article",
-                        {},
-                        task_id=task_id,
-                        bus=bus,
-                        description="Extraindo conteudo da referencia",
-                    )
-                    # Analise visual da pagina de referencia
-                    await bus.publish(
-                        task_id,
-                        "agent_progress",
-                        {
-                            "label": "Analisando design da referencia",
-                            "detail": "Usando visao computacional para extrair cores, layout e estilo visual.",
-                            "tool": "vision_analyze",
-                        },
-                    )
-                    await execute_tool(
-                        "vision_analyze",
-                        {
-                            "question": (
-                                "Analise este design de referencia em detalhes. "
-                                "Extraia: paleta de cores usada (cores principais, secundarias, de destaque), "
-                                "estrutura de layout (hero, grid, sidebar, navegacao, footer), "
-                                "tipografia aparente (serifada, sans-serif, mono), "
-                                "estilo visual (flat, minimalista, material, neumorphism, moderno), "
-                                "elementos de UI (botoes, cards, modais, formularios, icons), "
-                                "e qualquer detalhe de design que possa servir de inspiracao. "
-                                "Seja detalhado e especifico."
-                            ),
-                        },
-                        task_id=task_id,
-                        bus=bus,
-                        description="Analise visual do design de referencia",
-                    )
-        except Exception:
-            pass  # Falha na pesquisa nao deve bloquear o fluxo
+            await browser_tool.navigate(best.get("href"), task_id=task_id)
+            await bus.publish(
+                task_id,
+                "agent_progress",
+                {
+                    "label": "Extraindo referencia",
+                    "detail": "Extraindo conteudo da pagina de referencia",
+                    "tool": "browser_extract_article",
+                },
+            )
+            article = await browser_tool.extract_article()
+            # Salva fonte diretamente no banco
+            if article.get("url") and article.get("text"):
+                database.upsert_source(
+                    task_id,
+                    {
+                        "url": article.get("url"),
+                        "title": article.get("title") or best.get("title"),
+                        "snippet": (article.get("description") or article.get("text", ""))[:280],
+                        "extracted_text": article.get("text", "")[:10000],
+                        "source_type": "web",
+                        "quality_score": 80,
+                        "used": True,
+                        "created_at": _now(),
+                    },
+                )
+        except Exception as exc:
+            logger.warning("Pre-research failed for query %s: %s: %s", query, type(exc).__name__, exc)
 
     if pesquisa_feita:
         await bus.publish(
@@ -624,9 +732,11 @@ async def _inject_people_research_if_needed(
     history: list[dict[str, str]],
     bus: EventBus,
 ) -> list[dict[str, str]]:
-    """Analisa se o pedido e sobre uma pessoa e, em caso positivo, executa
-    pesquisa web automatica com multiplas consultas em diversas plataformas."""
-    from services.research_policy import people_research_profile
+    """Analisa se o pedido e sobre uma pessoa. Se for, pesquisa diretamente com
+    browser_tool (sem execute_tool) para evitar poluir o historico do DeepSeek.
+    Maximo 2 consultas, com fallback silencioso."""
+    from services.research_policy import people_research_profile, relevant_sources_for_query
+    from tools.browser import browser_tool
 
     profile = people_research_profile(description)
     if not profile.get("is_people_search"):
@@ -637,13 +747,18 @@ async def _inject_people_research_if_needed(
     if not person_name or not search_queries:
         return history
 
-    # Verifica se ja tem fontes sobre este nome
-    from services.research_policy import relevant_sources_for_query
+    # Verifica se ja tem fontes
     existing_sources = database.list_sources(task_id)
     if existing_sources:
         relevant = relevant_sources_for_query(person_name, existing_sources, limit=3, min_quality=40)
         if len(relevant) >= profile.get("required_sources", 3):
             return _history_with_research_context(task_id, history)
+
+    import logging
+    from datetime import datetime, timezone
+
+    logger = logging.getLogger("vortax.people")
+    _now = lambda: datetime.now(timezone.utc).isoformat()
 
     await bus.publish(
         task_id,
@@ -654,122 +769,77 @@ async def _inject_people_research_if_needed(
         task_id,
         "agent_progress",
         {
-            "label": "Pesquisando pessoa em multiplas plataformas",
-            "detail": f"Buscando informacoes sobre: {person_name}",
+            "label": "Pesquisando informacoes",
+            "detail": f"Buscando dados sobre: {person_name}",
         },
     )
 
     pesquisa_feita = False
     categories = profile.get("categories", [])
 
-    for query in search_queries[:5]:  # Max 5 consultas
-        await bus.publish(
-            task_id,
-            "agent_progress",
-            {
-                "label": "Buscando em plataforma",
-                "detail": f"Consulta: {query[:120]}",
-                "tool": "browser_google_search",
-            },
-        )
+    # Usa so 2 consultas principais (max 3)
+    for query in search_queries[:2]:
         try:
-            from tools.tool_executor import execute_tool
+            search_result = await browser_tool.google_search(query, hl="pt-BR")
+            results = search_result.get("results", [])
+            if not results:
+                continue
+            pesquisa_feita = True
+            # Pula login/ads
+            for result in results[:2]:
+                href = str(result.get("href") or "")
+                if any(skip in href.lower() for skip in
+                       ["accounts.google", "servicelogin", "login", "signin", "ads.",
+                        "googleadservices"]):
+                    continue
+                await browser_tool.navigate(href, task_id=task_id)
+                article = await browser_tool.extract_article()
+                if article.get("url") and article.get("text"):
+                    database.upsert_source(
+                        task_id,
+                        {
+                            "url": article.get("url"),
+                            "title": article.get("title") or result.get("title"),
+                            "snippet": (article.get("description") or article.get("text", ""))[:280],
+                            "extracted_text": article.get("text", "")[:10000],
+                            "source_type": "web",
+                            "quality_score": 80,
+                            "used": True,
+                            "created_at": _now(),
+                        },
+                    )
+                break  # 1 resultado por consulta
+        except Exception as exc:
+            logger.warning("People search failed for query %s: %s: %s", query[:60], type(exc).__name__, exc)
 
-            search_result = await execute_tool(
-                "browser_google_search",
-                {"query": query, "hl": "pt-BR"},
-                task_id=task_id,
-                bus=bus,
-                description=f"Pesquisa sobre pessoa: {query[:100]}",
-            )
-            if search_result.get("success"):
+    if not pesquisa_feita:
+        # Se nao achou com queries especificas, tenta uma busca generica por nome
+        try:
+            generic = await browser_tool.google_search(f'"{person_name}"', hl="pt-BR")
+            results = generic.get("results", [])
+            if results:
                 pesquisa_feita = True
-                data = search_result.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    # Tenta abrir o melhor resultado que nao seja login/agregador fraco
-                    for result in results[:3]:
-                        href = str(result.get("href") or "")
-                        title = str(result.get("title") or "")
-                        # Pula paginas de login, anúncios e agregadores
-                        if any(skip in href.lower() for skip in
-                               ["accounts.google", "servicelogin", "login", "signin", "ads.",
-                                "googleadservices", "facebook.com/settings"]):
-                            continue
-                        await bus.publish(
+                href = str(results[0].get("href") or "")
+                if not any(skip in href.lower() for skip in
+                           ["accounts.google", "servicelogin", "login", "signin", "ads."]):
+                    await browser_tool.navigate(href, task_id=task_id)
+                    article = await browser_tool.extract_article()
+                    if article.get("url") and article.get("text"):
+                        database.upsert_source(
                             task_id,
-                            "agent_progress",
                             {
-                                "label": "Abrindo perfil encontrado",
-                                "detail": f"Abrindo: {title[:80]}",
-                                "tool": "browser_navigate",
+                                "url": article.get("url"),
+                                "title": article.get("title") or results[0].get("title"),
+                                "snippet": (article.get("description") or article.get("text", ""))[:280],
+                                "extracted_text": article.get("text", "")[:10000],
+                                "source_type": "web",
+                                "quality_score": 80,
+                                "used": True,
+                                "created_at": _now(),
                             },
                         )
-                        await execute_tool(
-                            "browser_navigate",
-                            {"url": href},
-                            task_id=task_id,
-                            bus=bus,
-                            description="Abrindo resultado de busca sobre pessoa",
-                        )
-                        await bus.publish(
-                            task_id,
-                            "agent_progress",
-                            {
-                                "label": "Extraindo informacoes",
-                                "detail": f"Extraindo dados de: {title[:80]}",
-                                "tool": "browser_extract_article",
-                            },
-                        )
-                        await execute_tool(
-                            "browser_extract_article",
-                            {},
-                            task_id=task_id,
-                            bus=bus,
-                            description="Extraindo informacoes sobre a pessoa",
-                        )
-                        break  # Abre so um resultado por consulta
-        except Exception:
-            pass  # Falha nao bloqueia o fluxo
-
-    # Se tiver LinkedIn, GitHub ou Instagram, tenta busca direta
-    linkedin_queries = [q for q in search_queries if "linkedin" in q.lower()]
-    github_queries = [q for q in search_queries if "github" in q.lower()]
-
-    for extra_query in (linkedin_queries + github_queries)[:2]:
-        try:
-            from tools.tool_executor import execute_tool as et
-
-            result = await et(
-                "browser_google_search",
-                {"query": extra_query, "hl": "pt-BR"},
-                task_id=task_id,
-                bus=bus,
-                description=f"Busca adicional em rede profissional: {extra_query[:80]}",
-            )
-            if result.get("success"):
-                data = result.get("data", {})
-                results = data.get("results", [])
-                if results:
-                    href = str(results[0].get("href") or "")
-                    if not any(skip in href.lower() for skip in
-                               ["accounts.google", "servicelogin", "login", "signin"]):
-                        await et(
-                            "browser_navigate",
-                            {"url": href},
-                            task_id=task_id,
-                            bus=bus,
-                            description="Abrindo perfil profissional",
-                        )
-                        await et(
-                            "browser_extract_article",
-                            {},
-                            task_id=task_id,
-                            bus=bus,
-                            description="Extraindo perfil profissional",
-                        )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Fallback people search failed: %s: %s", type(exc).__name__, exc)
 
     if pesquisa_feita:
         await bus.publish(
@@ -777,13 +847,11 @@ async def _inject_people_research_if_needed(
             "agent_progress",
             {
                 "label": "Pesquisa sobre pessoa concluida",
-                "detail": f"Dados coletados sobre {person_name} em multiplas plataformas.",
+                "detail": f"Dados coletados sobre {person_name}.",
             },
         )
 
-    # Usa o contexto enriquecido com fontes, mas com aviso de pessoa
     research_history = _history_with_research_context(task_id, history)
-    # Adiciona instrucao especifica de pessoa no inicio
     people_instruction = (
         "ATENCAO: Este pedido envolve pesquisa sobre uma PESSOA. "
         "Voce DEVE utilizar as fontes acima para montar um perfil completo. "
@@ -794,12 +862,13 @@ async def _inject_people_research_if_needed(
         f"Pessoa pesquisada: {person_name}. "
         f"Plataformas sugeridas: {', '.join(categories)}."
     )
-    # Preserva o history original mas com people_instruction como primeiro system msg
     return [{"role": "system", "content": people_instruction}, *research_history]
 
 
 async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+    await _ensure_plan(task_id, description, bus)
     if not deepseek_configured():
+        await _start_plan_step(task_id, "understand", bus)
         history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
         _ = history
         if compacted:
@@ -810,11 +879,30 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
             "tool_result",
             {"name": "deepseek_config", "result": "Sem DEEPSEEK_API_KEY; usando runner mockado."},
         )
+        await _complete_plan_step(task_id, "understand", bus)
+        await _start_plan_step(task_id, "execute", bus)
         await run_mock_task(task_id, description, store, bus)
+        if store.is_stopped(task_id):
+            await _fail_running_plan_step(task_id, bus, "Tarefa interrompida pelo usuario.")
+            return
+        await _complete_plan_step(
+            task_id,
+            "execute",
+            bus,
+            evidence={"status": "ok", "summary": "Runner mockado concluiu a tarefa."},
+        )
+        await _start_plan_step(task_id, "deliver", bus)
+        await _complete_plan_step(
+            task_id,
+            "deliver",
+            bus,
+            evidence={"status": "ok", "summary": "Resposta mockada entregue ao usuario."},
+        )
         return
 
     try:
         store.update_status(task_id, "running")
+        await _start_plan_step(task_id, "understand", bus)
         history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
         if compacted:
             await bus.publish(task_id, "context_compacted", context_payload)
@@ -824,13 +912,17 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
         latest_prompt = _latest_user_prompt(history) or description
         if is_exact_prompt(latest_prompt):
+            await _complete_plan_step(task_id, "understand", bus)
+            await _start_plan_step(task_id, "execute", bus)
             await _answer_exact_prompt(task_id, latest_prompt, history, store, bus)
             return
         if should_answer_directly(latest_prompt):
+            await _complete_plan_step(task_id, "understand", bus)
             await _answer_simple_prompt(task_id, latest_prompt, history, store, bus)
             return
 
         # Pesquisa previa automatica antes do loop ReAct
+        await _complete_plan_step(task_id, "understand", bus)
         history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
 
         # Pesquisa automatica de pessoas antes do loop ReAct
@@ -856,6 +948,13 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
                     bugs = validation_gate.get("bugs") or []
                     bug_text = "; ".join(str(item) for item in bugs[:8]) or str(validation_gate.get("reason") or "Revisao automatica ainda nao foi aprovada.")
+                    await _start_plan_step(task_id, "validate", bus)
+                    await _append_plan_evidence(
+                        task_id,
+                        "validate",
+                        bus,
+                        {"status": status, "summary": bug_text[:500]},
+                    )
                     await bus.publish(
                         task_id,
                         "agent_progress",
@@ -921,6 +1020,9 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 raise DeepSeekError("Planner pediu confirmacao; fluxo de confirmacao sera ligado no proximo bloco.")
 
             progress_label = _progress_label(action_name, str(action.get("description") or ""))
+            action_params = action.get("params") if isinstance(action.get("params"), dict) else {}
+            action_hint = _action_plan_hint(action_name, action_params)
+            await _start_plan_step(task_id, action_hint, bus)
             await bus.publish(
                 task_id,
                 "agent_progress",
@@ -934,7 +1036,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
 
             tool_result = await execute_tool(
                 action_name,
-                action.get("params") if isinstance(action.get("params"), dict) else {},
+                action_params,
                 task_id=task_id,
                 bus=bus,
                 description=str(action.get("description") or action_name),
@@ -945,6 +1047,19 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
                 break
 
             result_for_model = compact_tool_result(tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result})
+            evidence_source = tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result}
+            if isinstance(evidence_source, dict):
+                await _append_plan_evidence(task_id, action_hint, bus, _tool_evidence(action_name, evidence_source))
+                if action_hint == "research" and action_name in {"browser_extract_article", "browser_extract_text", "browser_google_search"}:
+                    await _complete_plan_step(
+                        task_id,
+                        "research",
+                        bus,
+                        evidence={"status": "ok", "summary": "Pesquisa ou leitura registrada na conversa."},
+                    )
+                if action_name == "shell_run" and evidence_source.get("success"):
+                    await _complete_plan_step(task_id, "execute", bus, evidence=_tool_evidence(action_name, evidence_source))
+                    await _sync_validation_plan(task_id, bus, evidence_source)
             history.append(
                 {
                     "role": "user",
@@ -955,6 +1070,7 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
         if store.is_stopped(task_id):
             store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
             await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+            await _fail_running_plan_step(task_id, bus, "Tarefa interrompida pelo usuario.")
             await _cleanup_project_runtime(task_id, bus, "Tarefa interrompida; preview interno fechado.")
             await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
             return
@@ -963,16 +1079,19 @@ async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: 
     except asyncio.CancelledError:
         store.update_status(task_id, "stopped", result="Tarefa interrompida pelo usuario.")
         await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida pelo usuario."})
+        await _fail_running_plan_step(task_id, bus, "Tarefa cancelada.")
         await _cleanup_project_runtime(task_id, bus, "Tarefa cancelada; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
         return
     except DeepSeekError as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
+        await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
     except Exception as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
+        await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro"})

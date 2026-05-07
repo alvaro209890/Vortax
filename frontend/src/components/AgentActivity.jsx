@@ -29,6 +29,17 @@ function lastUserPrompt(events, fallbackDescription) {
   return String(content || fallbackDescription || "").trim();
 }
 
+function isQuickQuestion(prompt) {
+  const text = (prompt || "").trim().toLowerCase();
+  if (!text || text.length > 250) return false;
+  // Keywords do modo rapido do backend
+  const quickKeywords = /\b(o que e|o que é|quem e|quem é|como funciona|explique|resuma|defina|qual a diferenca|qual a diferença|bom dia|boa tarde|boa noite|ola|olá|oi)\b/i;
+  const isQuestion = text.endsWith("?");
+  const hasAction = /\b(abra|abrir|clique|clicar|baixe|baixar|instale|instalar|rode|rodar|execute|executar|publique|publicar|configure|configurar|mande|enviar|envie|suba|corrija|alterar|altere|edite|editar|pesquise|pesquisar|buscar|procure|crie|criar|faca|faça|desenvolva|implemente|gere)\b/i.test(text);
+
+  return (quickKeywords.test(text) || isQuestion) && !hasAction;
+}
+
 function taskPlanForPrompt(prompt) {
   const text = prompt.toLowerCase();
   const compactPrompt = prompt.length > 90 ? `${prompt.slice(0, 90)}...` : prompt;
@@ -104,7 +115,10 @@ function stateForStep(index, signals) {
 function useTaskPlan(events, status, fallbackDescription) {
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(0); // steps revelados um a um
+  const [ready, setReady] = useState(false);
   const lastPromptRef = useRef("");
+  const planRef = useRef(null);
 
   const prompt = useMemo(
     () => lastUserPrompt(events, fallbackDescription),
@@ -115,9 +129,12 @@ function useTaskPlan(events, status, fallbackDescription) {
     if (!description || description === lastPromptRef.current) return;
     lastPromptRef.current = description;
     setLoading(true);
+    setReady(false);
+    setVisibleCount(0);
     try {
       const data = await getTaskPlan(description);
-      if (Array.isArray(data.plan) && data.plan.length > 0) {
+      if (Array.isArray(data.plan)) {
+        planRef.current = data.plan;
         setPlan(data.plan);
         return;
       }
@@ -126,6 +143,7 @@ function useTaskPlan(events, status, fallbackDescription) {
     } finally {
       setLoading(false);
     }
+    planRef.current = null;
     setPlan(null);
   }, []);
 
@@ -133,12 +151,40 @@ function useTaskPlan(events, status, fallbackDescription) {
     if (prompt) fetchPlan(prompt);
   }, [prompt, fetchPlan]);
 
+  // Stream de steps: revela um a um a cada ~350ms
+  useEffect(() => {
+    const steps = plan || null;
+    if (!steps || steps.length === 0) return;
+    if (visibleCount >= steps.length) {
+      setReady(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setVisibleCount((c) => Math.min(c + 1, steps.length));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [plan, visibleCount]);
+
   const fallbackPlan = useMemo(
-    () => (!plan ? taskPlanForPrompt(prompt) : null),
+    () => (plan === null && !isQuickQuestion(prompt) ? taskPlanForPrompt(prompt) : null),
     [plan, prompt],
   );
 
-  return { plan, loading, fallbackPlan };
+  // Fallback plan tbm aparece gradualmente se nao veio da API
+  useEffect(() => {
+    if (fallbackPlan && fallbackPlan.length > 0 && !plan) {
+      if (visibleCount >= fallbackPlan.length) {
+        setReady(true);
+        return;
+      }
+      const timer = setTimeout(() => {
+        setVisibleCount((c) => Math.min(c + 1, fallbackPlan.length));
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [fallbackPlan, visibleCount, plan]);
+
+  return { plan, loading, fallbackPlan, visibleCount, ready };
 }
 
 function buildSteps(events, status, fallbackDescription, plan, fallbackPlan) {
@@ -154,6 +200,14 @@ function buildSteps(events, status, fallbackDescription, plan, fallbackPlan) {
   const hasToolResult = hasEvent(scopedEvents, ["tool_result", "screen_frame", "source_saved"]);
   const active = busyStatuses.has(status);
   const signals = { active, answered, failed, hasProgress, hasToolCall, hasToolResult };
+
+  // Se nao houve tool_call nem agent_status executando, e resposta ja saiu:
+  // e resposta simples direta sem tasks — retorna vazio
+  // Checa nos events COMPLETOS (nao apenas scopedEvents) porque a execucao
+  // pode ter sido antes do ultimo user_message em conversas existentes
+  const hadExecution = events.some((e) => e.type === "tool_call" || e.type === "confirmation_request")
+    || events.some((e) => e.type === "agent_status" && (e.payload?.status === "executing" || e.payload?.status === "running"));
+  if (answered && !hadExecution && !active) return [];
 
   const source = plan || fallbackPlan || [];
   return source.map((item, index) => {
@@ -497,11 +551,13 @@ export function AiExchangePanel({ events }) {
 export function AgentActivity({ events, status, taskDescription }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
-  const { plan, loading, fallbackPlan } = useTaskPlan(events, status, taskDescription);
-  const steps = useMemo(
+  const { plan, loading, fallbackPlan, visibleCount, ready } = useTaskPlan(events, status, taskDescription);
+  const allSteps = useMemo(
     () => buildSteps(events, status, taskDescription, plan, fallbackPlan),
     [events, status, taskDescription, plan, fallbackPlan],
   );
+  // So mostra os steps que ja foram "revelados" (streaming progressivo)
+  const steps = useMemo(() => allSteps.slice(0, visibleCount), [allSteps, visibleCount]);
 
   if (steps.length === 0) return null;
 
@@ -523,7 +579,7 @@ export function AgentActivity({ events, status, taskDescription }) {
         </div>
         <motion.div
           className="activity-toggle"
-          animate={{ rotate: collapsed ? -90 : 0 }}
+          animate={{ rotate: collapsed ? -90 : 180 }}
           transition={{ type: "spring", stiffness: 200, damping: 20 }}
         >
           <ChevronDown size={16} />

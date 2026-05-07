@@ -41,6 +41,12 @@ class BrowserSearchToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.tool._ensure_page = ensure_page  # type: ignore[method-assign]
 
+        # Mock _http_search_fallback to return empty so test reaches browser google
+        async def empty_fallback(*args, **kwargs):
+            return {"result_count": 0, "results": []}
+
+        self.tool._http_search_fallback = empty_fallback  # type: ignore[method-assign]
+
     async def test_google_search_opens_encoded_google_url(self) -> None:
         result = await self.tool.google_search("deepseek v4 flash", hl="pt-BR")
 

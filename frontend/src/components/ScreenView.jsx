@@ -55,6 +55,21 @@ function ProgrammingSimulation({ progress }) {
   const label = stageLabels[stage] || "Programando";
   const message = payload.message || "Organizando arquivos e preparando a entrega.";
   const activeIndex = Math.max(0, Object.keys(stageLabels).indexOf(stage));
+  const activeFile = payload.file;
+
+  // Usa os arquivos reais enviados pelo backend ou os simulados como fallback
+  const files = useMemo(() => {
+    const realFiles = payload.files || [];
+    if (realFiles.length > 0) {
+      // Mostra ate 5 arquivos; se o arquivo ativo nao estiver no topo, garante que ele apareça
+      const list = [...realFiles];
+      if (activeFile && !list.slice(0, 5).includes(activeFile)) {
+        return [activeFile, ...list.filter(f => f !== activeFile).slice(0, 4)];
+      }
+      return list.slice(0, 5);
+    }
+    return ["index.html", "style.css", "script.js", "assets", "revisão"];
+  }, [payload.files, activeFile]);
 
   return (
     <div className="programming-stream" aria-label="Vertex programando">
@@ -64,12 +79,18 @@ function ProgrammingSimulation({ progress }) {
       </div>
       <div className="programming-stream-grid">
         <div className="programming-files">
-          {simulatedFiles.map((file, index) => (
-            <div className={`programming-file ${index <= activeIndex % simulatedFiles.length ? "active" : ""}`} key={file}>
-              <CheckCircle2 size={12} />
-              <span>{file}</span>
-            </div>
-          ))}
+          {files.map((file, index) => {
+            const isCurrentlyActive = file === activeFile;
+            const isStageActive = index <= activeIndex % files.length;
+            const isActive = isCurrentlyActive || (isStageActive && !activeFile);
+
+            return (
+              <div className={`programming-file ${isActive ? "active" : ""}`} key={file}>
+                <CheckCircle2 size={12} />
+                <span>{file}</span>
+              </div>
+            );
+          })}
         </div>
         <div className="programming-code" aria-hidden="true">
           <span />

@@ -482,6 +482,7 @@ async def _publish_vertex_terminal_frame(
     *,
     status: str = "running",
     current_stage: str | None = None,
+    files: list[str] | None = None,
 ) -> None:
     if not bus or not task_id:
         return
@@ -500,6 +501,7 @@ async def _publish_vertex_terminal_frame(
             "status": status,
             "current_stage": current_stage,
             "line_count": len(terminal_lines),
+            "files": files or [],
         },
     )
 
@@ -771,6 +773,7 @@ async def _run_vertex_pty(
     last_simulated_progress_at = 0.0
     simulated_progress_index = -1
     last_output_at = loop.time()
+    last_file_summary: dict[str, Any] = {}
     static_snapshot: tuple[int, int] | None = None
     static_snapshot_since: float | None = None
     terminal_filter = _TerminalTextFilter()
@@ -822,6 +825,7 @@ async def _run_vertex_pty(
             _frame_lines(),
             status=status,
             current_stage=latest_vertex_stage,
+            files=last_file_summary.get("root_files") or [],
         )
 
     async def _publish_terminal_line(line: str) -> None:
@@ -928,7 +932,8 @@ async def _run_vertex_pty(
                     pgid = os.getpgid(process.pid)
                 except OSError:
                     pgid = -1
-                file_summary = _build_file_summary(cwd_path)
+                last_file_summary = _build_file_summary(cwd_path)
+                file_summary = last_file_summary
                 if pgid > 0 and file_summary.get("has_index_html"):
                     commands = _process_group_commands(pgid)
                     if any(_looks_like_foreground_dev_server(command) for command in commands):
@@ -1034,6 +1039,7 @@ async def _run_vertex_pty(
             _frame_lines(),
             status="done" if returncode == 0 or server_detected_success or static_project_detected_success else "error",
             current_stage=latest_vertex_stage,
+            files=last_file_summary.get("root_files") or [],
         )
 
     stdout_full = "".join(stdout_lines)

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -15,6 +16,43 @@ from config import settings
 from services.process_registry import register_pid, unregister_pid
 from services.source_quality import query_from_google_url, rank_search_results
 
+_STEALTH_JS = """
+// Mask webdriver flag
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+// Fake plugins array
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [1, 2, 3, 4, 5],
+});
+
+// Fake languages
+Object.defineProperty(navigator, 'languages', {
+  get: () => ['pt-BR', 'pt', 'en-US', 'en'],
+});
+
+// Remove chrome.runtime to look less like automation
+if (window.chrome) {
+  window.chrome.runtime = undefined;
+}
+
+// Fake permissions query
+const originalQuery = window.navigator.permissions?.query;
+if (originalQuery) {
+  window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications'
+      ? Promise.resolve({state: Notification.permission})
+      : originalQuery(parameters)
+  );
+}
+"""
+
+_USER_AGENTS = [
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
+
 
 class BrowserToolError(RuntimeError):
     pass
@@ -28,6 +66,7 @@ class BrowserTool:
         self._chrome_process: subprocess.Popen | None = None
         self._launch_mode: str = "external"
         self._lock = asyncio.Lock()
+        self._warmed_up: bool = False
 
     async def _ensure_page(self) -> Page:
         async with self._lock:
@@ -47,9 +86,48 @@ class BrowserTool:
                         raise BrowserToolError(f"Chrome CDP nao respondeu em {endpoint}")
 
             self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
-            context = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
+            ua = random.choice(_USER_AGENTS)
+            context = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context(
+                user_agent=ua,
+                locale="pt-BR",
+                viewport={"width": 1366, "height": 768},
+            )
             self._page = context.pages[0] if context.pages else await context.new_page()
+            await self._inject_stealth(self._page)
+            if not self._warmed_up:
+                await self._warmup_google(self._page)
+                self._warmed_up = True
             return self._page
+
+    async def _inject_stealth(self, page: Page) -> None:
+        """Inject stealth JS to mask automation signals."""
+        try:
+            await page.add_init_script(_STEALTH_JS)
+        except Exception:
+            pass
+
+    async def _warmup_google(self, page: Page) -> None:
+        """Visit Google homepage to generate session cookies on first launch."""
+        try:
+            cookies = await page.context.cookies()
+            has_google_cookies = any(
+                c.get("domain", "").endswith(".google.com") for c in cookies
+            )
+            if has_google_cookies:
+                return
+            await page.goto("https://www.google.com/", wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            # Try to accept cookies consent if present
+            try:
+                accept_btn = page.locator('button:has-text("Aceitar"), button:has-text("Accept"), button:has-text("Concordo"), button[id="L2AGLb"]').first
+                if await accept_btn.is_visible(timeout=2000):
+                    await accept_btn.click()
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+            await page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+        except Exception:
+            pass
 
     async def _cdp_available(self, endpoint: str) -> bool:
         try:
@@ -77,10 +155,14 @@ class BrowserTool:
         runtime_tmp.mkdir(parents=True, exist_ok=True)
         cache_dir.mkdir(parents=True, exist_ok=True)
         crash_dir.mkdir(parents=True, exist_ok=True)
+        # Only remove SingletonLock — preserve cookies and profile data
         if settings.CHROME_PROFILE_PATH.exists() and self._chrome_process is None:
             singleton = settings.CHROME_PROFILE_PATH / "SingletonLock"
             if singleton.exists() or singleton.is_symlink():
-                shutil.rmtree(settings.CHROME_PROFILE_PATH, ignore_errors=True)
+                try:
+                    singleton.unlink(missing_ok=True)
+                except Exception:
+                    pass
         settings.CHROME_PROFILE_PATH.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
@@ -102,12 +184,13 @@ class BrowserTool:
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--disable-extensions",
             "--disable-crash-reporter",
             "--disable-breakpad",
-            "--disable-background-networking",
+            # Anti-detection: keep extensions enabled, use realistic window
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1366,768",
+            "--lang=pt-BR",
+            "--disable-infobars",
             "about:blank",
         ]
         if headless:
@@ -201,9 +284,25 @@ class BrowserTool:
         }
 
     async def google_search(self, query: str, hl: str = "pt-BR", task_id: str | None = None) -> dict[str, Any]:
+        # Try pure HTTP search first - zero CAPTCHA risk
+        http_result = await self._http_search_fallback(query, hl=hl, task_id=task_id)
+        if http_result.get("result_count", 0) > 0:
+            return http_result
+
+        # HTTP found nothing - try Google browser as last resort
         page = await self._ensure_page()
+        await asyncio.sleep(random.uniform(0.8, 2.5))
         search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl={quote_plus(hl)}"
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+
+        body_text = ""
+        try:
+            body_text = await page.locator("body").inner_text(timeout=3000)
+        except Exception:
+            pass
+        if any(m in body_text.lower() for m in ["captcha", "unusual traffic", "not a robot", "sorry", "blocked"]) or "/sorry/" in page.url:
+            return http_result
+
         results = rank_search_results(query, await self._google_results(page, limit=20), limit=10)
         return {
             "query": query,
@@ -211,6 +310,150 @@ class BrowserTool:
             "title": await page.title(),
             "results": results,
             "result_count": len(results),
+        }
+
+    async def _http_search_fallback(self, query: str, hl: str = "pt-BR", task_id: str | None = None) -> dict[str, Any]:
+        """Pure HTTP search — no browser, no fingerprint, no CAPTCHA."""
+        ua = random.choice(_USER_AGENTS)
+        headers = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "DNT": "1",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl=br-pt"
+        results: list[dict[str, Any]] = []
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+                resp = await client.get(ddg_url)
+                if resp.status_code == 200:
+                    results = self._parse_ddg_html(resp.text)
+        except Exception:
+            pass
+        if not results:
+            try:
+                brave_url = f"https://search.brave.com/search?q={quote_plus(query)}&source=web"
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+                    resp = await client.get(brave_url)
+                    if resp.status_code == 200:
+                        results = self._parse_brave_html(resp.text)
+            except Exception:
+                pass
+        if not results:
+            return await self._duckduckgo_browser_search(query, hl=hl, task_id=task_id)
+        ranked = rank_search_results(query, results, limit=10)
+        return {"query": query, "url": ddg_url, "title": f"Search - {query}", "results": ranked, "result_count": len(ranked), "engine": "http_fallback"}
+
+    @staticmethod
+    def _parse_ddg_html(html: str) -> list[dict[str, Any]]:
+        from urllib.parse import unquote
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for m in re.finditer(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.DOTALL):
+            href, title = m.group(1).strip(), re.sub(r"<[^>]+>", "", m.group(2)).strip()
+            if not title or not href or href in seen:
+                continue
+            um = re.search(r"uddg=([^&]+)", href)
+            if um:
+                href = unquote(um.group(1))
+            if href in seen or "duckduckgo.com" in href:
+                continue
+            seen.add(href)
+            results.append({"index": len(results)+1, "title": title[:180], "href": href, "snippet": ""})
+            if len(results) >= 20:
+                break
+        for i, m in enumerate(re.finditer(r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)):
+            if i < len(results):
+                results[i]["snippet"] = re.sub(r"<[^>]+>", "", m.group(1)).strip()[:320]
+        return results
+
+    @staticmethod
+    def _parse_brave_html(html: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for m in re.finditer(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', html, re.DOTALL):
+            href, title = m.group(1).strip(), re.sub(r"<[^>]+>", "", m.group(2)).strip()
+            if not title or href in seen or "brave.com" in href or len(title) < 5:
+                continue
+            seen.add(href)
+            results.append({"index": len(results)+1, "title": title[:180], "href": href, "snippet": ""})
+            if len(results) >= 15:
+                break
+        return results
+
+    async def _duckduckgo_browser_search(self, query: str, hl: str = "pt-BR", task_id: str | None = None) -> dict[str, Any]:
+        """Last-resort browser-based DuckDuckGo search."""
+        page = await self._ensure_page()
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl=br-pt"
+        await page.goto(ddg_url, wait_until="domcontentloaded", timeout=30000)
+
+        results = await page.evaluate(
+            """
+            (limit) => {
+              const seen = new Set();
+              return Array.from(document.querySelectorAll('.result'))
+                .map((el) => {
+                  const anchor = el.querySelector('.result__a');
+                  const snippetEl = el.querySelector('.result__snippet');
+                  if (!anchor || !anchor.href) return null;
+                  const title = (anchor.innerText || '').replace(/\\s+/g, ' ').trim();
+                  const href = anchor.href;
+                  const snippet = (snippetEl?.innerText || '').replace(/\\s+/g, ' ').trim();
+                  return {title, href, snippet};
+                })
+                .filter((item) => {
+                  if (!item || !item.title || !item.href) return false;
+                  if (seen.has(item.href)) return false;
+                  seen.add(item.href);
+                  return true;
+                })
+                .slice(0, limit)
+                .map((item, i) => ({index: i + 1, title: item.title.slice(0, 180), href: item.href, snippet: item.snippet.slice(0, 320)}));
+            }
+            """,
+            20,
+        )
+
+        # If DuckDuckGo HTML also blocked, try the lite version
+        if not results:
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            lite_url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}&kl=br-pt"
+            await page.goto(lite_url, wait_until="domcontentloaded", timeout=30000)
+            results = await page.evaluate(
+                """
+                (limit) => {
+                  const seen = new Set();
+                  const links = Array.from(document.querySelectorAll('a.result-link, td a[href]'));
+                  return links
+                    .map((a) => {
+                      const title = (a.innerText || '').replace(/\\s+/g, ' ').trim();
+                      const href = a.href || '';
+                      return {title, href, snippet: ''};
+                    })
+                    .filter((item) => {
+                      if (!item.title || !item.href || item.href.startsWith('javascript:')) return false;
+                      if (item.href.includes('duckduckgo.com')) return false;
+                      if (seen.has(item.href)) return false;
+                      seen.add(item.href);
+                      return true;
+                    })
+                    .slice(0, limit)
+                    .map((item, i) => ({index: i + 1, title: item.title.slice(0, 180), href: item.href, snippet: ''}));
+                }
+                """,
+                20,
+            )
+
+        ranked = rank_search_results(query, results, limit=10)
+        return {
+            "query": query,
+            "url": page.url,
+            "title": await page.title(),
+            "results": ranked,
+            "result_count": len(ranked),
+            "engine": "duckduckgo_browser",
         }
 
     async def extract_text(self, task_id: str | None = None) -> dict[str, Any]:

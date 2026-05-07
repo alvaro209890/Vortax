@@ -335,13 +335,19 @@ def software_research_profile(text: str) -> dict:
     project_type = _extract_project_type(text)
     keywords = _extract_research_keywords(text)
 
+    # Qualquer projeto web (site, portfolio, landing, dashboard, app) se beneficia
+    # de pesquisa previa mesmo sem palavras chave explicitas
+    web_project_types = {"site", "landing", "landing page", "portfolio", "portfólio",
+                         "dashboard", "app", "aplicativo", "pagina", "página", "site web"}
+    is_web_project = bool(project_type) and project_type.lower() in web_project_types
+
     research_queries: list[str] = []
     year = "2026"
     base = project_type or "site web"
-    if reasons:
+    if reasons or is_web_project:
         research_queries.append(f"tendencias {base} {year}")
         research_queries.append(f"design {base} exemplos {year}")
-        if any("design" in r for r in reasons):
+        if reasons or is_web_project:
             research_queries.append(f"melhores praticas {base} {year}")
     if keywords:
         tech_part = "+".join(keywords[:3])
@@ -357,7 +363,7 @@ def software_research_profile(text: str) -> dict:
 
     return {
         "is_software_request": True,
-        "requires_pre_research": len(reasons) >= 1,
+        "requires_pre_research": len(reasons) >= 1 or is_web_project,
         "reasons": reasons,
         "research_queries": unique_queries[:3],
         "keywords": keywords,
@@ -425,6 +431,12 @@ def people_research_profile(text: str) -> dict:
     # Se o research_profile ja detectou categoria "pessoa"
     profile = research_profile(text)
     is_people = has_people_pattern or has_name_mention or "pessoa" in profile.get("categories", [])
+
+    # Se o pedido e de criacao de software, nomes mencionados sao parte do contexto
+    # da criacao (ex: "site para pessoa chamada joao"), nao uma busca por pessoa
+    sw_profile = software_research_profile(text)
+    if sw_profile.get("is_software_request"):
+        is_people = False
 
     if not is_people:
         return {

@@ -1,6 +1,6 @@
 # 🌀 Plano Técnico — Vortax (Agente Web Local com Acesso a Este PC)
 
-> **Versão:** 2.8 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
+> **Versão:** 2.9 — MVP local em LAN, interface de chat estilo Manus e visão via Groq  
 > **Objetivo:** Desenvolver um site web local, parecido no fluxo com o Manus, para controlar uma IA que opera este PC Linux Mint. A primeira versão roda somente na rede local, sem autenticação e sem hospedagem externa, com chat em tempo real, stream das ações executadas no computador, DeepSeek V4 Flash para texto/planejamento e `meta-llama/llama-4-scout-17b-16e-instruct` via API da Groq para análise de imagem.
 
 ---
@@ -1527,6 +1527,27 @@ Implementado no backend/frontend:
 - O chat mostra um indicador de andamento com o último `agent_progress`, inspirado em feedback de execução de CLI.
 - Enquanto o agente está executando, o composer fica bloqueado para evitar duas execuções simultâneas no mesmo chat.
 
+### Pesquisa Automatica Pre-Criacao (Software e Pessoas)
+
+Implementado em 07/05/2026:
+
+- **`software_research_profile()` em `research_policy.py`:** analisa pedidos de criacao de software e detecta quando pesquisa previa agrega valor. Identifica atributos subjetivos de design, mencao a tendencias/atualidade, frameworks sem versao, termos de qualidade ambiguos e tipo de projeto (site, dashboard, app, API, etc.). Gera ate 3 queries de pesquisa sugeridas.
+- **`_inject_pre_research_if_needed()` em `agent_runner.py`:** executa ANTES do loop ReAct. Se o pedido for criacao de software compativel, faz 1 busca Google, abre o melhor resultado, extrai o artigo e salva como fonte no banco. Usa `browser_tool` diretamente (sem `execute_tool`) para evitar poluir o historico do DeepSeek com tool_results indesejados. Falhas sao logadas mas nunca bloqueiam o fluxo.
+- **`people_research_profile()` em `research_policy.py`:** detecta pedidos sobre pessoas usando patterns de nome proprio, plataformas (LinkedIn, GitHub, Instagram, Wikipedia), curriculo/Lattes e noticias. Gera queries variadas com `site:linkedin.com/in`, `site:github.com`, busca por nome entre aspas e multiplas plataformas. Exige no minimo 3 fontes para considerar satisfeito.
+- **`_inject_people_research_if_needed()` em `agent_runner.py`:** executa ANTES do loop ReAct, apos a pesquisa de software. Faz ate 2 consultas Google com abertura dos melhores resultados, salvando fontes no banco. Se as consultas especificas nao retornarem nada, tenta busca generica por nome entre aspas. Injeta instrucao especial de pessoa no historico do DeepSeek.
+- **Cache de fontes no banco:** ambas as funcoes verificam se ja existem fontes relevantes salvas na conversa antes de pesquisar. Se houver fontes suficientes, reutilizam sem nova pesquisa.
+- **Prompt do DeepSeek reforcado:** `deepseek_client.py` agora inclui 9 regras especificas para pesquisa de pessoas: multiplas consultas variadas, busca em plataformas especificas (`site:linkedin.com/in`, `site:github.com`, etc.), extracao completa de paginas, cruzamento de fontes, consultas alternativas em caso de resultados parciais, e proibicao de responder "nao encontrei" apos apenas uma tentativa.
+
+### Tasks Dinamicas no Frontend
+
+Implementado em 07/05/2026:
+
+- **Tasks aparecem uma a uma:** `useTaskPlan` em `AgentActivity.jsx` agora tem `visibleCount` que comeca em 0 e incrementa a cada ~350ms, revelando cada step sequencialmente. O usuario ve as tasks surgindo em streaming enquanto o plano e carregado.
+- **Resposta so aparece apos tasks definidas:** `buildMessages` em `App.jsx` filtra `assistant_message_done` que ocorre antes do primeiro evento `agent_progress` ou `tool_call`, garantindo que a resposta do DeepSeek so apareca no chat depois que o agente comecou a executar.
+- **Respostas simples nao geram tasks:** `buildSteps` em `AgentActivity.jsx` retorna array vazio para respostas diretas (perguntas simples respondidas sem ferramentas, sem planner, sem Vertex). A deteccao checa nos eventos completos se houve `tool_call`, `confirmation_request` ou `agent_status` com "executing"/"running" — se a resposta veio sem nenhum desses, nao mostra tasks.
+- **Backend otimizado:** `request_task_plan()` em `deepseek_client.py` agora verifica `should_answer_directly()` antes de chamar o DeepSeek, retornando `{"plan": [], "vertex_steps": []}` para perguntas simples.
+- **Frontend inteligente:** `isQuickQuestion()` detecta perguntas curtas de chat (saudacoes, definicoes, perguntas diretas) e impede geracao de fallbackPlan, evitando tasks fantasmas.
+
 ### Prints Persistentes por Conversa
 
 Implementado:
@@ -1607,3 +1628,7 @@ Não reaproveitado agora:
 | 06/05/2026 | Deploy Firebase Hosting + Cloudflare Tunnel dedicado | `firebase.json`, `.firebaserc`, `frontend/.env.production`, `deploy/cloudflared/vortax-api.yml`, `deploy/systemd/user/vortax-backend.service`, `deploy/systemd/user/vortax-cloudflared.service`, `backend/config.py`, `.env.example`, `README.md`, `PLANO_VORTAX.md` | Firebase login ativo para `alvarocanaisgames@gmail.com`; site `notazap-2520f` encontrado; túnel `vortax-api` criado; serviços `vortax-backend.service` e `vortax-cloudflared.service` ativos e habilitados; `npm run build` OK; backend tests OK |
 | 06/05/2026 | Backend persistente no boot | `deploy/systemd/user/vortax-backend.service`, `README.md`, `PLANO_VORTAX.md` | Unit instalada em `~/.config/systemd/user/vortax-backend.service`; `loginctl show-user server` com `Linger=yes`; backend habilitado via `systemctl --user enable --now vortax-backend.service` |
 | 06/05/2026 | Resposta rapida, exatas com tools e typing dots | `backend/services/exact_solver.py`, `backend/tools/exact.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/api/tasks.py`, `frontend/src/App.jsx`, `frontend/src/components/MessageList.jsx`, `frontend/src/index.css`, `backend/tests/test_exact_solver.py` | `exact_solve` testado com aritmetica, porcentagem e equacao linear; perguntas simples pulam planner; imagens de exatas usam visao + tool; `npm run build` OK |
+| 07/05/2026 | Pesquisa automatica pre-criacao de software | `backend/services/research_policy.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py` | `software_research_profile()` + `_inject_pre_research_if_needed()`; busca Google, abre resultado, extrai artigo e salva fonte antes do loop ReAct; `python -m pytest tests/ -v` OK (79 tests) |
+| 07/05/2026 | Analise visual integrada na pesquisa pre-criacao | `backend/services/agent_runner.py` | `vision_analyze` apos extracao de artigo nas pesquisas pre-vertex; captura cores, layout, tipografia e estilo visual para enriquecer prompt do Vertex |
+| 07/05/2026 | Pesquisa inteligente de pessoas | `backend/services/research_policy.py`, `backend/services/agent_runner.py`, `backend/services/deepseek_client.py`, `backend/tests/test_browser_search_tools.py` | `people_research_profile()` com queries em LinkedIn, GitHub, Wikipedia, curriculos e noticias; `_inject_people_research_if_needed()` com ate 2 consultas + fallback generico; DeepSeek com 9 regras de busca de pessoas; 79/79 tests |
+| 07/05/2026 | Tasks dinamicas e resposta pos-tasks no frontend | `frontend/src/components/AgentActivity.jsx`, `frontend/src/App.jsx` | Tasks aparecem uma a uma (streaming 350ms); resposta do assistant so surge apos primeiro progresso; respostas simples nao geram tasks; `npm run build` OK |

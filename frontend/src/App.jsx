@@ -13,6 +13,7 @@ import { ScreenView } from "./components/ScreenView.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
+import { TaskPlanPanel } from "./components/TaskPlanPanel.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
 import { useTaskEvents } from "./hooks/useTaskEvents.js";
 import { useTaskFiles } from "./hooks/useTaskFiles.js";
@@ -38,8 +39,24 @@ const welcomeMessage = {
 
 function buildMessages(task, events) {
   if (!task) return [welcomeMessage];
+
+  // So mostra mensagens do assistant apos o agente comecar a executar de fato
+  // (evita resposta vazia aparecer antes das tasks carregarem)
+  const firstProgressIndex = events.findIndex(
+    (e) => e.type === "agent_progress" || e.type === "tool_call",
+  );
+
+  const assistantOk = (event, index) => {
+    if (event.type === "user_message") return true;
+    if (event.type === "assistant_message_done" || event.type === "assistant_message_delta") {
+      // So mostra se veio depois do agente comecar a trabalhar
+      return firstProgressIndex >= 0 && index > firstProgressIndex;
+    }
+    return false;
+  };
+
   const messages = events
-    .filter((event) => event.type === "user_message" || event.type === "assistant_message_delta" || event.type === "assistant_message_done")
+    .filter((event, index) => assistantOk(event, index))
     .map((event, index) => ({
       id: `${event.type}-${event.created_at}-${index}`,
       role: event.type === "user_message" ? "user" : "assistant",
@@ -81,6 +98,7 @@ export default function App() {
     contextState,
     error: taskError,
     initialFiles,
+    initialPlan,
     initialSources,
     loading: taskLoading,
     pendingConfirmation,
@@ -109,6 +127,19 @@ export default function App() {
     () => shouldShowTyping(activeTask, currentEvents, agentBusy),
     [activeTask, agentBusy, currentEvents],
   );
+
+  const activeSearch = useMemo(() => {
+    const reversed = [...currentEvents].reverse();
+    const lastSearchCall = reversed.find(e => e.type === "tool_call" && e.payload?.name === "browser_google_search");
+    if (!lastSearchCall) return null;
+    const lastSearchResult = reversed.find(e => e.type === "tool_result" && e.payload?.name === "browser_google_search");
+    if (!lastSearchResult || lastSearchResult.created_at < lastSearchCall.created_at) {
+      return {
+        query: lastSearchCall.payload?.params?.query || "Buscando informações...",
+      };
+    }
+    return null;
+  }, [currentEvents]);
 
   useEffect(() => {
     healthcheck()
@@ -368,7 +399,7 @@ export default function App() {
               <StatusBadge status={agentStatus} label={agentStatus} />
             </div>
           </header>
-          <MessageList isTyping={showTyping} messages={messages} />
+          <MessageList isTyping={showTyping} messages={messages} activeSearch={activeSearch} />
           <AgentActivity events={currentEvents} status={agentStatus} taskDescription={activeTask?.description} />
           <Composer disabled={backendStatus !== "online" || agentBusy} onSubmit={handleSubmit} />
         </>
@@ -378,6 +409,7 @@ export default function App() {
           <ScreenView events={currentEvents} connectionState={connectionState} />
           <DocumentationPanel files={files} taskId={activeTaskId} />
           <AiExchangePanel events={currentEvents} />
+          <TaskPlanPanel events={currentEvents} initialPlan={initialPlan} />
           <ActionTimeline events={currentEvents} />
           <SourceList error={taskError} loading={taskLoading} sources={sources} />
           <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />

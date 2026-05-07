@@ -40,6 +40,19 @@ class VertexStreamTests(unittest.TestCase):
                 event = build_stream_event("task-1", event_type, {"status": "passed"})
                 self.assertEqual(event["type"], event_type)
 
+    def test_live_plan_events_are_known_stream_events(self) -> None:
+        for event_type in (
+            "task_plan_created",
+            "task_plan_replanned",
+            "task_step_started",
+            "task_step_updated",
+            "task_step_completed",
+            "task_step_failed",
+        ):
+            with self.subTest(event_type=event_type):
+                event = build_stream_event("task-1", event_type, {"step": {"label": "Validar"}})
+                self.assertEqual(event["type"], event_type)
+
     def test_parses_vertex_file_progress(self) -> None:
         progress = _parse_vertex_progress("Criando arquivo src/App.jsx")
 

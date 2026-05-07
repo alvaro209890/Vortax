@@ -15,7 +15,7 @@ from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response, request_task_plan
 from services.exact_solver import format_exact_answer, is_exact_prompt, solve_exact_problem
-from services.registry import event_bus, runner_tasks, task_store
+from services.registry import event_bus, runner_tasks, task_plan_store, task_store
 from services.stream_contract import utc_now
 from api.files import list_task_workspace_files, list_task_workspace_projects
 from tools.vision import VisionError, vision_tool
@@ -37,6 +37,45 @@ class TaskPlanRequest(BaseModel):
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
+
+
+async def _create_live_plan(task_id: str, description: str, *, replan: bool = False) -> list[dict]:
+    raw_steps: list[dict] = []
+    plan_error = ""
+    if deepseek_configured():
+        try:
+            raw_steps = (await request_task_plan(description)).get("plan", [])
+        except DeepSeekError as exc:
+            plan_error = str(exc)
+
+    steps = task_plan_store.replace_plan(task_id, raw_steps, description)
+    event_type = "task_plan_replanned" if replan else "task_plan_created"
+    payload = {"steps": steps, "fallback": not bool(raw_steps)}
+    if plan_error:
+        payload["warning"] = plan_error
+    await event_bus.publish(task_id, event_type, payload)
+    return steps
+
+
+async def _start_live_step(task_id: str, hint: str) -> None:
+    before = task_plan_store.find_for_hint(task_id, hint)
+    if before and before.get("status") == "running":
+        return
+    step = task_plan_store.start_step(task_id, hint=hint)
+    if step:
+        await event_bus.publish(task_id, "task_step_started", {"step": step})
+
+
+async def _complete_live_step(task_id: str, hint: str, summary: str, *, status: str = "passed") -> None:
+    step = task_plan_store.complete_step(
+        task_id,
+        hint=hint,
+        status=status,
+        evidence={"status": status, "summary": summary[:360]},
+    )
+    if step:
+        event_type = "task_step_failed" if status == "failed" else "task_step_completed"
+        await event_bus.publish(task_id, event_type, {"step": step})
 
 
 def _normalize_question(question: str | None) -> str:
@@ -91,6 +130,7 @@ async def _read_image_upload(file: UploadFile) -> dict:
 
 
 async def _publish_and_analyze_images(task_id: str, question: str, files: list[UploadFile]) -> dict:
+    await _start_live_step(task_id, "understand")
     images = [await _read_image_upload(file) for file in files]
     chat_images = [
         {
@@ -110,9 +150,11 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
     if compacted:
         await event_bus.publish(task_id, "context_compacted", context_payload)
     await event_bus.publish(task_id, "context_status", context_payload)
+    await _complete_live_step(task_id, "understand", "Imagem e pergunta registradas na conversa.")
 
     analyses = []
     saved_images = []
+    await _start_live_step(task_id, "execute")
     await event_bus.publish(
         task_id,
         "agent_status",
@@ -156,6 +198,7 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
         updated_saved = database.update_chat_image_analysis(saved["id"], analysis.get("summary") or "")
         if updated_saved:
             saved_images[-1] = updated_saved
+    await _complete_live_step(task_id, "execute", f"{len(analyses)} imagem(ns) analisada(s).")
 
     analysis_context = _analysis_text(analyses)
     if is_exact_prompt(f"{question}\n{analysis_context}"):
@@ -196,7 +239,9 @@ async def _publish_and_analyze_images(task_id: str, question: str, files: list[U
         )
 
     task_store.update_status(task_id, "done", result=answer)
+    await _start_live_step(task_id, "deliver")
     await event_bus.publish(task_id, "assistant_message_done", {"content": answer})
+    await _complete_live_step(task_id, "deliver", "Resposta final da analise de imagem entregue.")
     _, context_payload, compacted = await prepare_context_history(task_id, event_bus.history(task_id), question)
     if compacted:
         await event_bus.publish(task_id, "context_compacted", context_payload)
@@ -226,11 +271,12 @@ def _format_vision_answer(analysis: dict) -> str:
 async def create_task(payload: TaskCreate) -> dict:
     task = task_store.create(payload.description)
     await event_bus.publish(task["id"], "task_created", {"task": task})
+    steps = await _create_live_plan(task["id"], task["description"])
     await event_bus.publish(task["id"], "user_message", {"content": task["description"]})
     runner_tasks[task["id"]] = asyncio.create_task(
         run_agent_task(task["id"], task["description"], task_store, event_bus)
     )
-    return {"task_id": task["id"], "task": task}
+    return {"task_id": task["id"], "task": task, "plan": {"steps": steps}}
 
 
 @router.post("/plan")
@@ -264,14 +310,16 @@ async def create_image_task(question: str = Form(""), files: list[UploadFile] = 
     normalized_question = _normalize_question(question)
     task = task_store.create(normalized_question)
     await event_bus.publish(task["id"], "task_created", {"task": task})
+    steps = await _create_live_plan(task["id"], normalized_question)
     try:
         result = await _publish_and_analyze_images(task["id"], normalized_question, files)
     except (VisionError, DeepSeekError) as exc:
         task_store.update_status(task["id"], "error", result=str(exc))
+        await _complete_live_step(task["id"], "execute", str(exc), status="failed")
         await event_bus.publish(task["id"], "error", {"message": str(exc)})
         await event_bus.publish(task["id"], "agent_status", {"status": "error", "label": "Erro na visão"})
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"task": task_store.get(task["id"]) or task, **result}
+    return {"task": task_store.get(task["id"]) or task, "plan": {"steps": steps}, **result}
 
 
 @router.post("/{task_id}/images")
@@ -290,6 +338,7 @@ async def create_task_images(task_id: str, question: str = Form(""), files: list
         return await _publish_and_analyze_images(task_id, normalized_question, files)
     except (VisionError, DeepSeekError) as exc:
         task_store.update_status(task_id, "error", result=str(exc))
+        await _complete_live_step(task_id, "execute", str(exc), status="failed")
         await event_bus.publish(task_id, "error", {"message": str(exc)})
         await event_bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro na visão"})
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -312,6 +361,7 @@ async def get_task(task_id: str) -> dict:
         "images": database.list_chat_images(task_id),
         "files": list_task_workspace_files(task_id),
         "projects": list_task_workspace_projects(task_id),
+        "plan": {"steps": task_plan_store.list_steps(task_id)},
         "context": get_context_payload(task_id, event_bus.history(task_id)),
     }
 
