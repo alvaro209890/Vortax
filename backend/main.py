@@ -43,7 +43,7 @@ async def health() -> dict:
         "app": "vortax",
         "version": app.version,
         "mode": settings.APP_ENV,
-        "auth": "disabled" if settings.ALLOW_NO_AUTH else "enabled",
+        "auth": "disabled" if settings.ALLOW_NO_AUTH else "lan_optional" if settings.ALLOW_LAN_NO_AUTH else "enabled",
         "lan_only": settings.LAN_ONLY,
         "model": settings.DEEPSEEK_MODEL,
         "deepseek_configured": bool(settings.DEEPSEEK_API_KEY.strip()),

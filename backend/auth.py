@@ -5,6 +5,7 @@ from functools import lru_cache
 from fastapi import Header, HTTPException, Request, status
 from starlette.websockets import WebSocket
 
+from access import is_private_client
 from config import settings
 
 
@@ -74,14 +75,26 @@ def dev_user() -> AuthUser:
     return AuthUser(uid=settings.DEV_USER_ID, email="dev@local", name="Desenvolvimento", is_dev=True)
 
 
+def _allow_lan_dev_user(request_or_websocket: Request | WebSocket) -> bool:
+    client_host = request_or_websocket.client.host if request_or_websocket.client else None
+    return settings.ALLOW_LAN_NO_AUTH and is_private_client(client_host)
+
+
 async def require_auth(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> AuthUser:
     token = _bearer_token(authorization) or str(request.query_params.get("token") or "").strip()
     if token:
-        return _verify_token(token)
+        try:
+            return _verify_token(token)
+        except HTTPException:
+            if _allow_lan_dev_user(request):
+                return dev_user()
+            raise
     if settings.ALLOW_NO_AUTH:
+        return dev_user()
+    if _allow_lan_dev_user(request):
         return dev_user()
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Autenticacao obrigatoria.")
 
@@ -94,9 +107,13 @@ async def authenticate_websocket(websocket: WebSocket) -> AuthUser | None:
         try:
             return _verify_token(token)
         except HTTPException:
+            if _allow_lan_dev_user(websocket):
+                return dev_user()
             await websocket.close(code=1008)
             return None
     if settings.ALLOW_NO_AUTH:
+        return dev_user()
+    if _allow_lan_dev_user(websocket):
         return dev_user()
     await websocket.close(code=1008)
     return None

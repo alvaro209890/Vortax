@@ -90,6 +90,10 @@ function shouldShowTyping(task, events, agentBusy) {
   return lastUserIndex === -1 || lastAssistantDoneIndex < lastUserIndex;
 }
 
+function isAuthError(error) {
+  return /autenticacao obrigatoria|token firebase|unauthorized|401/i.test(error?.message || "");
+}
+
 export default function App() {
   const { loading: authLoading, signOut, user } = useAuth();
   const [activeTaskId, setActiveTaskId] = useState(null);
@@ -153,6 +157,8 @@ export default function App() {
   useEffect(() => {
     if (authLoading || !user) return undefined;
     let cancelled = false;
+    setTasksLoading(true);
+    setTasksError(null);
     healthcheck()
       .then(() => {
         if (!cancelled) setBackendStatus("online");
@@ -163,15 +169,24 @@ export default function App() {
     listTasks()
       .then((data) => {
         if (cancelled) return;
+        setBackendStatus("online");
         const loadedTasks = data.tasks || [];
         setTasks(loadedTasks);
         setTasksError(null);
         if (loadedTasks.length > 0) {
           setActiveTaskId(loadedTasks[0].id);
+        } else {
+          setActiveTaskId(null);
         }
       })
       .catch((error) => {
-        if (!cancelled) setTasksError(error);
+        if (!cancelled) {
+          if (isAuthError(error)) {
+            setBackendStatus("online");
+            signOut();
+          }
+          setTasksError(error);
+        }
       })
       .finally(() => {
         if (!cancelled) setTasksLoading(false);
@@ -179,7 +194,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user]);
+  }, [authLoading, signOut, user]);
 
   useEffect(() => {
     if (user) return;

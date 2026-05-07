@@ -15,7 +15,7 @@ Endpoints públicos atuais:
 - Frontend Firebase: `https://notazap-2520f.web.app`
 - Backend via túnel: `https://vortax-api.cursar.space`
 - Backend local: `http://127.0.0.1:8010`
-- Frontend dev: `http://127.0.0.1:5173`
+- Frontend dev: `http://127.0.0.1:5173` ou `http://192.168.0.104:5173`
 
 O backend continua com `ALLOW_NO_AUTH=true`, mas `LAN_ONLY=true` aceita acesso público apenas quando o host pertence a `PUBLIC_HOSTS` e a requisição chega com headers do Cloudflare Tunnel. A porta CDP do Chrome (`9222`) deve permanecer presa a `127.0.0.1`.
 

@@ -252,7 +252,7 @@ curl https://vortax-api.cursar.space/health
 curl https://notazap-2520f.web.app
 ```
 
-O backend precisa permitir CORS para `https://notazap-2520f.web.app` e `https://notazap-2520f.firebaseapp.com`; isso já está no default de `ALLOWED_ORIGINS` e em `.env.example`.
+O backend precisa permitir CORS para `http://localhost:5173`, `http://127.0.0.1:5173`, `http://192.168.0.104:5173`, `https://notazap-2520f.web.app` e `https://notazap-2520f.firebaseapp.com`; isso já está no default de `ALLOWED_ORIGINS` e em `.env.example`.
 
 Como `LAN_ONLY=true` continua ativo, o acesso público ao backend só é aceito quando o hostname está em `PUBLIC_HOSTS` e a requisição vem com headers do Cloudflare Tunnel. O valor padrão é:
 

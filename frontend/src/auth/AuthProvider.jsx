@@ -19,7 +19,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setAuthTokenProvider(async () => auth.currentUser?.getIdToken() || "");
+    setAuthTokenProvider(async (forceRefresh = false) => auth.currentUser?.getIdToken(forceRefresh) || "");
     const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
       setUser(nextUser);
       setCachedAuthToken(nextUser ? await nextUser.getIdToken() : "");

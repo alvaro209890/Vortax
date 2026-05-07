@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     FRONTEND_PORT: int = 5173
     LAN_ONLY: bool = True
     ALLOW_NO_AUTH: bool = True
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,https://notazap-2520f.web.app,https://notazap-2520f.firebaseapp.com"
+    ALLOW_LAN_NO_AUTH: bool = True
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://192.168.0.104:5173,https://notazap-2520f.web.app,https://notazap-2520f.firebaseapp.com"
     PUBLIC_HOSTS: str = "vortax-api.cursar.space"
     FIREBASE_PROJECT_ID: str = "notazap-2520f"
     FIREBASE_CREDENTIALS_PATH: str = ""

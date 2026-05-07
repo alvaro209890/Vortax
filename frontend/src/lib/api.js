@@ -15,10 +15,10 @@ export function setCachedAuthToken(token) {
   cachedAuthToken = token || "";
 }
 
-export async function getAuthToken() {
+export async function getAuthToken(forceRefresh = false) {
   if (!authTokenProvider) return cachedAuthToken;
   try {
-    const token = await authTokenProvider();
+    const token = await authTokenProvider(forceRefresh);
     cachedAuthToken = token || "";
     return cachedAuthToken;
   } catch {
@@ -52,8 +52,19 @@ export function taskPreviewUrl(taskId, path = "") {
   return `${API_BASE_URL}/api/files/preview/${encodeURIComponent(taskId || "")}${suffix}${token}`;
 }
 
-async function request(path, options = {}) {
-  const token = await getAuthToken();
+async function parseErrorMessage(response) {
+  const text = await response.text();
+  if (!text) return `Erro HTTP ${response.status}`;
+  try {
+    const data = JSON.parse(text);
+    return data.detail || data.message || text;
+  } catch {
+    return text;
+  }
+}
+
+async function request(path, options = {}, retryingAfterAuthRefresh = false) {
+  const token = await getAuthToken(retryingAfterAuthRefresh);
   const headers = options.body instanceof FormData
     ? {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -70,7 +81,10 @@ async function request(path, options = {}) {
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    if (response.status === 401 && !retryingAfterAuthRefresh && authTokenProvider) {
+      return request(path, options, true);
+    }
+    const message = await parseErrorMessage(response);
     throw new Error(message || `Erro HTTP ${response.status}`);
   }
 
