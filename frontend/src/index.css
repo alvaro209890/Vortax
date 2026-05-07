@@ -159,7 +159,7 @@ small {
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
 }
 
 /* Sidebar Elements */
@@ -2329,8 +2329,9 @@ small {
   border: 1px solid rgba(8, 198, 93, 0.16);
   border-radius: 10px;
   background: #080E12;
-  overflow: hidden;
+  overflow: visible;
   margin-bottom: 16px;
+  position: relative;
 }
 
 .activity-vertex-slot .vertex-progress-panel {
@@ -2385,13 +2386,27 @@ small {
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-height: 340px;
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  width: 360px;
+  max-height: 80vh;
   overflow: hidden;
+  border: 1px solid rgba(8, 198, 93, 0.18);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+  z-index: 500;
+  transition: opacity 0.18s ease, transform 0.18s ease, max-width 0.22s ease;
 }
 
 .vertex-progress-panel.collapsed .vertex-progress-body {
+  max-width: 0;
   max-height: 0;
   opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  overflow: hidden;
 }
 
 .vertex-live-legend {
@@ -2493,21 +2508,6 @@ small {
 
 .vertex-progress-item.done .vertex-progress-icon svg {
   color: var(--accent-green);
-}
-
-.vertex-progress-list {
-  overflow-y: auto;
-  overflow-x: hidden;
-  max-height: 300px;
-}
-
-.vertex-progress-list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.vertex-progress-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
 }
 
 .vertex-progress-list {
