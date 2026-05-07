@@ -363,3 +363,54 @@ async def request_context_summary(
     except (KeyError, IndexError, TypeError) as exc:
         raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
     return content.strip()[:max_chars]
+
+
+async def request_task_plan(description: str) -> list[dict[str, str]]:
+    """Gera 4-6 etapas dinamicas de acompanhamento baseadas no pedido do usuario."""
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    system_prompt = (
+        "Voce gera planos de acompanhamento para usuarios do Vortax acompanharem o progresso do agente. "
+        "Analise o pedido do usuario e produza 4-6 etapas curtas, sequenciais e realistas que o agente "
+        "provavelmente seguira para cumprir a tarefa. Cada etapa deve ter:\n"
+        "- label: titulo curto (2-4 palavras, imperativo, ex: \"Analisar pedido\", \"Pesquisar no Google\", \"Criar site\")\n"
+        "- detail: descricao de 1 frase explicando o que sera feito nesta etapa\n\n"
+        "Seja ESPECIFICO ao pedido. Nao use etapas genericas. Exemplos:\n"
+        "- Pedido \"crie um site de portfolio\": [Analisar portfolio, Definir secoes visuais, Implementar HTML/CSS, Revisar responsividade, Entregar site]\n"
+        "- Pedido \"pesquise noticias sobre IA\": [Montar busca, Abrir fontes relevantes, Extrair dados, Comparar achados, Responder com sintese]\n"
+        "- Pedido \"corrija o bug no login\": [Localizar arquivos de auth, Identificar causa do bug, Aplicar correcao, Verificar fluxo de login, Reportar solucao]\n"
+        "Responda APENAS com um array JSON valido. Nada de markdown, nada de texto fora do JSON. "
+        "Formato: [{\"label\":\"...\",\"detail\":\"...\"}, ...]"
+    )
+
+    payload = {
+        "model": settings.DEEPSEEK_MODEL,
+        "temperature": 0.2,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Pedido do usuario: {description}"},
+        ],
+    }
+    data = await _post_deepseek(payload)
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
+
+    parsed = _extract_json_object(content)
+    steps = parsed.get("steps") if isinstance(parsed, dict) and "steps" in parsed else parsed
+    if not isinstance(steps, list) or len(steps) == 0:
+        raise DeepSeekError("Plano de tasks retornou array vazio")
+    result = []
+    for step in steps[:6]:
+        if isinstance(step, dict):
+            result.append({
+                "label": str(step.get("label") or "Etapa"),
+                "detail": str(step.get("detail") or ""),
+            })
+    if not result:
+        raise DeepSeekError("Plano de tasks sem etapas validas")
+    return result

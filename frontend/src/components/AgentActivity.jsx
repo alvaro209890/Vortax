@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Circle, Code2, Loader2, Sparkles } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+import { getTaskPlan } from "../lib/api.js";
 
 const busyStatuses = new Set(["queued", "thinking", "executing", "running"]);
 
@@ -100,7 +101,47 @@ function stateForStep(index, signals) {
   return "pending";
 }
 
-function buildSteps(events, status, fallbackDescription) {
+function useTaskPlan(events, status, fallbackDescription) {
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const lastPromptRef = useRef("");
+
+  const prompt = useMemo(
+    () => lastUserPrompt(events, fallbackDescription),
+    [events, fallbackDescription],
+  );
+
+  const fetchPlan = useCallback(async (description) => {
+    if (!description || description === lastPromptRef.current) return;
+    lastPromptRef.current = description;
+    setLoading(true);
+    try {
+      const data = await getTaskPlan(description);
+      if (Array.isArray(data.plan) && data.plan.length > 0) {
+        setPlan(data.plan);
+        return;
+      }
+    } catch {
+      // fallback ao hardcoded abaixo
+    } finally {
+      setLoading(false);
+    }
+    setPlan(null);
+  }, []);
+
+  useEffect(() => {
+    if (prompt) fetchPlan(prompt);
+  }, [prompt, fetchPlan]);
+
+  const fallbackPlan = useMemo(
+    () => (!plan ? taskPlanForPrompt(prompt) : null),
+    [plan, prompt],
+  );
+
+  return { plan, loading, fallbackPlan };
+}
+
+function buildSteps(events, status, fallbackDescription, plan, fallbackPlan) {
   const prompt = lastUserPrompt(events, fallbackDescription);
   if (!prompt) return [];
 
@@ -114,12 +155,17 @@ function buildSteps(events, status, fallbackDescription) {
   const active = busyStatuses.has(status);
   const signals = { active, answered, failed, hasProgress, hasToolCall, hasToolResult };
 
-  return taskPlanForPrompt(prompt).map(([label, detail], index) => ({
-    id: `${index}-${label}`,
-    label,
-    detail,
-    state: stateForStep(index, signals),
-  }));
+  const source = plan || fallbackPlan || [];
+  return source.map((item, index) => {
+    const label = typeof item.label === "string" ? item.label : String(item[0] || "");
+    const detail = typeof item.detail === "string" ? item.detail : String(item[1] || "");
+    return {
+      id: `${index}-${label}`,
+      label,
+      detail,
+      state: stateForStep(index, signals),
+    };
+  });
 }
 
 function currentLabel(events, status) {
@@ -430,7 +476,11 @@ export function AiExchangePanel({ events }) {
 export function AgentActivity({ events, status, taskDescription }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState(null);
-  const steps = useMemo(() => buildSteps(events, status, taskDescription), [events, status, taskDescription]);
+  const { plan, loading, fallbackPlan } = useTaskPlan(events, status, taskDescription);
+  const steps = useMemo(
+    () => buildSteps(events, status, taskDescription, plan, fallbackPlan),
+    [events, status, taskDescription, plan, fallbackPlan],
+  );
 
   if (steps.length === 0) return null;
 

@@ -102,3 +102,10 @@ export function stopTask(taskId) {
 export function listProviders() {
   return request("/api/providers/");
 }
+
+export function getTaskPlan(description) {
+  return request("/api/tasks/plan", {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+}

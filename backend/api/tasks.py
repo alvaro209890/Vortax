@@ -13,7 +13,7 @@ from config import settings
 from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
-from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response
+from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response, request_task_plan
 from services.exact_solver import format_exact_answer, is_exact_prompt, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_store
 from services.stream_contract import utc_now
@@ -29,6 +29,10 @@ class TaskCreate(BaseModel):
 
 class TaskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+
+
+class TaskPlanRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=4000)
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -227,6 +231,15 @@ async def create_task(payload: TaskCreate) -> dict:
         run_agent_task(task["id"], task["description"], task_store, event_bus)
     )
     return {"task_id": task["id"], "task": task}
+
+
+@router.post("/plan")
+async def create_task_plan(payload: TaskPlanRequest) -> dict:
+    try:
+        plan = await request_task_plan(payload.description)
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"plan": plan}
 
 
 @router.post("/{task_id}/messages")
