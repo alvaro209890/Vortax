@@ -393,6 +393,8 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
         "Fontes ja abertas e salvas nesta conversa. IMPORTANTE: Se voce for criar software com Vertex, "
         "USE estas fontes para enriquecer o prompt. Extraia destas fontes: tendencias de design, exemplos "
         "de layout, paleta de cores, estrutura de navegacao, tecnologias recomendadas e boas praticas. "
+        "Se houver resultado de vision_analyze no historico, ELE contem analise visual com cores exatas, "
+        "estrutura de layout, estilo visual, tipografia e elementos de UI — incorpore TUDO no prompt do Vertex. "
         "Monte um prompt detalhado para o Vertex que inclua referencias concretas extraidas das fontes "
         "(ex: 'crie um site inspirado nas referencias de [URL], usando paleta de cores similar, layout com "
         "hero section, navegacao superior, secao de depoimentos e rodape com contato'). "
@@ -572,6 +574,34 @@ async def _inject_pre_research_if_needed(
                         task_id=task_id,
                         bus=bus,
                         description="Extraindo conteudo da referencia",
+                    )
+                    # Analise visual da pagina de referencia
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {
+                            "label": "Analisando design da referencia",
+                            "detail": "Usando visao computacional para extrair cores, layout e estilo visual.",
+                            "tool": "vision_analyze",
+                        },
+                    )
+                    await execute_tool(
+                        "vision_analyze",
+                        {
+                            "question": (
+                                "Analise este design de referencia em detalhes. "
+                                "Extraia: paleta de cores usada (cores principais, secundarias, de destaque), "
+                                "estrutura de layout (hero, grid, sidebar, navegacao, footer), "
+                                "tipografia aparente (serifada, sans-serif, mono), "
+                                "estilo visual (flat, minimalista, material, neumorphism, moderno), "
+                                "elementos de UI (botoes, cards, modais, formularios, icons), "
+                                "e qualquer detalhe de design que possa servir de inspiracao. "
+                                "Seja detalhado e especifico."
+                            ),
+                        },
+                        task_id=task_id,
+                        bus=bus,
+                        description="Analise visual do design de referencia",
                     )
         except Exception:
             pass  # Falha na pesquisa nao deve bloquear o fluxo
