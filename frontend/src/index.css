@@ -330,22 +330,16 @@ small {
   color: var(--accent-danger);
 }
 
-/* Chat Header */
-.panel-label-group {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
+/* Chat Header — Modernizado */
 .chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 24px 32px;
+  padding: 20px 32px;
   border-bottom: 1px solid var(--border-light);
-  background: rgba(22, 21, 19, 0.8);
-  backdrop-filter: blur(8px);
+  background: linear-gradient(180deg, rgba(16, 21, 26, 0.95) 0%, rgba(16, 21, 26, 0.7) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   z-index: 10;
   transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -354,16 +348,83 @@ small {
   padding-left: 72px;
 }
 
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chat-header-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(8, 198, 93, 0.15) 0%, rgba(8, 198, 93, 0.05) 100%);
+  border: 1px solid rgba(8, 198, 93, 0.2);
+  color: var(--accent-blue);
+  flex-shrink: 0;
+  box-shadow: 0 0 20px rgba(8, 198, 93, 0.08);
+}
+
+.chat-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(8, 198, 93, 0.1);
+  border: 1px solid rgba(8, 198, 93, 0.15);
+  width: fit-content;
+}
+
+.chat-header-badge::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  animation: badgePulse 2s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
 .chat-header h1 {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 18px;
   font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.chat-header h1 mark {
+  background: linear-gradient(135deg, var(--accent-blue) 0%, #0aeb73 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
 }
 
 .chat-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .stop-btn {
