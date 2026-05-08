@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowUp, Mic, Monitor, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Lock, Mic, Monitor, Plus, Square, X } from "lucide-react";
 
-export function Composer({ disabled, isBusy = false, onStop, onSubmit, stopping = false }) {
+export function Composer({ disabled, isBusy = false, onSecureLogin, onStop, onSubmit, stopping = false }) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
@@ -101,6 +101,9 @@ export function Composer({ disabled, isBusy = false, onStop, onSubmit, stopping 
             rows={1}
             value={value}
           />
+          <button className="composer-icon-btn" disabled={inputDisabled || !onSecureLogin} onClick={onSecureLogin} title="Login seguro" type="button">
+            <Lock size={18} />
+          </button>
           <span className="composer-computer-pill">
             <Monitor size={14} />
             Computador do Vortax

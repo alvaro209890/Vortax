@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
+from services.credential_store import credential_store
 from services.registry import event_bus, runner_tasks, task_store
 
 router = APIRouter()
@@ -103,6 +104,7 @@ async def stop_task(task_id: str, current_user: AuthUser = Depends(require_auth)
     from tools.browser_pool import browser_pool
 
     await browser_pool.release(task_id)
+    credential_store.revoke_task(task_id)
 
     # Publica status final
     await event_bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})

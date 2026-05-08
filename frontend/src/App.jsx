@@ -12,6 +12,7 @@ import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
 import { FileList } from "./components/FileList.jsx";
 import { InlineTaskTimeline } from "./components/InlineTaskTimeline.jsx";
 import { MessageList } from "./components/MessageList.jsx";
+import { SecureCredentialsDialog } from "./components/SecureCredentialsDialog.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
@@ -20,13 +21,15 @@ import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
 import { useTaskEvents } from "./hooks/useTaskEvents.js";
 import { useTaskFiles } from "./hooks/useTaskFiles.js";
-import { useLiveTaskPlan } from "./hooks/useLiveTaskPlan.js";
+import { buildLiveTaskPlan, useLiveTaskPlan } from "./hooks/useLiveTaskPlan.js";
 import { useTaskSources } from "./hooks/useTaskSources.js";
 import {
   appendTaskMessage,
   appendTaskImages,
   confirmTask,
   createTask,
+  createAuthorizedTask,
+  authorizeTask,
   createImageTask,
   deleteTask,
   healthcheck,
@@ -68,6 +71,7 @@ function buildMessages(task, events, responseReady = true) {
     .filter((event, index) => assistantOk(event, index))
     .map((event, index) => ({
       id: `${event.type}-${event.created_at}-${index}`,
+      eventIndex: index,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
       downloads: event.payload.downloads || [],
@@ -85,6 +89,57 @@ function buildMessages(task, events, responseReady = true) {
 
   if (messages.length > 0) return messages;
   return [{ id: `user-${task.id}`, role: "user", content: task.description }];
+}
+
+function taskPromptForEvent(events, eventIndex) {
+  for (let index = eventIndex; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "user_message") return event.payload?.content || "";
+  }
+  return "";
+}
+
+function buildPlanSegments(events, initialPlan, livePlan, agentBusy, latestUserText, shouldShowPlanGeneration) {
+  const planIndexes = events
+    .map((event, index) => ({ event, index }))
+    .filter(({ event }) => event.type === "task_plan_created" || event.type === "task_plan_replanned");
+
+  const segments = planIndexes.map(({ index }, segmentIndex) => {
+    const nextIndex = planIndexes[segmentIndex + 1]?.index ?? events.length;
+    const scopedEvents = events.slice(index, nextIndex);
+    const plan = segmentIndex === planIndexes.length - 1
+      ? livePlan
+      : buildLiveTaskPlan({ steps: [] }, scopedEvents);
+    return {
+      anchorEventIndex: index,
+      id: `plan-${events[index]?.created_at || index}`,
+      plan,
+    };
+  }).filter((segment) => segment.plan.hasSteps && !segment.plan.isDirect);
+
+  const latestPlanIndex = planIndexes[planIndexes.length - 1]?.index ?? -1;
+  const latestUserIndex = latestEventIndex(events, (event) => event.type === "user_message");
+  if (agentBusy && latestUserIndex > latestPlanIndex && shouldShowPlanGeneration) {
+    segments.push({
+      anchorEventIndex: latestUserIndex,
+      id: `pending-${events[latestUserIndex]?.created_at || latestUserIndex}`,
+      plan: buildPendingPlan(latestUserText),
+    });
+  }
+  return segments;
+}
+
+function buildMessagesWithPlanAnchors(task, events, responseReady, planSegments = []) {
+  const messages = buildMessages(task, events, responseReady);
+  if (!messages.length || !planSegments.length) return messages;
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    const anchor = planSegments
+      .filter((segment) => segment.anchorEventIndex < message.eventIndex)
+      .at(-1);
+    if (!anchor) return message;
+    return { ...message, planSegmentId: anchor.id };
+  });
 }
 
 function shouldShowTyping(task, events, agentBusy) {
@@ -182,6 +237,7 @@ export default function App() {
   const [tasksError, setTasksError] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [secureLoginOpen, setSecureLoginOpen] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState([]);
   const {
     activeTask,
@@ -216,15 +272,18 @@ export default function App() {
   const hasPendingPlanForLatestUser = agentBusy && lastUserIndex > lastPlanIndex;
   const latestUserText = latestUserEvent?.payload?.content || "";
   const shouldShowPlanGeneration = hasPendingPlanForLatestUser && likelyTaskPrompt(latestUserText);
+  const planSegments = useMemo(
+    () => buildPlanSegments(currentEvents, initialPlan, livePlan, agentBusy, latestUserText, shouldShowPlanGeneration),
+    [agentBusy, currentEvents, initialPlan, latestUserText, livePlan, shouldShowPlanGeneration],
+  );
+
   const displayPlan = useMemo(
     () => (
-      hasPendingPlanForLatestUser
-        ? shouldShowPlanGeneration
-          ? buildPendingPlan(latestUserText)
-          : emptyDisplayPlan
-        : livePlan
+      planSegments.length > 0
+        ? planSegments[planSegments.length - 1].plan
+        : emptyDisplayPlan
     ),
-    [hasPendingPlanForLatestUser, latestUserText, livePlan, shouldShowPlanGeneration],
+    [planSegments],
   );
 
   const messages = useMemo(() => {
@@ -240,14 +299,14 @@ export default function App() {
       return [{ id: "task-error", role: "assistant", content: "Nao foi possivel carregar esta conversa." }];
     }
     const responseReady = !agentBusy || displayPlan.percent >= 100 || displayPlan.isTerminal;
-    const builtMessages = buildMessages(activeTask, currentEvents, responseReady);
+    const builtMessages = buildMessagesWithPlanAnchors(activeTask, currentEvents, responseReady, planSegments);
     if (pendingMessages.length === 0) return builtMessages;
     return builtMessages
       .filter((message) => message.id !== "welcome")
       .concat(pendingMessages.filter((pending) => !builtMessages.some((message) => (
         message.role === "user" && message.content === pending.content
       ))));
-  }, [activeTask, activeTaskId, agentBusy, currentEvents, displayPlan.isTerminal, displayPlan.percent, optimisticMessages, taskError, taskLoading]);
+  }, [activeTask, activeTaskId, agentBusy, currentEvents, displayPlan.isTerminal, displayPlan.percent, optimisticMessages, planSegments, taskError, taskLoading]);
   const showTyping = useMemo(
     () => shouldShowTyping(activeTask, currentEvents, agentBusy),
     [activeTask, agentBusy, currentEvents],
@@ -469,6 +528,32 @@ export default function App() {
     setActiveTaskId(result.task_id);
   }
 
+  async function handleSecureLogin(payload) {
+    setAgentStatus("queued");
+    if (activeTaskId) {
+      await authorizeTask(activeTaskId, payload);
+      setTaskEvents((current) => [
+        ...current,
+        {
+          type: "agent_progress",
+          task_id: activeTaskId,
+          created_at: new Date().toISOString(),
+          payload: {
+            label: "Login seguro autorizado",
+            detail: `Credenciais enviadas por fluxo seguro para ${payload.url}.`,
+          },
+        },
+      ]);
+      return;
+    }
+    const result = await createAuthorizedTask(payload);
+    setTasks((current) => [result.task, ...current]);
+    setActiveTask(result.task);
+    setTaskEvents([]);
+    setContextState(null);
+    setActiveTaskId(result.task_id);
+  }
+
   async function handleConfirm(approved) {
     if (!activeTaskId) return;
     await confirmTask(activeTaskId, approved);
@@ -616,7 +701,7 @@ export default function App() {
                   showEmpty={false}
                 />
               ) : null}
-              activityVersion={displayPlan.planKey}
+              planSegments={planSegments}
               isTyping={showTyping}
               messages={messages}
             />
@@ -631,6 +716,7 @@ export default function App() {
             <Composer
               disabled={backendStatus !== "online"}
               isBusy={agentBusy}
+              onSecureLogin={() => setSecureLoginOpen(true)}
               onStop={handleStop}
               onSubmit={handleSubmit}
               stopping={stopping}
@@ -645,6 +731,13 @@ export default function App() {
         <SourceList error={taskError} loading={taskLoading} sources={sources} />
         <FileList error={filesError} files={files} loading={taskLoading || filesLoading} taskId={activeTaskId} />
       </TaskDetailDrawer>
+      <SecureCredentialsDialog
+        activeTaskId={activeTaskId}
+        disabled={backendStatus !== "online" || agentBusy}
+        onClose={() => setSecureLoginOpen(false)}
+        onSubmit={handleSecureLogin}
+        open={secureLoginOpen}
+      />
       <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
     </>
   );

@@ -98,6 +98,20 @@ export function createTask(description) {
   });
 }
 
+export function createAuthorizedTask(payload) {
+  return request("/api/tasks/authorized", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function authorizeTask(taskId, payload) {
+  return request(`/api/tasks/${taskId}/authorization`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listTasks() {
   return request("/api/tasks/");
 }

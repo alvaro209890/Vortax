@@ -1,5 +1,4 @@
 import json
-import re
 from typing import Any
 
 import httpx
@@ -33,6 +32,26 @@ TOOLS_SCHEMA = [
         "action": "browser_click_link_by_index",
         "params": {"index": 1},
         "use": "Abrir o link visivel pelo indice retornado em browser_extract_links ou browser_google_search.",
+    },
+    {
+        "action": "browser_auth_signup",
+        "params": {"signup_url": "https://example.com/signup"},
+        "use": "Criar cadastro somente quando o usuario pedir cadastro/registrar e nao fornecer credenciais. O backend gera usuario/email/senha fortes; nunca use senhas fracas ou emails de terceiros.",
+    },
+    {
+        "action": "browser_auth_login",
+        "params": {"login_url": "https://example.com/login"},
+        "use": "Fazer login somente quando o backend informou autorizacao segura ativa para esta tarefa. Nunca envie usuario/senha nos params.",
+    },
+    {
+        "action": "browser_auth_status",
+        "params": {},
+        "use": "Verificar se existe sessao/autorizacao segura ativa e se a pagina atual esta dentro do escopo autorizado.",
+    },
+    {
+        "action": "browser_auth_logout",
+        "params": {},
+        "use": "Encerrar sessao autorizada e limpar cookies/storage do navegador isolado da tarefa.",
     },
     {
         "action": "browser_get_state",
@@ -141,17 +160,62 @@ async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
         raise DeepSeekError(str(mapped)) from exc
 
 
-def _extract_json_object(text: str) -> dict[str, Any]:
+def _json_error(message: str, text: str, exc: Exception | None = None) -> DeepSeekError:
+    detail = f"{message}. Trecho recebido: {text[:500]}"
+    return DeepSeekError(detail) if exc is None else DeepSeekError(detail)
+
+
+def _extract_balanced_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _parse_json_object(text: str) -> dict[str, Any]:
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            raise DeepSeekError("Planner DeepSeek nao retornou JSON")
-        data = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise _json_error("Planner DeepSeek retornou JSON invalido", text, exc) from exc
     if not isinstance(data, dict):
         raise DeepSeekError("Planner DeepSeek retornou JSON que nao e objeto")
     return data
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        raise DeepSeekError("Planner DeepSeek nao retornou JSON")
+    try:
+        return _parse_json_object(cleaned)
+    except DeepSeekError as direct_error:
+        candidate = _extract_balanced_json_object(cleaned)
+        if not candidate:
+            raise direct_error
+        if candidate == cleaned:
+            raise direct_error
+        return _parse_json_object(candidate)
 
 
 async def request_deepseek_response(description: str) -> dict[str, Any]:
@@ -276,7 +340,12 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "9) SEPARE claramente na resposta o que veio de cada fonte e o que NAO foi encontrado. "
         "NUNCA responda 'nao encontrei' apos apenas uma tentativa — voce deve tentar pelo menos 4-5 consultas diferentes e abrir 2-3 fontes antes de concluir que nao ha informacao suficiente. "
         "Quando houver divergencia entre fontes, marque explicitamente a divergencia e diga qual dado veio de qual URL. "
-        "Nunca tente fazer login em contas Google, contas de sites, paywalls ou paginas de autenticacao; se cair em login, use browser_go_back e escolha outro resultado. "
+        "Por padrao, nunca tente fazer login, pedir senha no chat, digitar senhas com browser_type ou acessar paywalls/paginas de autenticacao. "
+        "Excecao: se o historico/contexto informar que existe autorizacao segura ativa para um dominio, use somente browser_auth_login/browser_auth_status para autenticar e operar apenas dentro do escopo autorizado. "
+        "Nunca inclua usuario, senha, token, OTP ou segredo em params de ferramenta, respostas ou prompts. "
+        "Nunca tente burlar CAPTCHA, 2FA, MFA, OTP, paywall ou desafio de seguranca; se aparecer, pare e informe que precisa de intervencao do usuario. "
+        "Se o usuario pedir cadastro/registrar/criar conta dentro de uma sessao autorizada e nao fornecer credenciais, use browser_auth_signup; o backend gerara credenciais fortes e voce deve devolver essas credenciais ao final. "
+        "Nunca invente emails de terceiros nem use senhas fracas como 12345678. "
         "Evite resultados de accounts.google.com, ServiceLogin, paginas de preferencia/configuracao do Google, anuncios e links sem conteudo informativo. "
         "REGRAS IMPORTANTES PARA CRIACAO DE SOFTWARE: "
         "Se o usuario pedir para criar site, landing page, dashboard, app, sistema, API ou qualquer "

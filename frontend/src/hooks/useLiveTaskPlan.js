@@ -99,45 +99,47 @@ function progressiveSteps(steps, terminal) {
   return steps.slice(0, Math.min(steps.length, lastRevealedIndex + 2));
 }
 
-export function useLiveTaskPlan(initialPlan, events) {
-  return useMemo(() => {
-    const steps = applyLivePlanEvents(initialPlan, events).map((step) => ({
-      ...step,
-      state: stepState(step.status),
-    }));
-    const doneCount = steps.filter((step) => ["passed", "skipped"].includes(step.status)).length;
-    const failedCount = steps.filter((step) => step.status === "failed").length;
-    const runningStep = steps.find((step) => step.status === "running");
-    const pendingStep = steps.find((step) => step.status === "pending");
-    const latestStatus = latestEvent(events, (event) => event.type === "agent_status")?.payload?.status || "";
-    const terminal = ["done", "stopped", "error", "idle"].includes(latestStatus);
-    const meta = latestPlanMeta(events, steps);
-    const currentStep = terminal && steps.length
-      ? steps[steps.length - 1]
-      : runningStep || pendingStep || steps[steps.length - 1] || null;
-    const percent = steps.length ? Math.round((doneCount / steps.length) * 100) : 0;
-    const sourceCount = events.filter((event) => event.type === "source_saved").length;
-    const screenCount = events.filter((event) => event.type === "screen_frame").length;
-    const latestProgress = latestProgressLabel(events);
-    const planKey = steps
-      .map((step) => `${step.id}:${step.status}:${step.updated_at || ""}:${step.evidence?.length || 0}`)
-      .join("|");
+export function buildLiveTaskPlan(initialPlan, events) {
+  const steps = applyLivePlanEvents(initialPlan, events).map((step) => ({
+    ...step,
+    state: stepState(step.status),
+  }));
+  const doneCount = steps.filter((step) => ["passed", "skipped"].includes(step.status)).length;
+  const failedCount = steps.filter((step) => step.status === "failed").length;
+  const runningStep = steps.find((step) => step.status === "running");
+  const pendingStep = steps.find((step) => step.status === "pending");
+  const latestStatus = latestEvent(events, (event) => event.type === "agent_status")?.payload?.status || "";
+  const terminal = ["done", "stopped", "error", "idle"].includes(latestStatus);
+  const meta = latestPlanMeta(events, steps);
+  const currentStep = terminal && steps.length
+    ? steps[steps.length - 1]
+    : runningStep || pendingStep || steps[steps.length - 1] || null;
+  const percent = steps.length ? Math.round((doneCount / steps.length) * 100) : 0;
+  const sourceCount = events.filter((event) => event.type === "source_saved").length;
+  const screenCount = events.filter((event) => event.type === "screen_frame").length;
+  const latestProgress = latestProgressLabel(events);
+  const planKey = steps
+    .map((step) => `${step.id}:${step.status}:${step.updated_at || ""}:${step.evidence?.length || 0}`)
+    .join("|");
 
-    return {
-      currentStep,
-      doneCount,
-      failedCount,
-      hasSteps: steps.length > 0,
-      isDirect: meta.direct,
-      isTerminal: terminal,
-      latestProgress,
-      percent,
-      planKey,
-      screenCount,
-      sourceCount,
-      steps,
-      totalCount: steps.length,
-      visibleSteps: meta.direct ? steps : progressiveSteps(steps, terminal),
-    };
-  }, [initialPlan, events]);
+  return {
+    currentStep,
+    doneCount,
+    failedCount,
+    hasSteps: steps.length > 0,
+    isDirect: meta.direct,
+    isTerminal: terminal,
+    latestProgress,
+    percent,
+    planKey,
+    screenCount,
+    sourceCount,
+    steps,
+    totalCount: steps.length,
+    visibleSteps: meta.direct ? steps : progressiveSteps(steps, terminal),
+  };
+}
+
+export function useLiveTaskPlan(initialPlan, events) {
+  return useMemo(() => buildLiveTaskPlan(initialPlan, events), [initialPlan, events]);
 }

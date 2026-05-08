@@ -127,6 +127,7 @@ export function ScreenView({ events, connectionState }) {
     () => events.filter((event) => event.type === "screen_frame" && event.payload?.image_base64),
     [events],
   );
+  const blockedFrame = [...events].reverse().find((event) => event.type === "screen_frame_blocked");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -200,6 +201,12 @@ export function ScreenView({ events, connectionState }) {
             </button>
             <div className="screen-caption">{caption}</div>
           </>
+        ) : blockedFrame ? (
+          <div className="screen-placeholder sensitive">
+            <Monitor size={34} />
+            <p>{blockedFrame.payload?.caption || "Tela ocultada por conter dados sensíveis."}</p>
+            <small>{blockedFrame.payload?.url}</small>
+          </div>
         ) : (
           <div className="screen-placeholder">
             <Monitor size={34} />

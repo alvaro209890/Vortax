@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import os
 import random
 import re
@@ -7,12 +8,13 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 from playwright.async_api import Browser, Page, Playwright, async_playwright
 
 from config import settings
+from services.credential_store import credential_store, normalize_origin
 from services.process_registry import register_pid, unregister_pid
 from services.source_quality import query_from_google_url, rank_search_results
 
@@ -76,6 +78,39 @@ CAPTCHA_PATTERNS = (
     "request could not be satisfied",
     "access denied",
 )
+
+SECURITY_CHALLENGE_PATTERNS = CAPTCHA_PATTERNS + (
+    "2fa",
+    "mfa",
+    "one-time code",
+    "one time code",
+    "verification code",
+    "codigo de verificacao",
+    "código de verificação",
+    "authenticator",
+    "security key",
+    "chave de seguranca",
+    "chave de segurança",
+    "recovery code",
+    "codigo de recuperacao",
+    "código de recuperação",
+)
+
+SENSITIVE_INPUT_SELECTOR = (
+    "input[type='password'], input[name*='otp' i], input[id*='otp' i], "
+    "input[name*='mfa' i], input[id*='mfa' i], input[name*='2fa' i], input[id*='2fa' i], "
+    "input[autocomplete='one-time-code'], input[name*='card' i], input[id*='card' i], "
+    "input[name*='cvv' i], input[id*='cvv' i]"
+)
+
+
+def _origin_for_url(url: str) -> str:
+    return normalize_origin(url)
+
+
+def _is_local_origin(origin: str) -> bool:
+    parsed = urlparse(origin)
+    return parsed.hostname in {"localhost", "127.0.0.1", "0.0.0.0"}
 
 
 class BrowserTool:
@@ -222,9 +257,259 @@ class BrowserTool:
                 process.wait(timeout=3.0)
         self._chrome_process = None
 
+    async def _ensure_authorized_url(self, task_id: str | None, url: str) -> dict[str, Any] | None:
+        if not task_id or not credential_store.has_authorization(task_id):
+            return None
+        if credential_store.is_url_allowed(task_id, url):
+            return None
+        return {
+            "success": False,
+            "blocked": True,
+            "blocked_reason": "outside_authorized_scope",
+            "error": "Navegacao bloqueada fora do dominio autorizado.",
+            "url": url,
+        }
+
+    async def _page_security_challenge(self, page: Page) -> str | None:
+        try:
+            text = (await page.locator("body").inner_text(timeout=3000)).lower()
+        except Exception:
+            text = ""
+        for pattern in SECURITY_CHALLENGE_PATTERNS:
+            if pattern.lower() in text:
+                return pattern
+        return None
+
+    async def _page_has_sensitive_inputs(self, page: Page) -> bool:
+        try:
+            return await page.locator(SENSITIVE_INPUT_SELECTOR).count() > 0
+        except Exception:
+            return False
+
+    async def safe_to_capture(self, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        if await self._page_has_sensitive_inputs(page):
+            return {"safe": False, "reason": "sensitive_input", "url": page.url, "title": await page.title()}
+        challenge = await self._page_security_challenge(page)
+        if challenge:
+            return {"safe": False, "reason": "security_challenge", "detail": challenge, "url": page.url, "title": await page.title()}
+        return {"safe": True, "url": page.url, "title": await page.title()}
+
+    async def _guard_password_typing(self, page: Page, selector: str | None, task_id: str | None) -> dict[str, Any] | None:
+        if task_id and credential_store.has_authorization(task_id):
+            return None
+        target_is_password = False
+        try:
+            if selector:
+                target_is_password = "password" in selector.lower()
+                if not target_is_password:
+                    target_is_password = await page.locator(selector).first.evaluate(
+                        "el => (el.getAttribute('type') || '').toLowerCase() === 'password'"
+                    )
+            else:
+                target_is_password = await page.evaluate(
+                    "() => document.activeElement && (document.activeElement.getAttribute('type') || '').toLowerCase() === 'password'"
+                )
+        except Exception:
+            target_is_password = False
+        if target_is_password:
+            return {
+                "success": False,
+                "blocked": True,
+                "blocked_reason": "password_field_without_authorization",
+                "error": "Use o fluxo seguro de login para preencher campos de senha.",
+                "url": page.url,
+                "title": await page.title(),
+            }
+        return None
+
+    async def auth_status(self, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        metadata = credential_store.get_metadata(task_id or "")
+        return {
+            "authorized": bool(metadata),
+            "origin": metadata.get("origin") if metadata else None,
+            "allowed_origins": metadata.get("allowed_origins") if metadata else [],
+            "current_url_allowed": credential_store.is_url_allowed(task_id or "", page.url) if metadata else False,
+            "url": page.url,
+            "title": await page.title(),
+            "raw_credentials_available": bool(metadata and metadata.get("password_present")),
+        }
+
+    async def auth_login(
+        self,
+        login_url: str | None = None,
+        username_selector: str | None = None,
+        password_selector: str | None = None,
+        submit_selector: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        credentials = credential_store.consume_for_login(task_id or "")
+        if not credentials:
+            return {"success": False, "blocked": True, "error": "Nenhuma autorizacao segura ativa para esta tarefa."}
+        page = await self._ensure_page()
+        target_url = login_url or credentials.get("login_url")
+        blocked = await self._ensure_authorized_url(task_id, target_url)
+        if blocked:
+            credential_store.revoke_raw_credentials(task_id or "", status="blocked")
+            return blocked
+        try:
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            challenge = await self._page_security_challenge(page)
+            if challenge:
+                credential_store.revoke_raw_credentials(task_id or "", status="security_challenge")
+                return {
+                    "success": False,
+                    "requires_user_intervention": True,
+                    "blocked_reason": "security_challenge",
+                    "error": "Tela de seguranca/CAPTCHA/2FA detectada; intervencao do usuario necessaria.",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            user_selector = username_selector or credentials.get("username_selector") or "input[type='email'], input[name*='email' i], input[name*='user' i], input[id*='email' i], input[id*='user' i], input[type='text']"
+            pass_selector = password_selector or credentials.get("password_selector") or "input[type='password']"
+            await page.locator(user_selector).first.fill(str(credentials.get("username") or ""), timeout=10000)
+            await page.locator(pass_selector).first.fill(str(credentials.get("password") or ""), timeout=10000)
+            if submit_selector or credentials.get("submit_selector"):
+                await page.locator(submit_selector or credentials.get("submit_selector")).first.click(timeout=10000)
+            else:
+                await page.keyboard.press("Enter")
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            await page.wait_for_timeout(1000)
+            blocked = await self._ensure_authorized_url(task_id, page.url)
+            if blocked:
+                credential_store.revoke_raw_credentials(task_id or "", status="blocked")
+                return blocked
+            challenge = await self._page_security_challenge(page)
+            if challenge:
+                credential_store.revoke_raw_credentials(task_id or "", status="security_challenge")
+                return {
+                    "success": False,
+                    "requires_user_intervention": True,
+                    "blocked_reason": "security_challenge",
+                    "error": "Tela de seguranca/CAPTCHA/2FA detectada; intervencao do usuario necessaria.",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            password_fields = await page.locator("input[type='password']").count()
+            success = password_fields == 0 or _origin_for_url(page.url) in set(credentials.get("allowed_origins") or [])
+            credential_store.revoke_raw_credentials(task_id or "", status="login_succeeded" if success else "login_attempted")
+            return {
+                "success": bool(success),
+                "url": page.url,
+                "title": await page.title(),
+                "origin": _origin_for_url(page.url),
+                "status": "authenticated" if success else "submitted",
+                "requires_user_intervention": not success,
+            }
+        except Exception as exc:
+            credential_store.revoke_raw_credentials(task_id or "", status="login_failed")
+            return {"success": False, "error": f"Falha no login autorizado: {type(exc).__name__}", "url": page.url, "title": await page.title()}
+
+    async def auth_signup(
+        self,
+        signup_url: str | None = None,
+        username_selector: str | None = None,
+        email_selector: str | None = None,
+        password_selector: str | None = None,
+        submit_selector: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        credentials = credential_store.create_signup_credentials(task_id or "", signup_url=signup_url)
+        if not credentials:
+            return {"success": False, "blocked": True, "error": "Nenhuma autorizacao segura ativa para cadastro nesta tarefa."}
+        page = await self._ensure_page()
+        target_url = signup_url or credentials.get("signup_url")
+        blocked = await self._ensure_authorized_url(task_id, target_url)
+        if blocked:
+            credential_store.mark_signup_used(task_id or "", status="blocked")
+            return blocked
+        try:
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            challenge = await self._page_security_challenge(page)
+            if challenge:
+                credential_store.mark_signup_used(task_id or "", status="security_challenge")
+                return {
+                    "success": False,
+                    "requires_user_intervention": True,
+                    "blocked_reason": "security_challenge",
+                    "error": "Tela de seguranca/CAPTCHA/verificacao detectada; intervencao do usuario necessaria.",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            user_selector = username_selector or "input[name*='user' i], input[id*='user' i], input[name*='login' i], input[id*='login' i]"
+            mail_selector = email_selector or "input[type='email'], input[name*='email' i], input[id*='email' i]"
+            pass_selector = password_selector or "input[type='password']"
+            with contextlib.suppress(Exception):
+                if await page.locator(mail_selector).count() > 0:
+                    await page.locator(mail_selector).first.fill(credentials["email"], timeout=6000)
+            with contextlib.suppress(Exception):
+                if await page.locator(user_selector).count() > 0:
+                    await page.locator(user_selector).first.fill(credentials["username"], timeout=6000)
+            password_fields = page.locator(pass_selector)
+            count = await password_fields.count()
+            if count == 0:
+                credential_store.mark_signup_used(task_id or "", status="missing_password_field")
+                return {"success": False, "error": "Campo de senha nao encontrado no cadastro.", "url": page.url, "title": await page.title()}
+            for index in range(min(count, 2)):
+                await password_fields.nth(index).fill(credentials["password"], timeout=6000)
+            if submit_selector:
+                await page.locator(submit_selector).first.click(timeout=10000)
+            else:
+                await page.keyboard.press("Enter")
+            with contextlib.suppress(Exception):
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+            await page.wait_for_timeout(1000)
+            blocked = await self._ensure_authorized_url(task_id, page.url)
+            if blocked:
+                credential_store.mark_signup_used(task_id or "", status="blocked")
+                return blocked
+            challenge = await self._page_security_challenge(page)
+            if challenge:
+                credential_store.mark_signup_used(task_id or "", status="requires_verification")
+                return {
+                    "success": False,
+                    "requires_user_intervention": True,
+                    "blocked_reason": "verification_required",
+                    "error": "Cadastro enviado, mas o site exige verificacao manual.",
+                    "url": page.url,
+                    "title": await page.title(),
+                }
+            credential_store.mark_signup_used(task_id or "", status="signup_submitted")
+            return {
+                "success": True,
+                "url": page.url,
+                "title": await page.title(),
+                "origin": _origin_for_url(page.url),
+                "status": "signup_submitted",
+                "created_credentials": {"username": credentials["username"], "email": credentials["email"], "password": credentials["password"]},
+            }
+        except Exception as exc:
+            credential_store.mark_signup_used(task_id or "", status="signup_failed")
+            return {"success": False, "error": f"Falha no cadastro autorizado: {type(exc).__name__}", "url": page.url, "title": await page.title()}
+
+    async def auth_logout(self, task_id: str | None = None) -> dict[str, Any]:
+        page = await self._ensure_page()
+        metadata = credential_store.get_metadata(task_id or "")
+        if metadata:
+            for origin in metadata.get("allowed_origins") or []:
+                if credential_store.is_url_allowed(task_id or "", origin):
+                    with contextlib.suppress(Exception):
+                        await page.context.clear_cookies()
+            credential_store.revoke_task(task_id or "")
+        return {"success": True, "url": page.url, "title": await page.title()}
+
+
     async def navigate(self, url: str, task_id: str | None = None) -> dict[str, Any]:
+        blocked_scope = await self._ensure_authorized_url(task_id, url)
+        if blocked_scope:
+            return blocked_scope
         page = await self._ensure_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        blocked_scope = await self._ensure_authorized_url(task_id, page.url)
+        if blocked_scope:
+            return blocked_scope
         blocked = await self._blocked_page_reason(page)
         if blocked:
             return {
@@ -245,11 +530,17 @@ class BrowserTool:
     async def click_text(self, text: str, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
         await page.get_by_text(text, exact=False).first.click(timeout=10000)
+        blocked_scope = await self._ensure_authorized_url(task_id, page.url)
+        if blocked_scope:
+            return blocked_scope
         return {"clicked_text": text, "url": page.url, "title": await page.title()}
 
     async def click_selector(self, selector: str, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
         await page.locator(selector).first.click(timeout=10000)
+        blocked_scope = await self._ensure_authorized_url(task_id, page.url)
+        if blocked_scope:
+            return blocked_scope
         return {"clicked_selector": selector, "url": page.url, "title": await page.title()}
 
     async def click_link_by_index(self, index: int = 1, task_id: str | None = None) -> dict[str, Any]:
@@ -265,7 +556,13 @@ class BrowserTool:
         link = links[position]
         if self._is_blocked_google_url(link["href"]):
             raise BrowserToolError("Link ignorado por apontar para login/conta do Google")
+        blocked_scope = await self._ensure_authorized_url(task_id, link["href"])
+        if blocked_scope:
+            return blocked_scope
         await page.goto(link["href"], wait_until="domcontentloaded", timeout=30000)
+        blocked_scope = await self._ensure_authorized_url(task_id, page.url)
+        if blocked_scope:
+            return blocked_scope
         blocked = await self._blocked_page_reason(page)
         if blocked:
             return {
@@ -281,6 +578,9 @@ class BrowserTool:
 
     async def type_text(self, text: str, selector: str | None = None, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        blocked = await self._guard_password_typing(page, selector, task_id)
+        if blocked:
+            return blocked
         if selector:
             await page.locator(selector).first.fill(text, timeout=10000)
         else:
@@ -553,6 +853,15 @@ class BrowserTool:
 
     async def screenshot(self, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        safe = await self.safe_to_capture(task_id)
+        if not safe.get("safe"):
+            return {
+                "blocked": True,
+                "blocked_reason": safe.get("reason"),
+                "error": "Tela ocultada por conter dados sensiveis.",
+                "url": safe.get("url"),
+                "title": safe.get("title"),
+            }
         blocked = await self._blocked_page_reason(page)
         if blocked:
             raise BrowserToolError(blocked)

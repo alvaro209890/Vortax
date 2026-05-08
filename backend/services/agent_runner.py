@@ -8,6 +8,7 @@ from pathlib import Path
 from config import settings
 from database import database
 from services.context_manager import prepare_context_history
+from services.credential_store import credential_store
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_deepseek_action, request_direct_chat_response
 from services.document_artifacts import (
     artifact_profile as document_artifact_profile,
@@ -729,46 +730,6 @@ def _has_requested_document_artifact(task_id: str, profile: dict[str, Any]) -> b
     return bool(profile.get("wants_pdf") or profile.get("wants_markdown"))
 
 
-def _has_deliverable_files(task_id: str) -> bool:
-    return any(
-        not str(file.get("path") or "").startswith("versions/") and int(file.get("size_bytes") or 0) > 0
-        for file in database.list_generated_files(task_id)
-    )
-
-
-def _fallback_result_for_generated_files(task_id: str) -> str:
-    files = [
-        file
-        for file in database.list_generated_files(task_id)
-        if not str(file.get("path") or "").startswith("versions/") and int(file.get("size_bytes") or 0) > 0
-    ]
-    if not files:
-        return "Pronto. A entrega foi gerada pelo Vortax."
-    names = ", ".join(Path(str(file.get("path") or "arquivo")).name for file in files[:3])
-    return f"Pronto. Gerei o arquivo solicitado ({names}) e anexei no chat para leitura ou download."
-
-
-async def _finish_generated_files_after_model_error(
-    task_id: str,
-    description: str,
-    error: Exception,
-    store: TaskStore,
-    bus: EventBus,
-) -> bool:
-    if not _has_deliverable_files(task_id):
-        return False
-    await bus.publish(
-        task_id,
-        "agent_progress",
-        {
-            "label": "Finalizando entrega",
-            "detail": "O modelo retornou JSON invalido apos gerar o arquivo; entregando os arquivos ja criados.",
-        },
-    )
-    await _finish_text_response(task_id, description, _fallback_result_for_generated_files(task_id), store, bus)
-    return True
-
-
 def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -> str:
     filename = str(profile.get("preferred_filename") or "RELATORIO_TECNICO.md")
     return (
@@ -938,6 +899,17 @@ async def _finish_text_response(
     store: TaskStore,
     bus: EventBus,
 ) -> None:
+    signup = credential_store.signup_summary(task_id)
+    if signup:
+        result = (
+            f"{result}\n\n"
+            "Credenciais criadas para o cadastro autorizado:\n"
+            f"- Origem: {signup.get('origin')}\n"
+            f"- Usuário: {signup.get('username')}\n"
+            f"- E-mail: {signup.get('email')}\n"
+            f"- Senha: {signup.get('password')}\n"
+            f"- Status: {signup.get('status')}"
+        )
     await _complete_supported_steps_before_delivery(task_id, bus, description, result)
     await _start_plan_step(task_id, "deliver", bus)
     payload = _generated_file_response_payload(task_id, result, bus.history(task_id))
@@ -1374,6 +1346,22 @@ async def _inject_people_research_if_needed(
     return [{"role": "system", "content": people_instruction}, *research_history]
 
 
+def _history_with_authorized_session(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    metadata = credential_store.get_metadata(task_id)
+    if not metadata:
+        return history
+    instruction = (
+        "AUTORIZACAO SEGURA ATIVA: o usuario autorizou login no dominio "
+        f"{metadata.get('origin')} para esta tarefa. Use browser_auth_login para autenticar; "
+        "nunca peça, mostre ou inclua usuario/senha/tokens em mensagens ou parametros. "
+        "Opere somente dentro destes dominios autorizados: "
+        f"{', '.join(metadata.get('allowed_origins') or [])}. "
+        "Se browser_auth_signup for usado, o backend gerara credenciais de cadastro fortes; inclua essas credenciais no resumo final para o usuario. "
+        "Se surgir CAPTCHA, 2FA, OTP, paywall ou desafio de seguranca, pare e informe que precisa de intervencao do usuario."
+    )
+    return [{"role": "system", "content": instruction}, *history]
+
+
 async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
     await _ensure_plan(task_id, description, bus)
     if not deepseek_configured():
@@ -1449,7 +1437,7 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
                 return
 
             await bus.publish(task_id, "agent_progress", {"label": "Planejando proximo passo", "step": iteration + 1})
-            action = await request_deepseek_action(_history_with_research_context(task_id, history))
+            action = await request_deepseek_action(_history_with_authorized_session(task_id, _history_with_research_context(task_id, history)))
             history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
 
             action_name = str(action.get("action", "")).strip()
@@ -1684,16 +1672,12 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
         await bus.publish(task_id, "agent_status", {"status": "stopped", "label": "Interrompido"})
         return
     except DeepSeekError as exc:
-        if await _finish_generated_files_after_model_error(task_id, description, exc, store, bus):
-            return
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
         await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
     except Exception as exc:
-        if isinstance(exc, json.JSONDecodeError) and await _finish_generated_files_after_model_error(task_id, description, exc, store, bus):
-            return
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})
         await _fail_running_plan_step(task_id, bus, str(exc))

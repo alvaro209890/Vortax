@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import settings
+from services.credential_store import credential_store
 from tools.browser import BrowserTool
 
 
@@ -139,6 +140,7 @@ class BrowserPool:
         finally:
             if profile_dir is not None:
                 await self._remove_path(profile_dir)
+            credential_store.revoke_task(key)
             async with self._lock:
                 if port is not None and port not in self._available_ports:
                     self._available_ports.append(port)

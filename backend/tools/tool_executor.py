@@ -74,6 +74,10 @@ _BROWSER_METHOD_MAP: dict[str, str] = {
     "browser_extract_links": "extract_links",
     "browser_screenshot": "screenshot",
     "browser_scroll": "scroll",
+    "browser_auth_signup": "auth_signup",
+    "browser_auth_login": "auth_login",
+    "browser_auth_status": "auth_status",
+    "browser_auth_logout": "auth_logout",
 }
 
 TOOLS: dict[str, ToolCallable] = {
@@ -190,6 +194,18 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
         except BrowserPoolError:
             return
         frame = await bt.screenshot(task_id=task_id)
+        if frame.get("blocked") and frame.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
+            await bus.publish(
+                task_id,
+                "screen_frame_blocked",
+                {
+                    "caption": "Tela ocultada por conter dados sensiveis.",
+                    "title": frame.get("title"),
+                    "url": frame.get("url"),
+                    "reason": frame.get("blocked_reason"),
+                },
+            )
+            return
         await bus.publish(
             task_id,
             "screen_frame",
@@ -505,6 +521,13 @@ async def _open_static_preview_if_available(task_id: str, files: list[dict[str, 
         await bus.publish(task_id, "error", {"message": f"Preview automatico falhou: {type(exc).__name__}: {exc}"})
 
 
+def _safe_tool_params(tool_name: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    safe_params = sanitize_payload(params or {})
+    if tool_name in {"browser_type", "browser_auth_signup"} and "text" in safe_params:
+        safe_params["text"] = f"[REDACTED {len(str((params or {}).get('text') or ''))} chars]"
+    return safe_params
+
+
 async def execute_tool(
     tool_name: str,
     params: dict[str, Any] | None,
@@ -513,7 +536,7 @@ async def execute_tool(
     bus: EventBus,
     description: str = "",
 ) -> dict[str, Any]:
-    safe_params = sanitize_payload(params or {})
+    safe_params = _safe_tool_params(tool_name, params)
     await bus.publish(
         task_id,
         "tool_call",
@@ -730,16 +753,28 @@ async def execute_tool(
         await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
 
         if tool_name == "browser_screenshot":
-            await bus.publish(
-                task_id,
-                "screen_frame",
-                {
-                    "caption": result.get("title") or result.get("url") or "Tela do Chrome",
-                    "title": result.get("title"),
-                    "url": result.get("url"),
-                    "image_base64": result.get("image_base64"),
-                },
-            )
+            if result.get("blocked") and result.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
+                await bus.publish(
+                    task_id,
+                    "screen_frame_blocked",
+                    {
+                        "caption": "Tela ocultada por conter dados sensiveis.",
+                        "title": result.get("title"),
+                        "url": result.get("url"),
+                        "reason": result.get("blocked_reason"),
+                    },
+                )
+            else:
+                await bus.publish(
+                    task_id,
+                    "screen_frame",
+                    {
+                        "caption": result.get("title") or result.get("url") or "Tela do Chrome",
+                        "title": result.get("title"),
+                        "url": result.get("url"),
+                        "image_base64": result.get("image_base64"),
+                    },
+                )
         elif not result_blocked:
             await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
         if result_blocked:

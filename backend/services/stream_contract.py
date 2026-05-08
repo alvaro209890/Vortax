@@ -22,6 +22,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "tool_call",
         "tool_result",
         "screen_frame",
+        "screen_frame_blocked",
         "source_saved",
         "confirmation_request",
         "confirmation_result",

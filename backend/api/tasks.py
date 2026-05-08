@@ -2,18 +2,20 @@ import asyncio
 import base64
 import contextlib
 import io
+import re
 import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
 from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
+from services.credential_store import CredentialStoreError, credential_store, normalize_origin
 from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response, request_task_plan
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_plan_store, task_store
@@ -33,13 +35,66 @@ class TaskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
 
+class AuthorizedTaskCreate(BaseModel):
+    description: str = Field(min_length=1, max_length=4000)
+    url: str = Field(min_length=1, max_length=2000)
+    username: SecretStr = Field(min_length=1, max_length=500)
+    password: SecretStr = Field(min_length=1, max_length=2000)
+    allowed_origins: list[str] = Field(default_factory=list, max_length=8)
+    username_selector: str | None = Field(default=None, max_length=300)
+    password_selector: str | None = Field(default=None, max_length=300)
+    submit_selector: str | None = Field(default=None, max_length=300)
+
+
+class TaskAuthorizationCreate(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    username: SecretStr = Field(min_length=1, max_length=500)
+    password: SecretStr = Field(min_length=1, max_length=2000)
+    allowed_origins: list[str] = Field(default_factory=list, max_length=8)
+    username_selector: str | None = Field(default=None, max_length=300)
+    password_selector: str | None = Field(default=None, max_length=300)
+    submit_selector: str | None = Field(default=None, max_length=300)
+
+
 class TaskPlanRequest(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
+INLINE_CREDENTIAL_RE = re.compile(
+    r"\b(password|passwd|pwd|senha|token|secret|otp|mfa|2fa)\s*[:=]",
+    re.IGNORECASE,
+)
 
+
+def _reject_inline_credentials(text: str) -> None:
+    if INLINE_CREDENTIAL_RE.search(str(text or "")):
+        raise HTTPException(
+            status_code=400,
+            detail="Use o fluxo seguro de login para enviar credenciais; nao envie senhas no chat.",
+        )
+
+
+def _safe_authorized_description(description: str, origin: str) -> str:
+    return f"Automacao autorizada para {origin}. Credenciais enviadas por fluxo seguro. Pedido: {description.strip()}"
+
+
+def _store_authorization(task_id: str, user_id: str, payload: AuthorizedTaskCreate | TaskAuthorizationCreate) -> dict:
+    try:
+        return credential_store.create_authorization(
+            task_id=task_id,
+            user_id=user_id,
+            login_url=payload.url,
+            username=payload.username.get_secret_value(),
+            password=payload.password.get_secret_value(),
+            allowed_origins=payload.allowed_origins,
+            username_selector=payload.username_selector,
+            password_selector=payload.password_selector,
+            submit_selector=payload.submit_selector,
+        )
+    except CredentialStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 async def _create_live_plan(task_id: str, description: str, *, replan: bool = False) -> list[dict]:
     if should_answer_directly(description):
@@ -277,6 +332,7 @@ def _format_vision_answer(analysis: dict) -> str:
 
 @router.post("/")
 async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(require_auth)) -> dict:
+    _reject_inline_credentials(payload.description)
     task = task_store.create(payload.description, current_user.uid)
     await event_bus.publish(task["id"], "task_created", {"task": task})
     steps = await _create_live_plan(task["id"], task["description"])
@@ -285,6 +341,51 @@ async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(requ
         run_agent_task(task["id"], task["description"], task_store, event_bus)
     )
     return {"task_id": task["id"], "task": task, "plan": {"steps": steps}}
+
+
+@router.post("/authorized")
+async def create_authorized_task(payload: AuthorizedTaskCreate, current_user: AuthUser = Depends(require_auth)) -> dict:
+    origin = normalize_origin(payload.url)
+    safe_description = _safe_authorized_description(payload.description, origin)
+    task = task_store.create(safe_description, current_user.uid)
+    auth_metadata = _store_authorization(task["id"], current_user.uid, payload)
+    await event_bus.publish(task["id"], "task_created", {"task": task})
+    await event_bus.publish(
+        task["id"],
+        "agent_progress",
+        {
+            "label": "Login seguro autorizado",
+            "detail": f"Credenciais recebidas por fluxo seguro para {origin}.",
+            "origin": origin,
+        },
+    )
+    steps = await _create_live_plan(task["id"], task["description"])
+    await event_bus.publish(task["id"], "user_message", {"content": safe_description})
+    runner_tasks[task["id"]] = asyncio.create_task(
+        run_agent_task(task["id"], task["description"], task_store, event_bus)
+    )
+    return {"task_id": task["id"], "task": task, "authorization": auth_metadata, "plan": {"steps": steps}}
+
+
+@router.post("/{task_id}/authorization")
+async def authorize_task(
+    task_id: str,
+    payload: TaskAuthorizationCreate,
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
+    origin = normalize_origin(payload.url)
+    auth_metadata = _store_authorization(task_id, current_user.uid, payload)
+    await event_bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Login seguro autorizado",
+            "detail": f"Credenciais recebidas por fluxo seguro para {origin}.",
+            "origin": origin,
+        },
+    )
+    return {"ok": True, "authorization": auth_metadata}
 
 
 @router.post("/plan")
@@ -313,6 +414,7 @@ async def create_task_message(
         raise HTTPException(status_code=409, detail="A tarefa ainda esta em execucao")
 
     content = payload.content.strip()
+    _reject_inline_credentials(content)
     await event_bus.publish(task_id, "user_message", {"content": content})
     await _create_live_plan(task_id, content, replan=True)
     task_store.update_status(task_id, "queued")
@@ -445,6 +547,7 @@ async def delete_task(task_id: str, current_user: AuthUser = Depends(require_aut
     from tools.browser_pool import browser_pool
 
     await browser_pool.release(task_id)
+    credential_store.revoke_task(task_id)
 
     await event_bus.close_task_connections(task_id)
     deleted = task_store.delete(task_id)
