@@ -2,6 +2,7 @@ import ast
 import math
 import operator
 import re
+import unicodedata
 from fractions import Fraction
 from typing import Any
 
@@ -52,6 +53,26 @@ SIMPLE_DIRECT_RE = re.compile(
 )
 
 ARITHMETIC_SIGNAL_RE = re.compile(r"(\d\s*[-+*/^×÷]\s*\d|\d\s*x\s*\d|=\s*[-+]?\d|[-+]?\d\s*%)", re.IGNORECASE)
+
+CONVERSATIONAL_DIRECT_RE = re.compile(
+    r"\b("
+    r"oi|ola|e ai|opa|salve|bom dia|boa tarde|boa noite|tudo bem|td bem|"
+    r"obrigado|obrigada|valeu|beleza|ok|okay|sim|nao|não|teste|"
+    r"qual (?:e |é |eh )?(?:o )?seu nome|qual (?:e |é |eh )?(?:o )?teu nome|"
+    r"como (?:voce|você|vc|tu) (?:se )?chama|quem (?:e|é|eh) (?:voce|você|vc|tu)|"
+    r"o que (?:voce|você|vc) faz|quem (?:e|é|eh) o vortax|"
+    r"voce (?:pode|consegue) me ajudar|você (?:pode|consegue) me ajudar"
+    r")\b",
+    re.IGNORECASE,
+)
+
+SHORT_QUESTION_START_RE = re.compile(
+    r"^(?:"
+    r"qual|quais|quem|o que|oque|como|por que|porque|"
+    r"me diga|me fala|me explique|explique|defina|resuma"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _BIN_OPS = {
     ast.Add: operator.add,
@@ -108,6 +129,25 @@ def is_exact_prompt(text: str) -> bool:
     return bool(EXACT_RE.search(value) or ARITHMETIC_SIGNAL_RE.search(value))
 
 
+def _plain_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", ascii_text).strip().lower()
+
+
+def is_simple_conversational_prompt(text: str) -> bool:
+    value = (text or "").strip()
+    if not value:
+        return False
+    plain = _plain_text(value)
+    word_count = len(re.findall(r"\w+", plain))
+    if word_count <= 4 and CONVERSATIONAL_DIRECT_RE.search(plain):
+        return True
+    if word_count <= 14 and SHORT_QUESTION_START_RE.search(plain):
+        return True
+    return False
+
+
 def should_answer_directly(text: str) -> bool:
     value = (text or "").strip()
     if not value or is_code_creation_request(value) or is_current_or_research_request(value):
@@ -116,6 +156,8 @@ def should_answer_directly(text: str) -> bool:
         return True
     if len(value) > 260 or ACTION_RE.search(value):
         return False
+    if is_simple_conversational_prompt(value):
+        return True
     if SIMPLE_DIRECT_RE.search(value):
         return True
     return bool(re.search(r"\?$", value))

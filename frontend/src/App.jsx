@@ -10,7 +10,6 @@ import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
 import { FileList } from "./components/FileList.jsx";
-import { InlineTaskTimeline } from "./components/InlineTaskTimeline.jsx";
 import { MessageList } from "./components/MessageList.jsx";
 import { SecureCredentialsDialog } from "./components/SecureCredentialsDialog.jsx";
 import { SourceList } from "./components/SourceList.jsx";
@@ -68,10 +67,11 @@ function buildMessages(task, events, responseReady = true) {
   };
 
   const messages = events
-    .filter((event, index) => assistantOk(event, index))
-    .map((event, index) => ({
-      id: `${event.type}-${event.created_at}-${index}`,
-      eventIndex: index,
+    .map((event, eventIndex) => ({ event, eventIndex }))
+    .filter(({ event, eventIndex }) => assistantOk(event, eventIndex))
+    .map(({ event, eventIndex }) => ({
+      id: `${event.type}-${event.created_at}-${eventIndex}`,
+      eventIndex,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
       downloads: event.payload.downloads || [],
@@ -201,8 +201,7 @@ const emptyDisplayPlan = {
 
 function likelyTaskPrompt(prompt = "") {
   const value = String(prompt || "").trim().toLowerCase();
-  if (value.length >= 28) return true;
-  return /(pesquis|busc|procure|not[ií]cia|crie|criar|gere|gerar|desenvolva|implemente|fa[cç]a|calcule|analise|compare|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf)/i.test(value);
+  return /(pesquis|busc|procure|not[ií]cia|crie|criar|gere|gerar|desenvolva|implemente|fa[cç]a|calcule|analise|compare|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|publique|execute|rode|instale)/i.test(value);
 }
 
 function buildPendingPlan(prompt = "") {
@@ -695,12 +694,6 @@ export default function App() {
             </header>
             <MessageList
               activeSearch={activeSearch}
-              activity={displayPlan.hasSteps && !displayPlan.isDirect ? (
-                <InlineTaskTimeline
-                  livePlan={displayPlan}
-                  showEmpty={false}
-                />
-              ) : null}
               planSegments={planSegments}
               isTyping={showTyping}
               messages={messages}

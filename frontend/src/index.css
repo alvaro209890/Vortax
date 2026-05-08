@@ -4157,7 +4157,6 @@ small {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.035);
   color: var(--text-secondary);
-  animation: planStepIn 0.22s ease both;
 }
 
 .inline-task-timeline.direct.done {
@@ -4221,7 +4220,6 @@ small {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.028);
   box-shadow: none;
-  animation: planStepIn 0.16s ease both;
 }
 
 .inline-generating-node {
@@ -4304,18 +4302,6 @@ small {
 .inline-plan-step {
   position: relative;
   min-width: 0;
-  animation: planStepIn 0.24s ease both;
-}
-
-@keyframes planStepIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .inline-step-node {

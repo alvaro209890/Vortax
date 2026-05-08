@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, Check, Copy, Download, ExternalLink, FileText, Globe2, Sparkles, User, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
+import { InlineTaskTimeline } from "./InlineTaskTimeline.jsx";
 import { fileDownloadUrl } from "../lib/api.js";
 
 /* ── Code Block with Copy Button ─────────────────────────────────── */
@@ -346,7 +347,6 @@ function MessageArticle({ message, onOpenDocument }) {
       className={`message ${message.role}`}
       key={message.id}
       variants={fadeInUp}
-      layout
     >
       <div className="message-avatar">
         {message.role === "user" ? <User size={18} /> : <Sparkles size={18} />}
@@ -430,6 +430,114 @@ function SearchActivityArticle({ activeSearch }) {
   );
 }
 
+function visiblePlanSegments(planSegments = []) {
+  return planSegments
+    .filter((segment) => segment?.plan?.hasSteps && !segment.plan.isDirect)
+    .sort((a, b) => (a.anchorEventIndex || 0) - (b.anchorEventIndex || 0));
+}
+
+function TaskPlanArticle({ segment }) {
+  if (!segment?.plan?.hasSteps || segment.plan.isDirect) return null;
+  return (
+    <article className="message assistant progress-message">
+      <div className="message-avatar">
+        <Sparkles size={18} />
+      </div>
+      <div className="message-content">
+        <div className="message-role">Vortax trabalhando</div>
+        <InlineTaskTimeline livePlan={segment.plan} showEmpty={false} />
+      </div>
+    </article>
+  );
+}
+
+function numericIndex(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function nextUserEventIndex(messages, currentMessageIndex) {
+  for (let index = currentMessageIndex + 1; index < messages.length; index += 1) {
+    if (messages[index].role === "user") {
+      return numericIndex(messages[index].eventIndex);
+    }
+  }
+  return null;
+}
+
+function latestUserMessageId(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") return messages[index].id;
+  }
+  return "";
+}
+
+function buildTimelineItems(messages, planSegments, activeSearch) {
+  const segments = visiblePlanSegments(planSegments);
+  const segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
+  const renderedSegments = new Set();
+  const items = [];
+  const latestUserId = latestUserMessageId(messages);
+  let searchRendered = false;
+
+  const pushPlanSegment = (segment) => {
+    if (!segment || renderedSegments.has(segment.id)) return;
+    renderedSegments.add(segment.id);
+    items.push({
+      key: `plan-${segment.id}`,
+      segment,
+      type: "plan",
+    });
+  };
+
+  messages.forEach((message, messageIndex) => {
+    if (message.role === "assistant" && message.planSegmentId) {
+      pushPlanSegment(segmentsById.get(message.planSegmentId));
+    }
+
+    items.push({
+      key: `message-${message.id}`,
+      message,
+      type: "message",
+    });
+
+    if (message.role !== "user") return;
+
+    const currentEventIndex = numericIndex(message.eventIndex);
+    const nextUserIndex = nextUserEventIndex(messages, messageIndex);
+    if (currentEventIndex !== null) {
+      segments.forEach((segment) => {
+        if (renderedSegments.has(segment.id)) return;
+        const anchorIndex = numericIndex(segment.anchorEventIndex);
+        if (anchorIndex === null) return;
+        if (anchorIndex < currentEventIndex) return;
+        if (nextUserIndex !== null && anchorIndex >= nextUserIndex) return;
+        pushPlanSegment(segment);
+      });
+    }
+
+    if (activeSearch && message.id === latestUserId) {
+      searchRendered = true;
+      items.push({
+        activeSearch,
+        key: `search-${activeSearch.query}`,
+        type: "search",
+      });
+    }
+  });
+
+  segments.forEach(pushPlanSegment);
+
+  if (activeSearch && !searchRendered) {
+    items.push({
+      activeSearch,
+      key: `search-${activeSearch.query}`,
+      type: "search",
+    });
+  }
+
+  return items;
+}
+
 /* ── Downloads ───────────────────────────────────────────────────── */
 
 function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId }) {
@@ -457,19 +565,21 @@ function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId })
 
 /* ── Message List ────────────────────────────────────────────────── */
 
-export function MessageList({ activity, activityVersion, isTyping = false, messages, activeSearch }) {
+export function MessageList({ activeSearch, isTyping = false, messages, planSegments = [] }) {
   const endRef = useRef(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
-  const lastUserIndex = messages.reduce(
-    (latest, message, index) => (message.role === "user" ? index : latest),
-    -1,
+  const timelineItems = useMemo(
+    () => buildTimelineItems(messages, planSegments, activeSearch),
+    [activeSearch, messages, planSegments],
   );
-  const beforeActivity = lastUserIndex >= 0 ? messages.slice(0, lastUserIndex + 1) : messages;
-  const afterActivity = lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : [];
+  const scrollKey = useMemo(
+    () => timelineItems.map((item) => item.key).join("|"),
+    [timelineItems],
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isTyping, activityVersion]);
+  }, [isTyping, scrollKey]);
 
   return (
     <motion.div
@@ -479,25 +589,22 @@ export function MessageList({ activity, activityVersion, isTyping = false, messa
       animate="visible"
     >
       <div className="message-list-inner">
-        <AnimatePresence mode="popLayout">
-          {beforeActivity.map((message) => (
-            <MessageArticle key={message.id} message={message} onOpenDocument={setSelectedDocument} />
-          ))}
-        </AnimatePresence>
-        <AnimatePresence mode="popLayout">
-          {activity ? (
-            <ActivityArticle key={`activity-${activityVersion || "current"}`}>
-              {activity}
-            </ActivityArticle>
-          ) : null}
-          {activeSearch ? (
-            <SearchActivityArticle activeSearch={activeSearch} key={`search-${activeSearch.query}`} />
-          ) : null}
-        </AnimatePresence>
-        <AnimatePresence mode="popLayout">
-          {afterActivity.map((message) => (
-            <MessageArticle key={message.id} message={message} onOpenDocument={setSelectedDocument} />
-          ))}
+        <AnimatePresence initial={false}>
+          {timelineItems.map((item) => {
+            if (item.type === "plan") {
+              return <TaskPlanArticle key={item.key} segment={item.segment} />;
+            }
+            if (item.type === "search") {
+              return <SearchActivityArticle activeSearch={item.activeSearch} key={item.key} />;
+            }
+            return (
+              <MessageArticle
+                key={item.key}
+                message={item.message}
+                onOpenDocument={setSelectedDocument}
+              />
+            );
+          })}
         </AnimatePresence>
         {isTyping && (
           <motion.article
