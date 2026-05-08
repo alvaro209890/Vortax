@@ -16,7 +16,13 @@ from database import database
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
 from services.credential_store import CredentialStoreError, credential_store, normalize_origin
-from services.deepseek_client import DeepSeekError, deepseek_configured, request_direct_chat_response, request_task_plan
+from services.deepseek_client import (
+    DeepSeekError,
+    deepseek_configured,
+    request_direct_chat_response,
+    request_task_plan,
+    task_planner_configured,
+)
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.registry import event_bus, runner_tasks, task_plan_store, task_store
 from services.stream_contract import utc_now
@@ -105,15 +111,24 @@ async def _create_live_plan(task_id: str, description: str, *, replan: bool = Fa
 
     raw_steps: list[dict] = []
     plan_error = ""
-    if deepseek_configured():
+    plan_result: dict = {}
+    if task_planner_configured():
         try:
-            raw_steps = (await request_task_plan(description)).get("plan", [])
+            plan_result = await request_task_plan(description)
+            raw_steps = plan_result.get("plan", [])
         except DeepSeekError as exc:
             plan_error = str(exc)
 
     steps = task_plan_store.replace_plan(task_id, raw_steps, description)
     event_type = "task_plan_replanned" if replan else "task_plan_created"
     payload = {"steps": steps, "fallback": not bool(raw_steps)}
+    if plan_result.get("planner_provider"):
+        payload["planner"] = {
+            "provider": plan_result.get("planner_provider"),
+            "model": plan_result.get("planner_model"),
+        }
+    if plan_result.get("planner_warning"):
+        payload["warning"] = plan_result["planner_warning"]
     if plan_error:
         payload["warning"] = plan_error
     await event_bus.publish(task_id, event_type, payload)

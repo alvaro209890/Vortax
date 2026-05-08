@@ -50,6 +50,8 @@ async def health() -> dict:
         "lan_only": settings.LAN_ONLY,
         "model": settings.DEEPSEEK_MODEL,
         "deepseek_configured": bool(settings.DEEPSEEK_API_KEY.strip()),
+        "task_planner_provider": "groq" if settings.GROQ_API_KEY.strip() else "deepseek" if settings.DEEPSEEK_API_KEY.strip() else "fallback",
+        "task_planner_model": settings.GROQ_TASK_PLANNER_MODEL if settings.GROQ_API_KEY.strip() else settings.DEEPSEEK_MODEL,
         "vision_provider": settings.VISION_PROVIDER,
         "vision_model": settings.GROQ_VISION_MODEL,
         "vision_configured": settings.ENABLE_VISION_TESTS and bool(settings.GROQ_API_KEY.strip()),

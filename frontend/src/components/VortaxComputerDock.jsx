@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  ChevronDown,
   Check,
   Circle,
   Code2,
@@ -8,14 +9,9 @@ import {
   FolderTree,
   Globe2,
   Loader2,
-  Maximize2,
   Monitor,
   PanelRightOpen,
-  Play,
   Search,
-  SkipBack,
-  SkipForward,
-  X,
   XCircle,
 } from "lucide-react";
 
@@ -519,20 +515,28 @@ function buildCodeAgentProgress(events, agentStatus) {
 
 export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
-  const [livePlayback, setLivePlayback] = useState(true);
-  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
   const now = useNow(busy);
-  const frameHistory = useMemo(() => screenFrameHistory(events), [events]);
-  const latestFrameIndex = Math.max(0, frameHistory.length - 1);
-  const selectedFrame = frameHistory[selectedFrameIndex] || frameHistory[latestFrameIndex] || null;
-  const livePreview = useMemo(() => latestPreview(events), [events]);
-  const preview = livePlayback ? livePreview : selectedFrame || livePreview;
-  const codingSnapshot = useMemo(() => buildCodingSnapshot(events, preview), [events, preview]);
-  const codeAgentProgress = useMemo(() => buildCodeAgentProgress(events, agentStatus), [agentStatus, events]);
-  const firstEvent = events.find((event) => event.type === "user_message" || event.type === "task_created");
+  const latestUserEventIndex = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].type === "user_message") return index;
+    }
+    return -1;
+  }, [events]);
+  const promptEvents = useMemo(
+    () => (latestUserEventIndex >= 0 ? events.slice(latestUserEventIndex + 1) : events),
+    [events, latestUserEventIndex],
+  );
+  const frameHistory = useMemo(() => screenFrameHistory(promptEvents), [promptEvents]);
+  const livePreview = useMemo(() => latestPreview(promptEvents), [promptEvents]);
+  const preview = livePreview;
+  const codingSnapshot = useMemo(() => buildCodingSnapshot(promptEvents, preview), [promptEvents, preview]);
+  const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, agentStatus), [agentStatus, promptEvents]);
+  const firstEvent = events[latestUserEventIndex]
+    || promptEvents.find((event) => event.type === "user_message" || event.type === "task_created")
+    || events.find((event) => event.type === "user_message" || event.type === "task_created");
   const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
-  const planningFallbackSteps = busy && !codeAgentProgress && !livePlan.hasSteps
+  const planningFallbackSteps = busy && livePlan.isGeneratingPlan
     ? [
       progressStep(
         "instant-plan",
@@ -574,151 +578,85 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     || preview.label
     || activeTask?.description
     || "Computador do Vortax";
-  const canBrowseFrames = frameHistory.length > 1;
+  const hasDockContent = Boolean(codeAgentProgress)
+    || (livePlan.hasSteps && !livePlan.isDirect)
+    || codingSnapshot.hasCodingActivity
+    || frameHistory.length > 0;
 
-  useEffect(() => {
-    if (livePlayback) setSelectedFrameIndex(latestFrameIndex);
-  }, [latestFrameIndex, livePlayback]);
-
-  function jumpToLive() {
-    setLivePlayback(true);
-    setSelectedFrameIndex(latestFrameIndex);
-  }
-
-  function selectFrame(index) {
-    const nextIndex = Math.max(0, Math.min(latestFrameIndex, index));
-    setSelectedFrameIndex(nextIndex);
-    setLivePlayback(nextIndex === latestFrameIndex);
-  }
-
-  if (!activeTask && !events.length && !livePlan.hasSteps) return null;
+  if (!hasDockContent) return null;
 
   return (
     <section className={`vortax-computer-dock ${expanded ? "expanded" : ""}`}>
-      <button className="computer-dock-bar" onClick={() => setExpanded((value) => !value)} type="button">
-        <ComputerPreview preview={preview} snapshot={codingSnapshot} />
-        <div className="computer-dock-main">
-          <div>
-            <span className="computer-live-dot" />
-            <strong>{current}</strong>
+      <div className="computer-dock-bar">
+        <button className="computer-dock-toggle" onClick={() => setExpanded((value) => !value)} type="button">
+          <ComputerPreview preview={preview} snapshot={codingSnapshot} />
+          <div className="computer-dock-main">
+            <div>
+              <span className="computer-live-dot" />
+              <strong>Computador do Vortax</strong>
+            </div>
+            <small>{elapsed ? `${elapsed} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}</small>
           </div>
-          <small>{elapsed ? `${elapsed} · ` : ""}{statusLabel(agentStatus)} · {connectionState}</small>
-        </div>
-        <span className="computer-dock-count">{done}/{total || 1}</span>
-        <Maximize2 size={16} />
-      </button>
+          <span className="computer-dock-count">{done}/{total || 1}</span>
+          <ChevronDown className="computer-dock-chevron" size={16} />
+        </button>
+        <button
+          className="computer-dock-detail-btn"
+          onClick={onOpenDetails}
+          title="Abrir detalhes tecnicos"
+          type="button"
+        >
+          <PanelRightOpen size={16} />
+        </button>
+      </div>
 
       <AnimatePresence initial={false}>
         {expanded && (
-          <>
-            <motion.button
-              aria-label="Fechar computador do Vortax"
-              className="computer-side-backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setExpanded(false)}
-              type="button"
-            />
-            <motion.aside
-              className="computer-side-panel"
-              initial={{ x: 560, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 560, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 260, damping: 30 }}
-            >
-              <header className="computer-side-header">
-                <div>
-                  <strong>Computador do Vortax</strong>
-                  <span>
-                    {preview.mode === "search" || preview.mode === "browser" ? <Globe2 size={14} /> : <Monitor size={14} />}
-                    {preview.image
-                      ? "Tela real do navegador"
-                      : preview.mode === "search" || preview.mode === "browser"
-                        ? `Vortax esta usando o ${preview.using}`
-                        : codingSnapshot.stageDetail}
-                  </span>
-                </div>
-                <div className="computer-side-actions">
-                  <button onClick={onOpenDetails} title="Abrir detalhes tecnicos" type="button">
-                    <PanelRightOpen size={16} />
-                  </button>
-                  <button onClick={() => setExpanded(false)} title="Fechar computador" type="button">
-                    <X size={17} />
-                  </button>
-                </div>
-              </header>
-
-              <ComputerStage preview={preview} snapshot={codingSnapshot} />
-
-              <div className="computer-live-controls">
-                <div className="computer-frame-controls">
-                  <button
-                    disabled={!canBrowseFrames || selectedFrameIndex <= 0}
-                    onClick={() => selectFrame(selectedFrameIndex - 1)}
-                    title="Voltar captura"
-                    type="button"
-                  >
-                    <SkipBack size={15} />
-                  </button>
-                  <button
-                    disabled={!canBrowseFrames || selectedFrameIndex >= latestFrameIndex}
-                    onClick={() => selectFrame(selectedFrameIndex + 1)}
-                    title="Avancar captura"
-                    type="button"
-                  >
-                    <SkipForward size={15} />
-                  </button>
-                </div>
-                <input
-                  aria-label="Linha do tempo do computador"
-                  className="computer-frame-range"
-                  disabled={!canBrowseFrames}
-                  max={latestFrameIndex}
-                  min="0"
-                  onChange={(event) => selectFrame(Number(event.target.value))}
-                  type="range"
-                  value={selectedFrameIndex}
-                />
-                <span className={`computer-live-state ${livePlayback ? "live" : "replay"}`}>
-                  <Circle size={8} fill="currentColor" />
-                  {livePlayback ? "ao vivo" : `${selectedFrameIndex + 1}/${frameHistory.length}`}
-                </span>
-                <button className="computer-jump-live-btn" onClick={jumpToLive} type="button">
-                  <Play size={13} />
-                  Pular para ao vivo
-                </button>
+          <motion.div
+            className="computer-dock-inline-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
+            <div className="computer-dock-inline-meta">
+              {preview.mode === "search" || preview.mode === "browser" ? <Globe2 size={14} /> : <Monitor size={14} />}
+              <span>
+                {preview.image
+                  ? "Tela real do navegador disponivel nos detalhes."
+                  : preview.mode === "search" || preview.mode === "browser"
+                    ? `Vortax esta usando o ${preview.using}.`
+                    : codingSnapshot.stageDetail}
+              </span>
+            </div>
+            <div className="computer-progress-card">
+              <div className="computer-progress-head">
+                <strong>{codeAgentProgress?.title || "Progresso da tarefa"}</strong>
+                <span>{progressDone}/{progressTotal || 1}</span>
               </div>
-
-              <div className="computer-progress-card">
-                <div className="computer-progress-head">
-                  <strong>{codeAgentProgress?.title || "Progresso da tarefa"}</strong>
-                  <span>{progressDone}/{progressTotal || 1}</span>
-                </div>
-                <div className="computer-progress-list">
-                  {progressSteps.length > 0 ? (
-                    progressSteps.map((step) => (
-                      <div className={`computer-progress-step ${step.state}`} key={step.id}>
-                        <span>{stepIcon(step)}</span>
-                        <div>
-                          <strong>{step.label}</strong>
-                          <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="computer-progress-step running">
-                      <span><Code2 size={13} /></span>
+              <div className="computer-progress-list">
+                {progressSteps.length > 0 ? (
+                  progressSteps.map((step) => (
+                    <div className={`computer-progress-step ${step.state}`} key={step.id}>
+                      <span>{stepIcon(step)}</span>
                       <div>
-                        <strong>Preparando trabalho</strong>
-                        <small>O progresso aparece aqui.</small>
+                        <strong>{step.label}</strong>
+                        <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
                       </div>
                     </div>
-                  )}
-                </div>
+                  ))
+                ) : (
+                  <div className="computer-progress-step running">
+                    <span><Code2 size={13} /></span>
+                    <div>
+                      <strong>Preparando trabalho</strong>
+                      <small>O progresso aparece aqui.</small>
+                    </div>
+                  </div>
+                )}
               </div>
-            </motion.aside>
-          </>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </section>

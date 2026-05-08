@@ -1,11 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Check, Copy, Download, ExternalLink, FileText, Globe2, Sparkles, User, X } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  Code2,
+  Copy,
+  Download,
+  ExternalLink,
+  FileSearch,
+  FileText,
+  Globe2,
+  Loader2,
+  Monitor,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  User,
+  X,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
-import { InlineTaskTimeline } from "./InlineTaskTimeline.jsx";
 import { fileDownloadUrl } from "../lib/api.js";
 
 /* ── Code Block with Copy Button ─────────────────────────────────── */
@@ -390,148 +406,178 @@ function MessageArticle({ message, onOpenDocument }) {
   );
 }
 
-function ActivityArticle({ children }) {
-  if (!children) return null;
+function numericIndex(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function latestUserMessage(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") return messages[index];
+  }
+  return null;
+}
+
+function normalizeActivityEvent(event, index) {
+  if (event?.type !== "agent_activity") return null;
+  const payload = event.payload || {};
+  const title = String(payload.title || "").trim();
+  if (!title) return null;
+  return {
+    createdAt: event.created_at || "",
+    detail: String(payload.detail || "").trim(),
+    id: `${event.created_at || "activity"}-${index}`,
+    kind: payload.kind || "analysis",
+    metadata: payload.metadata || {},
+    status: payload.status || "running",
+    title,
+    tool: payload.tool || "",
+  };
+}
+
+function scopedActivities(events = [], afterEventIndex = null) {
+  return events
+    .map((event, index) => ({ activity: normalizeActivityEvent(event, index), index }))
+    .filter(({ activity, index }) => activity && (afterEventIndex === null || index > afterEventIndex))
+    .map(({ activity }) => activity);
+}
+
+function activityOpening(activities, activeSearch) {
+  const latest = activities[activities.length - 1];
+  const kind = latest?.kind || (activeSearch ? "search" : "analysis");
+  if (kind === "search" || kind === "source" || kind === "browser") {
+    return "Vou pesquisar agora e verificar as fontes relevantes.";
+  }
+  if (kind === "code" || kind === "file") {
+    return "Vou preparar os arquivos e acompanhar os pontos importantes aqui.";
+  }
+  if (kind === "validation") {
+    return "Estou conferindo a entrega antes de finalizar.";
+  }
+  if (kind === "finalizing") {
+    return "Estou organizando a resposta final.";
+  }
+  return "Vou trabalhar nisso e mostrar os principais andamentos aqui.";
+}
+
+function activityIcon(kind, size = 14) {
+  if (kind === "search") return <Search size={size} />;
+  if (kind === "source") return <FileSearch size={size} />;
+  if (kind === "browser") return <Monitor size={size} />;
+  if (kind === "code") return <Code2 size={size} />;
+  if (kind === "file") return <FileText size={size} />;
+  if (kind === "validation") return <ShieldCheck size={size} />;
+  if (kind === "finalizing") return <Check size={size} />;
+  return <Sparkles size={size} />;
+}
+
+function activityPillLabel(activity) {
+  const metadata = activity.metadata || {};
+  if (activity.kind === "search") return metadata.query || activity.detail || activity.title;
+  if (activity.kind === "source") return metadata.source_title || metadata.url || activity.detail || activity.title;
+  if (activity.kind === "browser") return metadata.url || activity.detail || activity.title;
+  if (activity.kind === "file") return metadata.file || activity.detail || activity.title;
+  return activity.detail || activity.title;
+}
+
+function activityStatusLabel(status) {
+  if (status === "done") return "concluído";
+  if (status === "failed") return "ajuste";
+  if (status === "blocked") return "bloqueado";
+  return "em andamento";
+}
+
+function activityPills(activities, activeSearch) {
+  const pills = activities
+    .filter((activity) => ["search", "source", "browser", "code", "validation", "file"].includes(activity.kind))
+    .slice(-6);
+  if (activeSearch && !pills.some((activity) => activity.kind === "search")) {
+    pills.push({
+      detail: activeSearch.query,
+      id: `active-search-${activeSearch.query}`,
+      kind: "search",
+      metadata: { query: activeSearch.query },
+      status: "running",
+      title: "Pesquisando",
+    });
+  }
+  return pills;
+}
+
+function ChatProgressArticle({ activities = [], activeSearch }) {
+  if (!activities.length && !activeSearch) return null;
+  const latest = activities[activities.length - 1] || {
+    detail: activeSearch?.query || "",
+    kind: "search",
+    status: "running",
+    title: "Pesquisando na web",
+  };
+  const pills = activityPills(activities, activeSearch);
+
   return (
-    <motion.article
-      className="message assistant progress-message"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -6 }}
-      transition={{ type: "spring", stiffness: 210, damping: 24 }}
-      layout
-    >
+    <article className="message assistant progress-message chat-progress-message">
       <div className="message-avatar">
         <Sparkles size={18} />
       </div>
       <div className="message-content">
         <div className="message-role">Vortax trabalhando</div>
-        {children}
-      </div>
-    </motion.article>
-  );
-}
-
-function SearchActivityArticle({ activeSearch }) {
-  if (!activeSearch) return null;
-  return (
-    <ActivityArticle>
-      <div className="search-animation-container inline-search-activity">
-        <div className="search-radar">
-          <div className="radar-sweep"></div>
-          <Globe2 size={24} className="radar-icon" />
+        <div className="chat-progress-copy">{activityOpening(activities, activeSearch)}</div>
+        <div className={`chat-progress-current ${latest.status || "running"}`}>
+          <span className="chat-progress-current-icon">
+            {latest.status === "running" ? <Loader2 size={14} /> : activityIcon(latest.kind, 14)}
+          </span>
+          <div>
+            <strong>{latest.title}</strong>
+            {latest.detail ? <small>{latest.detail}</small> : null}
+          </div>
+          <em>{activityStatusLabel(latest.status)}</em>
         </div>
-        <div className="search-details">
-          <span className="search-query">"{activeSearch.query}"</span>
-          <span className="search-status">Buscando fontes para melhorar a entrega...</span>
-        </div>
-      </div>
-    </ActivityArticle>
-  );
-}
-
-function visiblePlanSegments(planSegments = []) {
-  return planSegments
-    .filter((segment) => segment?.plan?.hasSteps && !segment.plan.isDirect)
-    .sort((a, b) => (a.anchorEventIndex || 0) - (b.anchorEventIndex || 0));
-}
-
-function TaskPlanArticle({ segment }) {
-  if (!segment?.plan?.hasSteps || segment.plan.isDirect) return null;
-  return (
-    <article className="message assistant progress-message">
-      <div className="message-avatar">
-        <Sparkles size={18} />
-      </div>
-      <div className="message-content">
-        <div className="message-role">Vortax trabalhando</div>
-        <InlineTaskTimeline livePlan={segment.plan} showEmpty={false} />
+        {pills.length > 0 && (
+          <div className="chat-progress-pills">
+            {pills.map((activity) => (
+              <span className={`chat-progress-pill ${activity.kind} ${activity.status}`} key={activity.id}>
+                {activityIcon(activity.kind, 13)}
+                <span>{activityPillLabel(activity)}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </article>
   );
 }
 
-function numericIndex(value) {
-  return Number.isFinite(value) ? value : null;
-}
-
-function nextUserEventIndex(messages, currentMessageIndex) {
-  for (let index = currentMessageIndex + 1; index < messages.length; index += 1) {
-    if (messages[index].role === "user") {
-      return numericIndex(messages[index].eventIndex);
-    }
-  }
-  return null;
-}
-
-function latestUserMessageId(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "user") return messages[index].id;
-  }
-  return "";
-}
-
-function buildTimelineItems(messages, planSegments, activeSearch) {
-  const segments = visiblePlanSegments(planSegments);
-  const segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
-  const renderedSegments = new Set();
+function buildTimelineItems(messages, events, agentBusy, activeSearch) {
   const items = [];
-  const latestUserId = latestUserMessageId(messages);
-  let searchRendered = false;
+  const latestUser = latestUserMessage(messages);
+  const latestUserEventIndex = numericIndex(latestUser?.eventIndex);
+  const activities = scopedActivities(events, latestUserEventIndex);
+  const shouldShowProgress = agentBusy && (activities.length > 0 || Boolean(activeSearch));
+  let progressRendered = false;
 
-  const pushPlanSegment = (segment) => {
-    if (!segment || renderedSegments.has(segment.id)) return;
-    renderedSegments.add(segment.id);
-    items.push({
-      key: `plan-${segment.id}`,
-      segment,
-      type: "plan",
-    });
-  };
-
-  messages.forEach((message, messageIndex) => {
-    if (message.role === "assistant" && message.planSegmentId) {
-      pushPlanSegment(segmentsById.get(message.planSegmentId));
-    }
-
+  messages.forEach((message) => {
     items.push({
       key: `message-${message.id}`,
       message,
       type: "message",
     });
 
-    if (message.role !== "user") return;
-
-    const currentEventIndex = numericIndex(message.eventIndex);
-    const nextUserIndex = nextUserEventIndex(messages, messageIndex);
-    if (currentEventIndex !== null) {
-      segments.forEach((segment) => {
-        if (renderedSegments.has(segment.id)) return;
-        const anchorIndex = numericIndex(segment.anchorEventIndex);
-        if (anchorIndex === null) return;
-        if (anchorIndex < currentEventIndex) return;
-        if (nextUserIndex !== null && anchorIndex >= nextUserIndex) return;
-        pushPlanSegment(segment);
-      });
-    }
-
-    if (activeSearch && message.id === latestUserId) {
-      searchRendered = true;
+    if (shouldShowProgress && message.id === latestUser?.id) {
+      progressRendered = true;
       items.push({
+        activities,
         activeSearch,
-        key: `search-${activeSearch.query}`,
-        type: "search",
+        key: `progress-${latestUser.id}`,
+        type: "progress",
       });
     }
   });
 
-  segments.forEach(pushPlanSegment);
-
-  if (activeSearch && !searchRendered) {
+  if (shouldShowProgress && !progressRendered) {
     items.push({
+      activities,
       activeSearch,
-      key: `search-${activeSearch.query}`,
-      type: "search",
+      key: "progress-floating",
+      type: "progress",
     });
   }
 
@@ -565,13 +611,14 @@ function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId })
 
 /* ── Message List ────────────────────────────────────────────────── */
 
-export function MessageList({ activeSearch, isTyping = false, messages, planSegments = [] }) {
+export function MessageList({ activeSearch, agentBusy = false, events = [], isTyping = false, messages }) {
   const endRef = useRef(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const timelineItems = useMemo(
-    () => buildTimelineItems(messages, planSegments, activeSearch),
-    [activeSearch, messages, planSegments],
+    () => buildTimelineItems(messages, events, agentBusy, activeSearch),
+    [activeSearch, agentBusy, events, messages],
   );
+  const showTypingMessage = isTyping && !timelineItems.some((item) => item.type === "progress");
   const scrollKey = useMemo(
     () => timelineItems.map((item) => item.key).join("|"),
     [timelineItems],
@@ -579,7 +626,7 @@ export function MessageList({ activeSearch, isTyping = false, messages, planSegm
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [isTyping, scrollKey]);
+  }, [showTypingMessage, scrollKey]);
 
   return (
     <motion.div
@@ -591,11 +638,14 @@ export function MessageList({ activeSearch, isTyping = false, messages, planSegm
       <div className="message-list-inner">
         <AnimatePresence initial={false}>
           {timelineItems.map((item) => {
-            if (item.type === "plan") {
-              return <TaskPlanArticle key={item.key} segment={item.segment} />;
-            }
-            if (item.type === "search") {
-              return <SearchActivityArticle activeSearch={item.activeSearch} key={item.key} />;
+            if (item.type === "progress") {
+              return (
+                <ChatProgressArticle
+                  activities={item.activities}
+                  activeSearch={item.activeSearch}
+                  key={item.key}
+                />
+              );
             }
             return (
               <MessageArticle
@@ -606,7 +656,7 @@ export function MessageList({ activeSearch, isTyping = false, messages, planSegm
             );
           })}
         </AnimatePresence>
-        {isTyping && (
+        {showTypingMessage && (
           <motion.article
             className="message assistant typing-message"
             initial={{ opacity: 0, y: 10 }}

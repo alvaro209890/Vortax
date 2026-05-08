@@ -277,12 +277,15 @@ export default function App() {
   );
 
   const displayPlan = useMemo(
-    () => (
-      planSegments.length > 0
-        ? planSegments[planSegments.length - 1].plan
-        : emptyDisplayPlan
-    ),
-    [planSegments],
+    () => {
+      const latestPromptSegments = planSegments.filter((segment) => (
+        lastUserIndex < 0 || segment.anchorEventIndex >= lastUserIndex
+      ));
+      return latestPromptSegments.length > 0
+        ? latestPromptSegments[latestPromptSegments.length - 1].plan
+        : emptyDisplayPlan;
+    },
+    [lastUserIndex, planSegments],
   );
 
   const messages = useMemo(() => {
@@ -694,8 +697,10 @@ export default function App() {
             </header>
             <MessageList
               activeSearch={activeSearch}
-              planSegments={planSegments}
+              agentBusy={agentBusy}
+              events={currentEvents}
               isTyping={showTyping}
+              livePlan={displayPlan}
               messages={messages}
             />
             <VortaxComputerDock

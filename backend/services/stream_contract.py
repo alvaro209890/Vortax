@@ -10,6 +10,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "assistant_message_done",
         "agent_status",
         "agent_progress",
+        "agent_activity",
         "task_created",
         "task_plan_created",
         "task_plan_replanned",

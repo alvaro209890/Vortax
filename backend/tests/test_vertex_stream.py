@@ -26,6 +26,30 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertEqual(event["type"], "ai_exchange")
         self.assertEqual(event["payload"]["actor"], "deepseek")
 
+    def test_agent_activity_is_known_and_sanitized(self) -> None:
+        event = build_stream_event(
+            "task-1",
+            "agent_activity",
+            {
+                "kind": "search",
+                "title": "Pesquisando na web",
+                "detail": "Authorization: Bearer abcdefghijklmnop",
+                "status": "running",
+                "metadata": {
+                    "query": "jogos do Corinthians hoje",
+                    "token": "secret-token",
+                    "nested": {"password": "secret-password"},
+                },
+            },
+        )
+
+        self.assertEqual(event["type"], "agent_activity")
+        self.assertEqual(event["payload"]["kind"], "search")
+        self.assertEqual(event["payload"]["metadata"]["query"], "jogos do Corinthians hoje")
+        self.assertEqual(event["payload"]["metadata"]["token"], "[REDACTED]")
+        self.assertEqual(event["payload"]["metadata"]["nested"]["password"], "[REDACTED]")
+        self.assertIn("[REDACTED]", event["payload"]["detail"])
+
     def test_web_validation_events_are_known_stream_events(self) -> None:
         for event_type in (
             "web_validation_started",

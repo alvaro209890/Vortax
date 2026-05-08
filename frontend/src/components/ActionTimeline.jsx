@@ -40,6 +40,14 @@ function publicText(value) {
 function iconFor(event) {
   const tool = event.payload?.name || event.payload?.tool;
   if (event.type === "error") return <AlertTriangle size={16} />;
+  if (event.type === "agent_activity") {
+    const kind = event.payload?.kind;
+    if (kind === "search") return <Search size={16} />;
+    if (kind === "source") return <Globe2 size={16} />;
+    if (kind === "browser") return <Monitor size={16} />;
+    if (kind === "code" || kind === "file") return <Code2 size={16} />;
+    if (kind === "validation" || kind === "finalizing") return <CheckCircle2 size={16} />;
+  }
   if (event.type === "screen_frame") return <Monitor size={16} />;
   if (event.type === "vertex_progress") return <Code2 size={16} />;
   if (event.type === "ai_exchange") return ["openclaude", "vertex"].includes(event.payload?.actor) ? <Code2 size={16} /> : <Bot size={16} />;
@@ -61,6 +69,7 @@ function iconFor(event) {
 
 function titleFor(event) {
   const payload = event.payload || {};
+  if (event.type === "agent_activity") return payload.title || "Atividade do Vortax";
   if (event.type === "agent_progress") return payload.label || "Andamento";
   if (event.type === "tool_call") return toolTitle(payload.name, "Executando");
   if (event.type === "tool_result") return toolTitle(payload.name, "Resultado");

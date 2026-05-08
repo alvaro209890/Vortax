@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     VISION_PROVIDER: str = "groq_llama4_scout"
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_TASK_PLANNER_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_TASK_PLANNER_TEMPERATURE: float = 0.15
+    GROQ_TASK_PLANNER_TIMEOUT_SECONDS: float = 20.0
     GROQ_VISION_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     GROQ_VISION_TEMPERATURE: float = 0.1
     GROQ_VISION_TIMEOUT_SECONDS: float = 60.0

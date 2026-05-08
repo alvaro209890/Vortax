@@ -4,6 +4,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from database import database
+from services.activity_events import publish_agent_activity
 from services.document_artifacts import (
     archive_edit_targets,
     artifact_profile,
@@ -182,6 +183,16 @@ async def _save_source_if_extracted(task_id: str, tool_name: str, result: dict[s
             "source_type": source.get("source_type"),
             "quality_score": source.get("quality_score"),
         },
+    )
+    await publish_agent_activity(
+        bus,
+        task_id,
+        kind="source",
+        title="Fonte salva",
+        detail=title or url,
+        status="done",
+        tool=tool_name,
+        metadata={"url": source["url"], "source_title": title},
     )
 
 
@@ -627,6 +638,16 @@ async def execute_tool(
                         "kind": "delegation",
                     },
                 )
+                await publish_agent_activity(
+                    bus,
+                    task_id,
+                    kind="code",
+                    title=f"{CODE_AGENT_LABEL} começou a trabalhar",
+                    detail="Vortax delegou a criação/edição de arquivos ao agente de código.",
+                    status="running",
+                    tool="shell_run",
+                    metadata={"command": command[:220]},
+                )
             tool_params = dict(params or {})
             if _is_code_agent_command(command):
                 command = _augment_code_agent_command_for_quality(command, task_id=task_id)
@@ -656,6 +677,15 @@ async def execute_tool(
                     task_id,
                     "files_created",
                     {"files": files, "projects": project_index["projects"], "directory": str(project_dir)},
+                )
+                await publish_agent_activity(
+                    bus,
+                    task_id,
+                    kind="file",
+                    title="Arquivos sincronizados",
+                    detail=f"{len(files)} arquivo(s) disponíveis no workspace.",
+                    status="done",
+                    metadata={"file_count": len(files), "file": files[0].get("path") if files else ""},
                 )
                 if _is_code_agent_command(command):
                     await bus.publish(
@@ -735,6 +765,15 @@ async def execute_tool(
                         "status": "done",
                         "interactive_rounds": shell_data.get("interactive_rounds", 0),
                     },
+                )
+                await publish_agent_activity(
+                    bus,
+                    task_id,
+                    kind="code",
+                    title="Código pronto",
+                    detail=code_agent_done_message,
+                    status="failed" if "corrigir" in code_agent_done_message.lower() else "blocked" if "bloqueada" in code_agent_done_message.lower() else "done",
+                    tool="shell_run",
                 )
                 await bus.publish(
                     task_id,

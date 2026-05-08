@@ -19,6 +19,8 @@ _SECRET_KEY_NAMES = (
     "secret",
     "senha",
     "token",
+    "username",
+    "user_name",
 )
 _SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_-]{12,}"),

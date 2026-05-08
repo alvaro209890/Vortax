@@ -135,6 +135,14 @@ def deepseek_configured() -> bool:
     return bool(settings.DEEPSEEK_API_KEY.strip())
 
 
+def groq_task_planner_configured() -> bool:
+    return bool(settings.GROQ_API_KEY.strip())
+
+
+def task_planner_configured() -> bool:
+    return groq_task_planner_configured() or deepseek_configured()
+
+
 def _headers() -> dict[str, str]:
     return {
         "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
@@ -142,8 +150,19 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _groq_headers() -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
 def _deepseek_url() -> str:
     return f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
+
+
+def _groq_url() -> str:
+    return f"{settings.GROQ_BASE_URL.rstrip('/')}/chat/completions"
 
 
 async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +174,20 @@ async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
             return response.json()
     except httpx.HTTPError as exc:
         mapped = map_httpx_error(exc, provider_name="DeepSeek")
+        if settings.LOG_API_ERROR_DETAILS:
+            raise DeepSeekError(format_exception_for_user(mapped)) from exc
+        raise DeepSeekError(str(mapped)) from exc
+
+
+async def _post_groq(payload: dict[str, Any]) -> dict[str, Any]:
+    timeout = httpx.Timeout(settings.GROQ_TASK_PLANNER_TIMEOUT_SECONDS, connect=10.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(_groq_url(), headers=_groq_headers(), json=payload)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError as exc:
+        mapped = map_httpx_error(exc, provider_name="Groq")
         if settings.LOG_API_ERROR_DETAILS:
             raise DeepSeekError(format_exception_for_user(mapped)) from exc
         raise DeepSeekError(str(mapped)) from exc
@@ -482,28 +515,24 @@ async def request_context_summary(
     return content.strip()[:max_chars]
 
 
-async def request_task_plan(description: str) -> dict[str, Any]:
-    """Gera 4-6 etapas dinamicas de acompanhamento baseadas no pedido do usuario."""
-    from services.exact_solver import should_answer_directly
-    if should_answer_directly(description):
-        return {"plan": [], "vertex_steps": []}
-
-    if not deepseek_configured():
-        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
-
-    system_prompt = (
+def _task_plan_system_prompt() -> str:
+    return (
         "Voce gera planos de acompanhamento para usuarios do Vortax acompanharem o progresso do agente. "
+        "Voce e apenas o planner de tarefas; nao execute o pedido e nao responda ao usuario final. "
         "Analise o pedido do usuario e produza dois conjuntos de dados em um unico JSON:\n\n"
-        "1. \"plan\": 4-6 etapas curtas e sequenciais que o agente Vortax (DeepSeek) provavelmente seguira. "
+        "1. \"plan\": 3-6 etapas curtas e sequenciais que o agente Vortax (DeepSeek) deve seguir para executar o pedido. "
         "Cada etapa com \"label\" (2-4 palavras), \"detail\" (1 frase), \"tool_hint\" "
         "(understand, research, execute, validate ou deliver) e \"acceptance_criteria\" "
         "(1-3 criterios objetivos para considerar a etapa concluida).\n\n"
         "2. \"vertex_steps\": Se o pedido envolver desenvolvimento de software/site/script/codigo/arquivo, "
-        "produza 5-8 etapas ESPECIFICAS do que o OpenClaude fara para criar o projeto. "
+        "produza 4-8 etapas ESPECIFICAS do que o OpenClaude fara para criar o projeto. "
         "Exemplos de vertex_steps: \"Analisar requisitos do site\", \"Criar index.html com estrutura principal\", "
         "\"Estilizar com CSS responsivo\", \"Adicionar JavaScript para interatividade\", "
         "\"Gerar DOCUMENTACAO.md\", \"Revisar e corrigir bugs\". "
         "Se o pedido NAO envolver criacao de software/codigo/arquivos, retorne vertex_steps como array vazio [].\n\n"
+        "Nao crie plano para cumprimento simples que deveria ser resposta direta; nesses casos retorne plan vazio. "
+        "Para pesquisa atual, inclua etapa research. Para criacao/edicao de arquivos, inclua execute e validate. "
+        "Para resposta final, sempre inclua deliver. "
         "Seja ESPECIFICO ao pedido. Exemplos:\n"
         "- Pedido \"crie um site de portfolio\": plan com etapas de desenvolvimento, vertex_steps com etapas de criacao HTML/CSS/JS\n"
         "- Pedido \"pesquise noticias sobre IA\": plan com etapas de pesquisa, vertex_steps vazio []\n"
@@ -511,24 +540,8 @@ async def request_task_plan(description: str) -> dict[str, Any]:
         "Responda APENAS com JSON: {\"plan\":[{\"label\":\"...\",\"detail\":\"...\",\"tool_hint\":\"execute\",\"acceptance_criteria\":[\"...\"]},...],\"vertex_steps\":[{\"label\":\"...\",\"detail\":\"...\"},...]}"
     )
 
-    payload = {
-        "model": settings.DEEPSEEK_MODEL,
-        "temperature": 0.2,
-        "stream": False,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Pedido do usuario: {description}"},
-        ],
-    }
-    data = await _post_deepseek(payload)
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
 
-    parsed = _extract_json_object(content)
-
+def _normalize_task_plan_response(parsed: dict[str, Any], *, provider: str, model: str, usage: dict[str, Any] | None = None) -> dict[str, Any]:
     plan = parsed.get("plan") if isinstance(parsed, dict) else parsed
     if not isinstance(plan, list) or len(plan) == 0:
         raise DeepSeekError("Plano de tasks retornou array vazio")
@@ -559,4 +572,92 @@ async def request_task_plan(description: str) -> dict[str, Any]:
                     "detail": str(step.get("detail") or ""),
                 })
 
-    return {"plan": result_plan, "vertex_steps": code_agent_steps}
+    return {
+        "plan": result_plan,
+        "vertex_steps": code_agent_steps,
+        "planner_provider": provider,
+        "planner_model": model,
+        "usage": usage or {},
+    }
+
+
+async def request_groq_task_plan(description: str) -> dict[str, Any]:
+    if not groq_task_planner_configured():
+        raise DeepSeekError("GROQ_API_KEY nao configurada")
+
+    payload = {
+        "model": settings.GROQ_TASK_PLANNER_MODEL,
+        "temperature": settings.GROQ_TASK_PLANNER_TEMPERATURE,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": _task_plan_system_prompt()},
+            {"role": "user", "content": f"Pedido do usuario: {description}"},
+        ],
+    }
+    data = await _post_groq(payload)
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta Groq sem choices[0].message.content") from exc
+
+    parsed = _extract_json_object(content)
+    return _normalize_task_plan_response(
+        parsed,
+        provider="groq",
+        model=str(data.get("model") or settings.GROQ_TASK_PLANNER_MODEL),
+        usage=data.get("usage") or {},
+    )
+
+
+async def request_deepseek_task_plan(description: str) -> dict[str, Any]:
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    payload = {
+        "model": settings.DEEPSEEK_MODEL,
+        "temperature": 0.2,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": _task_plan_system_prompt()},
+            {"role": "user", "content": f"Pedido do usuario: {description}"},
+        ],
+    }
+    data = await _post_deepseek(payload)
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
+
+    parsed = _extract_json_object(content)
+    return _normalize_task_plan_response(
+        parsed,
+        provider="deepseek",
+        model=str(data.get("model") or settings.DEEPSEEK_MODEL),
+        usage=data.get("usage") or {},
+    )
+
+
+async def request_task_plan(description: str) -> dict[str, Any]:
+    """Gera tasks via Groq primeiro e usa DeepSeek apenas como fallback."""
+    from services.exact_solver import should_answer_directly
+    if should_answer_directly(description):
+        return {"plan": [], "vertex_steps": [], "direct": True, "planner_provider": "direct"}
+
+    groq_error = ""
+    if groq_task_planner_configured():
+        try:
+            return await request_groq_task_plan(description)
+        except DeepSeekError as exc:
+            groq_error = str(exc)
+
+    if deepseek_configured():
+        result = await request_deepseek_task_plan(description)
+        if groq_error:
+            result["planner_warning"] = f"Planner Groq indisponivel; fallback DeepSeek usado: {groq_error}"
+        return result
+
+    if groq_error:
+        raise DeepSeekError(groq_error)
+    raise DeepSeekError("Nenhum planner configurado. Defina GROQ_API_KEY para gerar tasks com Groq.")
