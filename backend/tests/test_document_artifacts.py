@@ -11,6 +11,7 @@ from services.document_artifacts import (
     pdf_file_valid,
     resolve_document_target,
 )
+from tools.tool_executor import _requested_document_artifact_error
 
 
 class DocumentArtifactsTests(unittest.TestCase):
@@ -75,6 +76,26 @@ class DocumentArtifactsTests(unittest.TestCase):
 
         self.assertIn("<h1>Titulo</h1>", html)
         self.assertIn("<h2>Secao</h2>", html)
+
+    def test_pdf_request_requires_real_markdown_and_pdf_artifacts(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-pdf"
+                task_dir.mkdir()
+
+                missing = _requested_document_artifact_error("task-pdf", "openclaude 'gere um relatorio em PDF'")
+                (task_dir / "relatorio.md").write_text("# Relatorio\n\n" + "conteudo " * 20, encoding="utf-8")
+                only_markdown = _requested_document_artifact_error("task-pdf", "openclaude 'gere um relatorio em PDF'")
+                (task_dir / "relatorio.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 300)
+                complete = _requested_document_artifact_error("task-pdf", "openclaude 'gere um relatorio em PDF'")
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertIn("Markdown fonte", missing)
+        self.assertIn(".pdf valido", only_markdown)
+        self.assertIsNone(complete)
 
 
 if __name__ == "__main__":

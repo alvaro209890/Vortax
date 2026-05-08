@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Circle,
   Code2,
@@ -11,7 +13,9 @@ import {
   Loader2,
   Monitor,
   PanelRightOpen,
+  RotateCcw,
   Search,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -207,11 +211,12 @@ function latestPreview(events) {
   return { label: "Ambiente pronto", mode: "idle", using: "Computador" };
 }
 
-function framePreview(event, index) {
+function framePreview(event, frameIndex, eventIndex = frameIndex) {
   const payload = event.payload || {};
   return {
     createdAt: eventTime(event),
-    frameIndex: index,
+    eventIndex,
+    frameIndex,
     image: payload.image_base64,
     label: payload.caption || payload.title || "Navegador",
     mode: "browser",
@@ -221,10 +226,11 @@ function framePreview(event, index) {
   };
 }
 
-function screenFrameHistory(events) {
+function screenFrameHistory(events, eventIndexOffset = 0) {
   return events
-    .filter((event) => event.type === "screen_frame" && event.payload?.image_base64)
-    .map(framePreview);
+    .map((event, eventIndex) => ({ event, eventIndex }))
+    .filter(({ event }) => event.type === "screen_frame" && event.payload?.image_base64)
+    .map(({ event, eventIndex }, frameIndex) => framePreview(event, frameIndex, eventIndex + eventIndexOffset));
 }
 
 function ComputerPreview({ preview, snapshot }) {
@@ -513,8 +519,360 @@ function buildCodeAgentProgress(events, agentStatus) {
   };
 }
 
-export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, livePlan, onOpenDetails }) {
+function focusToolKind(name = "") {
+  if (name === "browser_google_search") return "search";
+  if (name?.startsWith("browser_")) return "browser";
+  if (name === "shell_run") return "code";
+  return "analysis";
+}
+
+function focusEventPreview(event, activity, fallbackPreview) {
+  const payload = event?.payload || {};
+  const metadata = activity?.metadata || {};
+  const tool = activity?.tool || payload.name || "";
+  const kind = activity?.kind || focusToolKind(tool);
+
+  if (event?.type === "screen_frame" && payload.image_base64) {
+    return framePreview(event, 0, activity?.eventIndex);
+  }
+
+  if (kind === "search" || tool === "browser_google_search") {
+    const params = payload.params || {};
+    const result = payload.result || {};
+    const query = metadata.query || params.query || result.query || activity?.detail || "";
+    return {
+      createdAt: eventTime(event),
+      label: query ? `Pesquisando: ${query}` : activity?.title || "Pesquisando na web",
+      mode: "search",
+      query,
+      title: activity?.title || "Pesquisa",
+      url: query ? `https://duckduckgo.com/?q=${encodeURIComponent(query)}` : "",
+      using: "Navegador",
+    };
+  }
+
+  if (kind === "source" || kind === "browser") {
+    const params = payload.params || {};
+    const result = payload.result || {};
+    const url = metadata.url || params.url || result.url || result.opened?.href || "";
+    const title = metadata.source_title || metadata.title || result.title || result.opened?.title || activity?.title || "Navegador";
+    return {
+      createdAt: eventTime(event),
+      label: activity?.detail || title || "Navegando na web",
+      mode: "browser",
+      title,
+      url,
+      using: "Navegador",
+    };
+  }
+
+  if (kind === "code" || kind === "file") {
+    return {
+      createdAt: eventTime(event),
+      file: metadata.file || payload.file,
+      label: activity?.detail || activity?.title || "Vortax trabalhando no workspace",
+      mode: "editor",
+      title: activity?.title || "Editor",
+      using: "Editor",
+    };
+  }
+
+  return fallbackPreview;
+}
+
+function focusSnapshot(snapshot, focusRequest) {
+  const activity = focusRequest?.activity || {};
+  const event = focusRequest?.event || {};
+  const payload = event.payload || {};
+  const metadata = activity.metadata || {};
+  const focusedFile = fileName(metadata.file || payload.file || metadata.files?.[0]?.path || metadata.files?.[0]?.name || snapshot.activeFile);
+  const command = event.type === "tool_call" && payload.name === "shell_run"
+    ? compactCommand(payload.params?.command)
+    : snapshot.command;
+
+  return {
+    ...snapshot,
+    activeFile: focusedFile || snapshot.activeFile,
+    command,
+    stageDetail: publicText(activity.detail || payload.message || snapshot.stageDetail),
+    stageLabel: publicText(activity.title || snapshot.stageLabel),
+    status: activity.status === "done" ? "done" : activity.status === "failed" ? "error" : snapshot.status,
+    codeLines: [
+      `// ${publicText(activity.title || "Vortax trabalhando")}`,
+      focusedFile ? `workspace.open("${focusedFile}")` : "workspace.focusCurrentTask();",
+      activity.detail ? `note("${publicText(activity.detail).slice(0, 60)}");` : "inspectCurrentContext();",
+      "syncComputerScene();",
+      "reportProgressToChat();",
+    ],
+  };
+}
+
+function nearestFrameIndex(frameHistory, targetTime) {
+  if (!frameHistory.length || !targetTime) return null;
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  frameHistory.forEach((frame, index) => {
+    const distance = Math.abs(frame.createdAt - targetTime);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function focusSceneFromRequest(focusRequest, frameHistory, preview, snapshot) {
+  if (!focusRequest) return null;
+  const event = focusRequest.event || {};
+  const activity = focusRequest.activity || {};
+  const targetTime = eventTime(event);
+  const browserLike = ["screen_frame", "source_saved"].includes(event.type)
+    || ["search", "source", "browser"].includes(activity.kind)
+    || String(activity.tool || "").startsWith("browser_");
+  const exactFrameIndex = frameHistory.findIndex((frame) => (
+    frame.eventIndex === focusRequest.eventIndex
+    || (event.type === "screen_frame" && frame.createdAt === targetTime)
+  ));
+  const frameIndex = exactFrameIndex >= 0
+    ? exactFrameIndex
+    : browserLike ? nearestFrameIndex(frameHistory, targetTime) : null;
+
+  return {
+    activity,
+    frameIndex,
+    preview: frameIndex === null ? focusEventPreview(event, activity, preview) : null,
+    requestId: focusRequest.requestId,
+    snapshot: focusSnapshot(snapshot, focusRequest),
+  };
+}
+
+function ComputerProgressCard({ agentStatus, elapsed, progressDone, progressSteps, progressTitle, progressTotal }) {
+  return (
+    <div className="computer-progress-card">
+      <div className="computer-progress-head">
+        <strong>{progressTitle || "Progresso da tarefa"}</strong>
+        <span>{progressDone}/{progressTotal || 1}</span>
+      </div>
+      <div className="computer-progress-list">
+        {progressSteps.length > 0 ? (
+          progressSteps.map((step) => (
+            <div className={`computer-progress-step ${step.state}`} key={step.id}>
+              <span>{stepIcon(step)}</span>
+              <div>
+                <strong>{step.label}</strong>
+                <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="computer-progress-step running">
+            <span><Code2 size={13} /></span>
+            <div>
+              <strong>Preparando trabalho</strong>
+              <small>O progresso aparece aqui.</small>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ComputerLiveControls({ activeFrameIndex, frameCount, isLive, onFrameChange, onJumpLive, onNextFrame, onPrevFrame }) {
+  if (frameCount <= 0) return null;
+
+  return (
+    <div className="computer-live-controls">
+      <div className="computer-frame-controls">
+        <button disabled={activeFrameIndex <= 0} onClick={onPrevFrame} title="Frame anterior" type="button">
+          <ChevronLeft size={15} />
+        </button>
+        <button disabled={isLive || activeFrameIndex >= frameCount - 1} onClick={onNextFrame} title="Próximo frame" type="button">
+          <ChevronRight size={15} />
+        </button>
+      </div>
+      <input
+        aria-label="Navegar pelo histórico da tela"
+        className="computer-frame-range"
+        max={Math.max(frameCount - 1, 0)}
+        min="0"
+        onChange={(event) => onFrameChange(Number(event.target.value))}
+        type="range"
+        value={activeFrameIndex}
+      />
+      <span className={`computer-live-state ${isLive ? "live" : "replay"}`}>
+        <Circle size={9} />
+        {isLive ? "ao vivo" : `${activeFrameIndex + 1}/${frameCount}`}
+      </span>
+      <button className="computer-jump-live-btn" disabled={isLive} onClick={onJumpLive} type="button">
+        <RotateCcw size={13} />
+        Ao vivo
+      </button>
+    </div>
+  );
+}
+
+function ComputerSidePanel({
+  agentStatus,
+  focusScene,
+  connectionState,
+  current,
+  elapsed,
+  frameHistory,
+  onClose,
+  preview,
+  progressDone,
+  progressSteps,
+  progressTitle,
+  progressTotal,
+  snapshot,
+}) {
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(null);
+  const [sceneOverride, setSceneOverride] = useState(null);
+  const [activityOverride, setActivityOverride] = useState(null);
+  const [snapshotOverride, setSnapshotOverride] = useState(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    setSelectedFrameIndex((index) => {
+      if (index === null) return null;
+      if (frameHistory.length === 0) return null;
+      return Math.min(index, frameHistory.length - 1);
+    });
+  }, [frameHistory.length]);
+
+  useEffect(() => {
+    if (!focusScene) return;
+    setActivityOverride(focusScene.activity || null);
+    setSnapshotOverride(focusScene.snapshot || null);
+    if (focusScene.frameIndex !== null && focusScene.frameIndex !== undefined) {
+      setSelectedFrameIndex(focusScene.frameIndex);
+      setSceneOverride(null);
+      return;
+    }
+    setSelectedFrameIndex(null);
+    setSceneOverride(focusScene.preview || null);
+  }, [focusScene?.requestId]);
+
+  const frameCount = frameHistory.length;
+  const isLive = selectedFrameIndex === null && !sceneOverride;
+  const activeFrameIndex = selectedFrameIndex ?? Math.max(frameCount - 1, 0);
+  const selectedFrame = selectedFrameIndex !== null && frameCount > 0 ? frameHistory[activeFrameIndex] : null;
+  const visiblePreview = selectedFrame || sceneOverride || preview;
+  const visibleSnapshot = snapshotOverride || snapshot;
+  const visibleActivity = activityOverride || {
+    detail: visiblePreview.label || current,
+    kind: visiblePreview.mode || "analysis",
+    status: isLive ? "running" : "done",
+    title: isLive ? "Tela ao vivo" : "Cena selecionada",
+    tool: visiblePreview.using || "",
+  };
+
+  const handlePrevFrame = () => {
+    setSceneOverride(null);
+    setSelectedFrameIndex((index) => Math.max((index ?? frameCount - 1) - 1, 0));
+  };
+
+  const handleNextFrame = () => {
+    setSceneOverride(null);
+    setSelectedFrameIndex((index) => {
+      const nextIndex = Math.min((index ?? frameCount - 1) + 1, frameCount - 1);
+      return nextIndex >= frameCount - 1 ? null : nextIndex;
+    });
+  };
+
+  return (
+    <>
+      <motion.button
+        aria-label="Fechar computador do Vortax"
+        className="computer-side-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        type="button"
+      />
+      <motion.aside
+        aria-label="Computador do Vortax"
+        aria-modal="true"
+        className="computer-side-panel"
+        initial={{ x: 420, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 420, opacity: 0 }}
+        role="dialog"
+        transition={{ type: "spring", stiffness: 260, damping: 30 }}
+      >
+        <header className="computer-side-header">
+          <div>
+            <strong>Computador do Vortax</strong>
+            <span>
+              {visiblePreview.mode === "search" || visiblePreview.mode === "browser" ? <Globe2 size={13} /> : <Monitor size={13} />}
+              {elapsed ? `${elapsed} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}
+            </span>
+          </div>
+          <div className="computer-side-actions">
+            <button onClick={onClose} title="Fechar computador" type="button">
+              <X size={18} />
+            </button>
+          </div>
+        </header>
+
+        <div className={`computer-side-context ${visibleActivity.kind || "analysis"} ${visibleActivity.status || "running"}`}>
+          <span>{visibleActivity.status === "running" ? <Loader2 size={14} /> : stepIcon({ status: visibleActivity.status === "done" ? "passed" : visibleActivity.status })}</span>
+          <div>
+            <strong>{visibleActivity.title || "Atividade do Vortax"}</strong>
+            <small>{visibleActivity.detail || visibleActivity.tool || "Acompanhando a execução."}</small>
+          </div>
+          {visibleActivity.tool ? <em>{visibleActivity.tool}</em> : null}
+        </div>
+
+        <ComputerStage preview={visiblePreview} snapshot={visibleSnapshot} />
+
+        <ComputerLiveControls
+          activeFrameIndex={activeFrameIndex}
+          frameCount={frameCount}
+          isLive={isLive}
+          onFrameChange={(index) => {
+            setSceneOverride(null);
+            setActivityOverride(null);
+            setSnapshotOverride(null);
+            setSelectedFrameIndex(index);
+          }}
+          onJumpLive={() => {
+            setSelectedFrameIndex(null);
+            setSceneOverride(null);
+            setActivityOverride(null);
+            setSnapshotOverride(null);
+          }}
+          onNextFrame={handleNextFrame}
+          onPrevFrame={handlePrevFrame}
+        />
+
+        <div className="computer-side-progress">
+          <ComputerProgressCard
+            agentStatus={agentStatus}
+            elapsed={elapsed}
+            progressDone={progressDone}
+            progressSteps={progressSteps}
+            progressTitle={progressTitle}
+            progressTotal={progressTotal}
+          />
+        </div>
+      </motion.aside>
+    </>
+  );
+}
+
+export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, focusRequest, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
+  const [sideOpen, setSideOpen] = useState(false);
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
   const now = useNow(busy);
   const latestUserEventIndex = useMemo(() => {
@@ -527,10 +885,14 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     () => (latestUserEventIndex >= 0 ? events.slice(latestUserEventIndex + 1) : events),
     [events, latestUserEventIndex],
   );
-  const frameHistory = useMemo(() => screenFrameHistory(promptEvents), [promptEvents]);
+  const frameHistory = useMemo(() => screenFrameHistory(events), [events]);
   const livePreview = useMemo(() => latestPreview(promptEvents), [promptEvents]);
   const preview = livePreview;
   const codingSnapshot = useMemo(() => buildCodingSnapshot(promptEvents, preview), [promptEvents, preview]);
+  const focusScene = useMemo(
+    () => focusSceneFromRequest(focusRequest, frameHistory, preview, codingSnapshot),
+    [codingSnapshot, focusRequest, frameHistory, preview],
+  );
   const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, agentStatus), [agentStatus, promptEvents]);
   const firstEvent = events[latestUserEventIndex]
     || promptEvents.find((event) => event.type === "user_message" || event.type === "task_created")
@@ -581,14 +943,26 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
   const hasDockContent = Boolean(codeAgentProgress)
     || (livePlan.hasSteps && !livePlan.isDirect)
     || codingSnapshot.hasCodingActivity
-    || frameHistory.length > 0;
+    || frameHistory.length > 0
+    || Boolean(focusRequest)
+    || promptEvents.some((event) => ["agent_activity", "agent_progress", "tool_call", "tool_result", "source_saved"].includes(event.type));
+
+  useEffect(() => {
+    if (focusRequest) setSideOpen(true);
+  }, [focusRequest]);
 
   if (!hasDockContent) return null;
 
   return (
     <section className={`vortax-computer-dock ${expanded ? "expanded" : ""}`}>
       <div className="computer-dock-bar">
-        <button className="computer-dock-toggle" onClick={() => setExpanded((value) => !value)} type="button">
+        <button
+          aria-label="Ver o computador do Vortax"
+          className="computer-dock-open"
+          data-tooltip="Ver o computador do Vortax"
+          onClick={() => setSideOpen(true)}
+          type="button"
+        >
           <ComputerPreview preview={preview} snapshot={codingSnapshot} />
           <div className="computer-dock-main">
             <div>
@@ -598,6 +972,14 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
             <small>{elapsed ? `${elapsed} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}</small>
           </div>
           <span className="computer-dock-count">{done}/{total || 1}</span>
+        </button>
+        <button
+          aria-expanded={expanded}
+          className="computer-dock-toggle"
+          onClick={() => setExpanded((value) => !value)}
+          title={expanded ? "Recolher progresso" : "Mostrar progresso"}
+          type="button"
+        >
           <ChevronDown className="computer-dock-chevron" size={16} />
         </button>
         <button
@@ -629,34 +1011,35 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
                     : codingSnapshot.stageDetail}
               </span>
             </div>
-            <div className="computer-progress-card">
-              <div className="computer-progress-head">
-                <strong>{codeAgentProgress?.title || "Progresso da tarefa"}</strong>
-                <span>{progressDone}/{progressTotal || 1}</span>
-              </div>
-              <div className="computer-progress-list">
-                {progressSteps.length > 0 ? (
-                  progressSteps.map((step) => (
-                    <div className={`computer-progress-step ${step.state}`} key={step.id}>
-                      <span>{stepIcon(step)}</span>
-                      <div>
-                        <strong>{step.label}</strong>
-                        <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="computer-progress-step running">
-                    <span><Code2 size={13} /></span>
-                    <div>
-                      <strong>Preparando trabalho</strong>
-                      <small>O progresso aparece aqui.</small>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <ComputerProgressCard
+              agentStatus={agentStatus}
+              elapsed={elapsed}
+              progressDone={progressDone}
+              progressSteps={progressSteps}
+              progressTitle={codeAgentProgress?.title || "Progresso da tarefa"}
+              progressTotal={progressTotal}
+            />
           </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {sideOpen && (
+          <ComputerSidePanel
+            agentStatus={agentStatus}
+            connectionState={connectionState}
+            current={current}
+            elapsed={elapsed}
+            focusScene={focusScene}
+            frameHistory={frameHistory}
+            key="computer-side-panel"
+            onClose={() => setSideOpen(false)}
+            preview={preview}
+            progressDone={progressDone}
+            progressSteps={progressSteps}
+            progressTitle={codeAgentProgress?.title || "Progresso da tarefa"}
+            progressTotal={progressTotal}
+            snapshot={codingSnapshot}
+          />
         )}
       </AnimatePresence>
     </section>

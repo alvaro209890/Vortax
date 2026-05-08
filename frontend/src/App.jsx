@@ -42,8 +42,95 @@ const welcomeMessage = {
   content: "Descreva uma tarefa e acompanhe o Vortax pesquisar, criar, revisar e entregar o resultado.",
 };
 
-function buildMessages(task, events, responseReady = true) {
+function normalizeMessageContent(content = "") {
+  return String(content || "").replace(/\s+/g, " ").trim();
+}
+
+function messageTimestamp(message) {
+  const value = message?.createdAt ? new Date(message.createdAt).getTime() : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+function eventTimestamp(event) {
+  const value = event?.created_at ? new Date(event.created_at).getTime() : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+function hasEventIndex(message) {
+  return Number.isFinite(message?.eventIndex);
+}
+
+function isOptimisticMessage(message) {
+  return String(message?.id || "").startsWith("optimistic-user-");
+}
+
+function isFallbackUserMessage(message) {
+  return message?.role === "user"
+    && !hasEventIndex(message)
+    && String(message?.id || "").startsWith("user-");
+}
+
+function isDuplicateUserMessage(candidate, existing) {
+  if (candidate?.role !== "user" || existing?.role !== "user") return false;
+  const candidateClientId = String(candidate.clientMessageId || "").trim();
+  const existingClientId = String(existing.clientMessageId || "").trim();
+  if (candidateClientId && existingClientId) return candidateClientId === existingClientId;
+  if (candidateClientId || existingClientId) return false;
+
+  const candidateContent = normalizeMessageContent(candidate.content);
+  const existingContent = normalizeMessageContent(existing.content);
+  if (!candidateContent || candidateContent !== existingContent) return false;
+
+  const candidateTask = candidate.taskId;
+  const existingTask = existing.taskId;
+  if (candidateTask && existingTask && candidateTask !== existingTask && candidateTask !== "new" && existingTask !== "new") {
+    return false;
+  }
+
+  const candidateTime = messageTimestamp(candidate);
+  const existingTime = messageTimestamp(existing);
+  if (candidateTime !== null && existingTime !== null) {
+    return Math.abs(candidateTime - existingTime) < 20000;
+  }
+
+  return String(candidate.id || "").startsWith("optimistic-user-")
+    || String(existing.id || "").startsWith("optimistic-user-")
+    || String(candidate.id || "").startsWith("user-")
+    || String(existing.id || "").startsWith("user-");
+}
+
+function shouldPreferDuplicate(candidate, existing) {
+  if (hasEventIndex(candidate) && !hasEventIndex(existing)) return true;
+  if (isOptimisticMessage(existing) && !isOptimisticMessage(candidate)) return true;
+  if (isFallbackUserMessage(existing) && isOptimisticMessage(candidate)) return true;
+  if (isFallbackUserMessage(candidate) && !isFallbackUserMessage(existing)) return false;
+  return false;
+}
+
+function dedupeMessagesForDisplay(messages = []) {
+  return messages.reduce((visible, message) => {
+    let duplicateIndex = -1;
+    for (let index = visible.length - 1; index >= 0; index -= 1) {
+      if (isDuplicateUserMessage(message, visible[index])) {
+        duplicateIndex = index;
+        break;
+      }
+    }
+
+    if (duplicateIndex < 0) return [...visible, message];
+
+    const previous = visible[duplicateIndex];
+    if (!shouldPreferDuplicate(message, previous)) return visible;
+
+    const next = [...visible];
+    next[duplicateIndex] = message;
+    return next;
+  }, []);
+}
+
+function buildMessages(task, events, responseReady = true, options = {}) {
   if (!task) return [welcomeMessage];
+  const includeFallback = options.includeFallback !== false;
 
   // Durante uma nova execucao, preserva respostas anteriores da IA e esconde
   // apenas deltas/respostas gerados depois da ultima mensagem do usuario.
@@ -74,6 +161,7 @@ function buildMessages(task, events, responseReady = true) {
       eventIndex,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
+      createdAt: event.created_at,
       downloads: event.payload.downloads || [],
       documentation: event.payload.documentation || null,
       documents: event.payload.documents || (event.payload.documentation ? [{
@@ -85,10 +173,12 @@ function buildMessages(task, events, responseReady = true) {
       }] : []),
       images: event.payload.images || [],
       taskId: event.task_id || task.id,
-    }));
+      clientMessageId: event.payload.client_message_id || "",
+  }));
 
-  if (messages.length > 0) return messages;
-  return [{ id: `user-${task.id}`, role: "user", content: task.description }];
+  if (messages.length > 0) return dedupeMessagesForDisplay(messages);
+  if (!includeFallback) return [];
+  return [{ id: `user-${task.id}`, role: "user", content: task.description, taskId: task.id }];
 }
 
 function taskPromptForEvent(events, eventIndex) {
@@ -129,8 +219,8 @@ function buildPlanSegments(events, initialPlan, livePlan, agentBusy, latestUserT
   return segments;
 }
 
-function buildMessagesWithPlanAnchors(task, events, responseReady, planSegments = []) {
-  const messages = buildMessages(task, events, responseReady);
+function buildMessagesWithPlanAnchors(task, events, responseReady, planSegments = [], options = {}) {
+  const messages = buildMessages(task, events, responseReady, options);
   if (!messages.length || !planSegments.length) return messages;
   return messages.map((message) => {
     if (message.role !== "assistant") return message;
@@ -201,7 +291,71 @@ const emptyDisplayPlan = {
 
 function likelyTaskPrompt(prompt = "") {
   const value = String(prompt || "").trim().toLowerCase();
-  return /(pesquis|busc|procure|not[ií]cia|crie|criar|gere|gerar|desenvolva|implemente|fa[cç]a|calcule|analise|compare|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|publique|execute|rode|instale)/i.test(value);
+  return /(pesquis|busc|procure|not[ií]cia|crie|criar|construa|monte|gere|gerar|desenvolv|implemente|program|c[oó]digo|fa[cç]a|calcule|analise|compare|investigue|verifique|colete|acesse|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|melhore|otimize|publique|execute|rode|instale)/i.test(value);
+}
+
+function isProgressHandoffEvent(event) {
+  return event?.type === "agent_activity"
+    || event?.type === "agent_progress"
+    || event?.type === "tool_call"
+    || event?.type === "tool_result"
+    || event?.type === "source_saved"
+    || event?.type === "screen_frame"
+    || event?.type === "vertex_progress"
+    || event?.type === "files_created"
+    || event?.type?.startsWith("task_step_");
+}
+
+function matchingUserEventIndex(events, pendingPreparation) {
+  if (!pendingPreparation?.content) return -1;
+  const pendingContent = normalizeMessageContent(pendingPreparation.content);
+  const pendingClientId = String(pendingPreparation.clientMessageId || "").trim();
+  const pendingTime = messageTimestamp(pendingPreparation);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "user_message") continue;
+    const eventClientId = String(event.payload?.client_message_id || "").trim();
+    if (pendingClientId && eventClientId) {
+      if (pendingClientId === eventClientId) return index;
+      continue;
+    }
+    const currentTime = eventTimestamp(event);
+    if (pendingTime !== null && currentTime !== null && currentTime < pendingTime - 2000) {
+      continue;
+    }
+    if (
+      pendingPreparation.taskId
+      && pendingPreparation.taskId !== "new"
+      && event.task_id
+      && event.task_id !== pendingPreparation.taskId
+    ) {
+      continue;
+    }
+    const eventContent = normalizeMessageContent(event.payload?.content);
+    if (eventContent === pendingContent) return index;
+  }
+  return -1;
+}
+
+function eventMatchesOptimisticMessage(event, message) {
+  if (event?.type !== "user_message") return false;
+  const eventClientId = String(event.payload?.client_message_id || "").trim();
+  const messageClientId = String(message?.clientMessageId || "").trim();
+  if (eventClientId && messageClientId) return eventClientId === messageClientId;
+  if (eventClientId || messageClientId) return false;
+  if (normalizeMessageContent(event.payload?.content) !== normalizeMessageContent(message?.content)) return false;
+  if (
+    message?.taskId
+    && message.taskId !== "new"
+    && event.task_id
+    && event.task_id !== message.taskId
+  ) {
+    return false;
+  }
+
+  const messageTime = messageTimestamp(message);
+  const currentTime = eventTimestamp(event);
+  return !(messageTime !== null && currentTime !== null && currentTime < messageTime - 2000);
 }
 
 function buildPendingPlan(prompt = "") {
@@ -237,7 +391,9 @@ export default function App() {
   const [stopping, setStopping] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [secureLoginOpen, setSecureLoginOpen] = useState(false);
+  const [computerFocusRequest, setComputerFocusRequest] = useState(null);
   const [optimisticMessages, setOptimisticMessages] = useState([]);
+  const [pendingPreparation, setPendingPreparation] = useState(null);
   const {
     activeTask,
     contextState,
@@ -294,20 +450,33 @@ export default function App() {
     );
     if (taskLoading) {
       return pendingMessages.length > 0
-        ? pendingMessages
+        ? dedupeMessagesForDisplay(pendingMessages)
         : [{ id: "task-loading", role: "assistant", content: "Carregando conversa..." }];
     }
     if (taskError) {
       return [{ id: "task-error", role: "assistant", content: "Nao foi possivel carregar esta conversa." }];
     }
     const responseReady = !agentBusy || displayPlan.percent >= 100 || displayPlan.isTerminal;
-    const builtMessages = buildMessagesWithPlanAnchors(activeTask, currentEvents, responseReady, planSegments);
-    if (pendingMessages.length === 0) return builtMessages;
-    return builtMessages
+    const builtMessages = buildMessagesWithPlanAnchors(
+      activeTask,
+      currentEvents,
+      responseReady,
+      planSegments,
+      { includeFallback: pendingMessages.length === 0 },
+    );
+    if (pendingMessages.length === 0) return dedupeMessagesForDisplay(builtMessages);
+    const eventBackedMessages = builtMessages.filter((message) => hasEventIndex(message));
+    const visibleBuiltMessages = builtMessages
       .filter((message) => message.id !== "welcome")
-      .concat(pendingMessages.filter((pending) => !builtMessages.some((message) => (
-        message.role === "user" && message.content === pending.content
-      ))));
+      .filter((message) => !pendingMessages.some((pending) => (
+        isDuplicateUserMessage(pending, message) && !hasEventIndex(message)
+      )));
+    const pendingNotRepresented = pendingMessages.filter((pending) => !eventBackedMessages.some((message) => (
+      isDuplicateUserMessage(pending, message)
+    )));
+    const mergedMessages = visibleBuiltMessages
+      .concat(pendingNotRepresented);
+    return dedupeMessagesForDisplay(mergedMessages);
   }, [activeTask, activeTaskId, agentBusy, currentEvents, displayPlan.isTerminal, displayPlan.percent, optimisticMessages, planSegments, taskError, taskLoading]);
   const showTyping = useMemo(
     () => shouldShowTyping(activeTask, currentEvents, agentBusy),
@@ -379,6 +548,7 @@ export default function App() {
     setBackendStatus("checking");
     resetTaskData();
     setAgentStatus("idle");
+    setPendingPreparation(null);
   }, [resetTaskData, user]);
 
   useEffect(() => {
@@ -389,6 +559,36 @@ export default function App() {
       setAgentStatus(activeTask.status);
     }
   }, [activeTaskId, activeTask?.status, resetTaskData]);
+
+  useEffect(() => {
+    if (!pendingPreparation) return;
+    const userIndex = matchingUserEventIndex(currentEvents, pendingPreparation);
+    if (userIndex < 0) return;
+    const pendingTime = messageTimestamp(pendingPreparation);
+
+    const hasRealProgress = currentEvents.some((event, index) => (
+      index > userIndex
+      && isProgressHandoffEvent(event)
+      && (
+        pendingTime === null
+        || eventTimestamp(event) === null
+        || eventTimestamp(event) >= pendingTime - 1000
+      )
+    ));
+    const hasFinished = currentEvents.some((event, index) => (
+      index > userIndex
+      && event?.type === "assistant_message_done"
+      && (
+        pendingTime === null
+        || eventTimestamp(event) === null
+        || eventTimestamp(event) >= pendingTime - 1000
+      )
+    ));
+
+    if (hasRealProgress || hasFinished) {
+      setPendingPreparation(null);
+    }
+  }, [currentEvents, pendingPreparation]);
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -421,9 +621,7 @@ export default function App() {
     if (!activeTaskId || optimisticMessages.length === 0 || currentEvents.length === 0) return;
     setOptimisticMessages((current) => current.filter((message) => {
       if (message.taskId !== activeTaskId) return true;
-      return !currentEvents.some((event) => (
-        event.type === "user_message" && event.payload?.content === message.content
-      ));
+      return !currentEvents.some((event) => eventMatchesOptimisticMessage(event, message));
     }));
   }, [activeTaskId, currentEvents, optimisticMessages.length]);
 
@@ -433,6 +631,7 @@ export default function App() {
     const optimisticId = `optimistic-user-${now}`;
     const optimisticTaskId = activeTaskId || "new";
     const optimisticContent = description || (files.length > 0 ? "Analise esta imagem." : "");
+    const shouldPrepareEnvironment = Boolean(optimisticContent) && (files.length > 0 || likelyTaskPrompt(optimisticContent));
     if (optimisticContent) {
       setOptimisticMessages((current) => [
         ...current,
@@ -440,10 +639,19 @@ export default function App() {
           id: optimisticId,
           role: "user",
           content: optimisticContent,
+          createdAt: now,
           taskId: optimisticTaskId,
+          clientMessageId: optimisticId,
         },
       ]);
     }
+    setPendingPreparation(shouldPrepareEnvironment ? {
+      content: optimisticContent,
+      createdAt: now,
+      id: optimisticId,
+      taskId: optimisticTaskId,
+      clientMessageId: optimisticId,
+    } : null);
     if (files.length > 0) {
       if (activeTaskId) {
         setTaskEvents((current) => [
@@ -487,6 +695,7 @@ export default function App() {
           },
         ]);
         setAgentStatus("done");
+        setPendingPreparation(null);
         return;
       }
 
@@ -498,31 +707,28 @@ export default function App() {
       setContextState(null);
       setActiveTaskId(result.task_id);
       setAgentStatus("done");
+      setPendingPreparation(null);
       return;
     }
 
     if (activeTaskId) {
-      setTaskEvents((current) => [
-        ...current,
-        {
-          type: "user_message",
-          task_id: activeTaskId,
-          created_at: new Date().toISOString(),
-          payload: { content: description },
-        },
-      ]);
       try {
-        await appendTaskMessage(activeTaskId, description);
-      } finally {
+        await appendTaskMessage(activeTaskId, description, optimisticId);
+      } catch (error) {
         setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
+        setPendingPreparation((current) => (current?.id === optimisticId ? null : current));
+        throw error;
       }
       return;
     }
 
-    const result = await createTask(description);
+    const result = await createTask(description, optimisticId);
     setOptimisticMessages((current) => current.map((message) => (
       message.id === optimisticId ? { ...message, taskId: result.task_id } : message
     )));
+    setPendingPreparation((current) => (
+      current?.id === optimisticId ? { ...current, taskId: result.task_id } : current
+    ));
     setTasks((current) => [result.task, ...current]);
     setActiveTask(result.task);
     setTaskEvents([]);
@@ -590,6 +796,7 @@ export default function App() {
     setActiveTaskId(null);
     resetTaskData();
     setAgentStatus("idle");
+    setPendingPreparation(null);
   }
 
   if (authLoading) {
@@ -697,17 +904,23 @@ export default function App() {
             </header>
             <MessageList
               activeSearch={activeSearch}
-              agentBusy={agentBusy}
+              agentBusy={agentBusy || Boolean(pendingPreparation)}
               events={currentEvents}
               isTyping={showTyping}
               livePlan={displayPlan}
               messages={messages}
+              onComputerFocus={(request) => setComputerFocusRequest({
+                ...request,
+                requestId: `${Date.now()}-${request?.eventIndex ?? "synthetic"}`,
+              })}
+              pendingPreparation={pendingPreparation}
             />
             <VortaxComputerDock
               activeTask={activeTask}
               agentStatus={agentStatus}
               connectionState={connectionState}
               events={currentEvents}
+              focusRequest={computerFocusRequest}
               livePlan={displayPlan}
               onOpenDetails={() => setDetailsOpen(true)}
             />

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, SecretStr
 from auth import AuthUser, ensure_task_owner, require_auth
 from config import settings
 from database import database
+from services.activity_events import publish_agent_activity
 from services.agent_runner import run_agent_task
 from services.context_manager import get_context_payload, prepare_context_history
 from services.credential_store import CredentialStoreError, credential_store, normalize_origin
@@ -35,10 +36,12 @@ router = APIRouter()
 
 class TaskCreate(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
+    client_message_id: str | None = Field(default=None, max_length=120)
 
 
 class TaskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+    client_message_id: str | None = Field(default=None, max_length=120)
 
 
 class AuthorizedTaskCreate(BaseModel):
@@ -80,6 +83,38 @@ def _reject_inline_credentials(text: str) -> None:
             status_code=400,
             detail="Use o fluxo seguro de login para enviar credenciais; nao envie senhas no chat.",
         )
+
+
+def _message_payload(content: str, client_message_id: str | None = None) -> dict:
+    payload = {"content": content}
+    value = str(client_message_id or "").strip()
+    if value:
+        payload["client_message_id"] = value[:120]
+    return payload
+
+
+async def _publish_preparing_environment(task_id: str, description: str) -> None:
+    if should_answer_directly(description):
+        return
+    await event_bus.publish(task_id, "agent_status", {"status": "queued", "label": "Preparando"})
+    await event_bus.publish(
+        task_id,
+        "agent_progress",
+        {
+            "label": "Iniciando ambiente",
+            "detail": "Criando plano de tarefas",
+            "tool": "planning",
+        },
+    )
+    await publish_agent_activity(
+        event_bus,
+        task_id,
+        kind="analysis",
+        title="Iniciando ambiente",
+        detail="Criando plano de tarefas",
+        status="running",
+        tool="planning",
+    )
 
 
 def _safe_authorized_description(description: str, origin: str) -> str:
@@ -350,12 +385,12 @@ async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(requ
     _reject_inline_credentials(payload.description)
     task = task_store.create(payload.description, current_user.uid)
     await event_bus.publish(task["id"], "task_created", {"task": task})
-    steps = await _create_live_plan(task["id"], task["description"])
-    await event_bus.publish(task["id"], "user_message", {"content": task["description"]})
+    await event_bus.publish(task["id"], "user_message", _message_payload(task["description"], payload.client_message_id))
+    await _publish_preparing_environment(task["id"], task["description"])
     runner_tasks[task["id"]] = asyncio.create_task(
         run_agent_task(task["id"], task["description"], task_store, event_bus)
     )
-    return {"task_id": task["id"], "task": task, "plan": {"steps": steps}}
+    return {"task_id": task["id"], "task": task, "plan": {"steps": []}}
 
 
 @router.post("/authorized")
@@ -375,7 +410,7 @@ async def create_authorized_task(payload: AuthorizedTaskCreate, current_user: Au
         },
     )
     steps = await _create_live_plan(task["id"], task["description"])
-    await event_bus.publish(task["id"], "user_message", {"content": safe_description})
+    await event_bus.publish(task["id"], "user_message", _message_payload(safe_description))
     runner_tasks[task["id"]] = asyncio.create_task(
         run_agent_task(task["id"], task["description"], task_store, event_bus)
     )
@@ -430,7 +465,8 @@ async def create_task_message(
 
     content = payload.content.strip()
     _reject_inline_credentials(content)
-    await event_bus.publish(task_id, "user_message", {"content": content})
+    await event_bus.publish(task_id, "user_message", _message_payload(content, payload.client_message_id))
+    await _publish_preparing_environment(task_id, content)
     await _create_live_plan(task_id, content, replan=True)
     task_store.update_status(task_id, "queued")
     runner_tasks[task_id] = asyncio.create_task(run_agent_task(task_id, content, task_store, event_bus))

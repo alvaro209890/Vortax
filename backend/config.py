@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     SHELL_TIMEOUT_SECONDS: int = 30
     SHELL_CODE_AGENT_TIMEOUT_SECONDS: int = 300
     SHELL_VERTEX_TIMEOUT_SECONDS: int = 300  # legacy env fallback
+    CODE_AGENT_COMMAND: str = "openclaude"
+    CODE_AGENT_LABEL: str = "OpenClaude"
+    CODE_AGENT_PATH_EXTRA: str = "/home/server/.nvm/versions/node/v20.20.0/bin"
     CODE_AGENT_STATIC_READY_SECONDS: float = 4.0
     VERTEX_STATIC_READY_SECONDS: float = 4.0  # legacy env fallback
     CODE_AGENT_STATIC_INCOMPLETE_SECONDS: float = 45.0

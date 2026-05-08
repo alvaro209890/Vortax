@@ -9,7 +9,6 @@ import {
   ExternalLink,
   FileSearch,
   FileText,
-  Globe2,
   Loader2,
   Monitor,
   Search,
@@ -410,6 +409,15 @@ function numericIndex(value) {
   return Number.isFinite(value) ? value : null;
 }
 
+function publicText(value) {
+  return String(value || "")
+    .replace(/\bOpenClaude\b/g, "Vortax")
+    .replace(/\bVertex CLI\b/g, "Vortax")
+    .replace(/\bVertex\b/g, "Vortax")
+    .replace(/\bopenclaude\b/g, "Vortax")
+    .replace(/\bvertex\b/g, "Vortax");
+}
+
 function latestUserMessage(messages) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === "user") return messages[index];
@@ -417,46 +425,289 @@ function latestUserMessage(messages) {
   return null;
 }
 
-function normalizeActivityEvent(event, index) {
-  if (event?.type !== "agent_activity") return null;
-  const payload = event.payload || {};
-  const title = String(payload.title || "").trim();
-  if (!title) return null;
-  return {
-    createdAt: event.created_at || "",
-    detail: String(payload.detail || "").trim(),
-    id: `${event.created_at || "activity"}-${index}`,
-    kind: payload.kind || "analysis",
-    metadata: payload.metadata || {},
-    status: payload.status || "running",
-    title,
-    tool: payload.tool || "",
-  };
+function likelyTaskPrompt(prompt = "") {
+  const value = String(prompt || "").trim().toLowerCase();
+  return /(pesquis|busc|procure|not[ií]cia|crie|criar|construa|monte|gere|gerar|desenvolv|implemente|program|c[oó]digo|fa[cç]a|calcule|analise|compare|investigue|verifique|colete|acesse|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|melhore|otimize|publique|execute|rode|instale)/i.test(value);
 }
 
-function scopedActivities(events = [], afterEventIndex = null) {
+function isDirectPlanEvent(event) {
+  if (event?.type !== "task_plan_created" && event?.type !== "task_plan_replanned") return false;
+  const payload = event.payload || {};
+  if (payload.direct) return true;
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  return steps.length === 1
+    && String(steps[0]?.tool_hint || "").toLowerCase() === "deliver"
+    && /responder mensagem|resposta direta/i.test(String(steps[0]?.label || steps[0]?.detail || ""));
+}
+
+function latestEventIndexBefore(events, beforeIndex, predicate) {
+  const limit = Number.isFinite(beforeIndex) ? beforeIndex : events.length;
+  for (let index = limit - 1; index >= 0; index -= 1) {
+    if (predicate(events[index])) return index;
+  }
+  return -1;
+}
+
+function isDirectResponseSegment(events, previousUserIndex, currentUserIndex, nextUserIndex, message) {
+  if (currentUserIndex === null) return false;
+  const previousAssistantDoneIndex = latestEventIndexBefore(
+    events,
+    currentUserIndex,
+    (event) => event?.type === "assistant_message_done",
+  );
+  const start = Math.max(previousUserIndex ?? -1, previousAssistantDoneIndex);
+  const end = nextUserIndex ?? events.length;
+  const scoped = events.filter((_, index) => index > start && index < end);
+  if (scoped.some(isDirectPlanEvent)) return true;
+  return !likelyTaskPrompt(message?.content || "")
+    && scoped.some((event) => event.type === "agent_progress" && /resposta r[aá]pida/i.test(String(event.payload?.label || "")));
+}
+
+function toolKind(name = "") {
+  if (name === "browser_google_search") return "search";
+  if (["browser_extract_article", "browser_extract_text", "browser_extract_links"].includes(name)) return "source";
+  if (name.startsWith("browser_")) return "browser";
+  if (name === "shell_run") return "code";
+  if (name === "exact_solve") return "validation";
+  return "analysis";
+}
+
+function stepKind(step = {}) {
+  const hint = String(step.tool_hint || "").toLowerCase();
+  if (/(research|search|web)/.test(hint)) return "search";
+  if (/(code|editor|openclaude|execute|shell|terminal)/.test(hint)) return "code";
+  if (/(valid|review|quality)/.test(hint)) return "validation";
+  if (/(deliver|finish|file|document|report)/.test(hint)) return "file";
+  return "analysis";
+}
+
+function toolTitle(name = "", fallback = "Executando etapa") {
+  const labels = {
+    browser_click_link_by_index: "Abrindo resultado",
+    browser_extract_article: "Lendo fonte",
+    browser_extract_links: "Extraindo links",
+    browser_extract_text: "Lendo pagina",
+    browser_get_state: "Verificando navegador",
+    browser_google_search: "Pesquisando na web",
+    browser_navigate: "Navegando",
+    browser_screenshot: "Capturando tela",
+    shell_run: "Executando comando",
+  };
+  return labels[name] || fallback;
+}
+
+function summarizeToolResult(result) {
+  if (!result) return "";
+  if (typeof result === "string") return result;
+  if (result.query && Array.isArray(result.results)) return `${result.results.length} resultados para "${result.query}"`;
+  if (Array.isArray(result.links)) return `${result.links.length} links encontrados`;
+  if (result.opened?.title) return result.opened.title;
+  if (result.title && result.url) return `${result.title} - ${result.url}`;
+  if (result.text) return String(result.text).slice(0, 220);
+  if (result.error) return result.error;
+  if (result.success === false) return "A ferramenta retornou falha.";
+  return "Pronto";
+}
+
+function actionDetail(payload = {}) {
+  const params = payload.params || {};
+  return payload.description
+    || params.query
+    || params.url
+    || params.command
+    || payload.name
+    || "";
+}
+
+function normalizeOperationalEvent(event, index) {
+  const payload = event?.payload || {};
+  const id = event?.event_id !== undefined && event?.event_id !== null
+    ? `activity-event-${event.event_id}`
+    : `activity-${event?.type || "event"}-${event?.created_at || index}-${index}`;
+
+  if (event?.type === "agent_activity") {
+    const title = String(payload.title || "").trim();
+    if (!title) return null;
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(payload.detail || ""),
+      event,
+      eventIndex: index,
+      id,
+      kind: payload.kind || "analysis",
+      metadata: payload.metadata || {},
+      status: payload.status || "running",
+      title: publicText(title),
+      tool: payload.tool || "",
+    };
+  }
+
+  if (event?.type === "agent_progress") {
+    const tool = payload.tool || "";
+    const title = payload.label || payload.detail || "Andamento";
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(payload.detail || ""),
+      event,
+      eventIndex: index,
+      id,
+      kind: toolKind(tool),
+      metadata: { ...(payload.origin ? { url: payload.origin } : {}) },
+      status: "running",
+      title: publicText(title),
+      tool,
+    };
+  }
+
+  if (event?.type === "tool_call") {
+    const name = payload.name || "";
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(actionDetail(payload)),
+      event,
+      eventIndex: index,
+      id,
+      kind: toolKind(name),
+      metadata: payload.params || {},
+      status: "running",
+      title: toolTitle(name),
+      tool: name,
+    };
+  }
+
+  if (event?.type === "tool_result") {
+    const name = payload.name || "";
+    const result = payload.result || {};
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(summarizeToolResult(result)),
+      event,
+      eventIndex: index,
+      id,
+      kind: toolKind(name),
+      metadata: result || {},
+      status: result?.success === false || result?.error ? "failed" : "done",
+      title: toolTitle(name, "Resultado"),
+      tool: name,
+    };
+  }
+
+  if (event?.type?.startsWith("task_step_")) {
+    const step = payload.step || {};
+    const failed = event.type === "task_step_failed" || step.status === "failed";
+    const done = event.type === "task_step_completed" || ["passed", "skipped"].includes(step.status);
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(step.evidence_summary?.at?.(-1) || step.detail || ""),
+      event,
+      eventIndex: index,
+      id,
+      kind: stepKind(step),
+      metadata: { step_id: step.id, tool_hint: step.tool_hint },
+      status: failed ? "failed" : done ? "done" : "running",
+      title: publicText(step.label || "Etapa da tarefa"),
+      tool: step.tool_hint || "",
+    };
+  }
+
+  if (event?.type === "source_saved") {
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(payload.url || payload.title || ""),
+      event,
+      eventIndex: index,
+      id,
+      kind: "source",
+      metadata: { source_title: payload.title, url: payload.url },
+      status: "done",
+      title: "Fonte salva",
+      tool: "source_saved",
+    };
+  }
+
+  if (event?.type === "screen_frame") {
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(payload.caption || payload.title || payload.url || "Tela atualizada"),
+      event,
+      eventIndex: index,
+      id,
+      kind: "browser",
+      metadata: { title: payload.title, url: payload.url },
+      status: "done",
+      title: "Tela atualizada",
+      tool: "screen_frame",
+    };
+  }
+
+  if (event?.type === "vertex_progress") {
+    const stage = payload.stage || payload.current_stage || "";
+    return {
+      createdAt: event.created_at || "",
+      detail: publicText(payload.file ? `${payload.message || "Trabalhando em"} ${payload.file}` : payload.message || ""),
+      event,
+      eventIndex: index,
+      id,
+      kind: "code",
+      metadata: { file: payload.file, stage },
+      status: payload.status === "done" || stage === "done" ? "done" : payload.status === "error" || stage === "error" ? "failed" : "running",
+      title: publicText(payload.title || payload.label || "Vortax no editor"),
+      tool: "vertex_progress",
+    };
+  }
+
+  if (event?.type === "files_created") {
+    const fileCount = payload.files?.length || 0;
+    const projectCount = payload.projects?.length || 0;
+    return {
+      createdAt: event.created_at || "",
+      detail: `${fileCount} arquivo(s) em ${projectCount || 1} projeto(s).`,
+      event,
+      eventIndex: index,
+      id,
+      kind: "file",
+      metadata: { files: payload.files || [], projects: payload.projects || [] },
+      status: "done",
+      title: "Arquivos gerados",
+      tool: "files_created",
+    };
+  }
+
+  return null;
+}
+
+function normalizeActivityEvent(event, index) {
+  return normalizeOperationalEvent(event, index);
+}
+
+function scopedActivities(events = [], afterEventIndex = null, beforeEventIndex = null) {
   return events
     .map((event, index) => ({ activity: normalizeActivityEvent(event, index), index }))
-    .filter(({ activity, index }) => activity && (afterEventIndex === null || index > afterEventIndex))
+    .filter(({ activity, index }) => activity
+      && (afterEventIndex === null || index > afterEventIndex)
+      && (beforeEventIndex === null || index < beforeEventIndex))
     .map(({ activity }) => activity);
 }
 
 function activityOpening(activities, activeSearch) {
   const latest = activities[activities.length - 1];
+  if (latest?.tool === "planning") {
+    return "Iniciando ambiente antes da execução.";
+  }
   const kind = latest?.kind || (activeSearch ? "search" : "analysis");
   if (kind === "search" || kind === "source" || kind === "browser") {
-    return "Vou pesquisar agora e verificar as fontes relevantes.";
+    return "Pesquisando e verificando fontes.";
   }
   if (kind === "code" || kind === "file") {
-    return "Vou preparar os arquivos e acompanhar os pontos importantes aqui.";
+    return "Preparando arquivos e execução.";
   }
   if (kind === "validation") {
-    return "Estou conferindo a entrega antes de finalizar.";
+    return "Conferindo a entrega.";
   }
   if (kind === "finalizing") {
-    return "Estou organizando a resposta final.";
+    return "Organizando a resposta final.";
   }
-  return "Vou trabalhar nisso e mostrar os principais andamentos aqui.";
+  return "Acompanhando a tarefa.";
 }
 
 function activityIcon(kind, size = 14) {
@@ -486,32 +737,115 @@ function activityStatusLabel(status) {
   return "em andamento";
 }
 
-function activityPills(activities, activeSearch) {
-  const pills = activities
-    .filter((activity) => ["search", "source", "browser", "code", "validation", "file"].includes(activity.kind))
-    .slice(-6);
-  if (activeSearch && !pills.some((activity) => activity.kind === "search")) {
-    pills.push({
-      detail: activeSearch.query,
-      id: `active-search-${activeSearch.query}`,
-      kind: "search",
-      metadata: { query: activeSearch.query },
-      status: "running",
-      title: "Pesquisando",
-    });
-  }
-  return pills;
+function normalizeActivityText(value = "") {
+  return publicText(value)
+    .replace(/https?:\/\/(www\.)?/gi, "")
+    .replace(/[?#].*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
-function ChatProgressArticle({ activities = [], activeSearch }) {
-  if (!activities.length && !activeSearch) return null;
-  const latest = activities[activities.length - 1] || {
+function lowSignalActivity(activity = {}) {
+  const title = normalizeActivityText(activity.title);
+  return activity.tool === "screen_frame"
+    || /planejando proximo passo|planejando próximo passo|tela atualizada|verificando navegador/.test(title);
+}
+
+function activitySignature(activity = {}) {
+  const metadata = activity.metadata || {};
+  const subject = metadata.query
+    || metadata.source_title
+    || metadata.url
+    || metadata.file
+    || activity.detail
+    || activity.title;
+  return [
+    activity.kind || "",
+    activity.tool || "",
+    normalizeActivityText(activity.title),
+    normalizeActivityText(subject).slice(0, 140),
+  ].join(":");
+}
+
+function primaryProgressActivity(activities = [], activeSearch) {
+  const meaningful = [...activities].reverse().find((activity) => !activity.synthetic && !lowSignalActivity(activity));
+  if (meaningful) return meaningful;
+  if (activities.length > 0) return activities[activities.length - 1];
+  return {
     detail: activeSearch?.query || "",
     kind: "search",
     status: "running",
+    synthetic: true,
     title: "Pesquisando na web",
   };
-  const pills = activityPills(activities, activeSearch);
+}
+
+function compactProgressActivities(activities = [], latest) {
+  const selected = [];
+  const seen = new Set(latest ? [activitySignature(latest)] : []);
+
+  [...activities].reverse().forEach((activity) => {
+    if (!activity || activity.synthetic || activity.id === latest?.id) return;
+    if (lowSignalActivity(activity) && selected.length > 0) return;
+    const signature = activitySignature(activity);
+    if (seen.has(signature)) return;
+    seen.add(signature);
+    selected.push(activity);
+  });
+
+  return selected.slice(0, 3).reverse();
+}
+
+function pendingPreparationActivity() {
+  return {
+    createdAt: new Date().toISOString(),
+    detail: "Criando plano de tarefas",
+    id: "pending-preparation",
+    kind: "analysis",
+    metadata: {},
+    status: "running",
+    synthetic: true,
+    title: "Iniciando ambiente",
+    tool: "planning",
+  };
+}
+
+function normalizeMessageText(value = "") {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function matchesPendingPreparation(message, pendingPreparation) {
+  if (!message || !pendingPreparation) return false;
+  if (message.id && message.id === pendingPreparation.id) return true;
+  const messageClientId = String(message.clientMessageId || "").trim();
+  const pendingClientId = String(pendingPreparation.clientMessageId || "").trim();
+  if (messageClientId && pendingClientId) return messageClientId === pendingClientId;
+  if (messageClientId || pendingClientId) return false;
+
+  const messageContent = normalizeMessageText(message.content);
+  const pendingContent = normalizeMessageText(pendingPreparation.content);
+  if (!messageContent || messageContent !== pendingContent) return false;
+
+  const messageTaskId = message.taskId;
+  const pendingTaskId = pendingPreparation.taskId;
+  return !messageTaskId
+    || !pendingTaskId
+    || messageTaskId === pendingTaskId
+    || messageTaskId === "new"
+    || pendingTaskId === "new";
+}
+
+function ChatProgressArticle({ activities = [], activeSearch, onComputerFocus }) {
+  if (!activities.length && !activeSearch) return null;
+  const latest = primaryProgressActivity(activities, activeSearch);
+  const visibleActivities = compactProgressActivities(activities, latest);
+  const latestDisabled = latest.synthetic || !latest.event;
+  const focusActivity = (activity) => onComputerFocus?.({
+    activity,
+    event: activity.event,
+    eventIndex: activity.eventIndex,
+  });
 
   return (
     <article className="message assistant progress-message chat-progress-message">
@@ -521,7 +855,13 @@ function ChatProgressArticle({ activities = [], activeSearch }) {
       <div className="message-content">
         <div className="message-role">Vortax trabalhando</div>
         <div className="chat-progress-copy">{activityOpening(activities, activeSearch)}</div>
-        <div className={`chat-progress-current ${latest.status || "running"}`}>
+        <button
+          className={`chat-progress-current ${latest.status || "running"} ${latestDisabled ? "" : "clickable"}`}
+          disabled={latestDisabled}
+          onClick={() => focusActivity(latest)}
+          title={latestDisabled ? undefined : "Ver esta cena no computador do Vortax"}
+          type="button"
+        >
           <span className="chat-progress-current-icon">
             {latest.status === "running" ? <Loader2 size={14} /> : activityIcon(latest.kind, 14)}
           </span>
@@ -530,14 +870,25 @@ function ChatProgressArticle({ activities = [], activeSearch }) {
             {latest.detail ? <small>{latest.detail}</small> : null}
           </div>
           <em>{activityStatusLabel(latest.status)}</em>
-        </div>
-        {pills.length > 0 && (
-          <div className="chat-progress-pills">
-            {pills.map((activity) => (
-              <span className={`chat-progress-pill ${activity.kind} ${activity.status}`} key={activity.id}>
-                {activityIcon(activity.kind, 13)}
-                <span>{activityPillLabel(activity)}</span>
-              </span>
+        </button>
+        {visibleActivities.length > 0 && (
+          <div className="chat-progress-activity-list">
+            {visibleActivities.map((activity) => (
+              <button
+                className={`chat-progress-activity ${activity.kind} ${activity.status}`}
+                key={activity.id}
+                onClick={() => focusActivity(activity)}
+                title="Ver esta cena no computador do Vortax"
+                type="button"
+              >
+                <span className="chat-progress-activity-icon">
+                  {activity.status === "running" ? <Loader2 size={13} /> : activityIcon(activity.kind, 13)}
+                </span>
+                <span className="chat-progress-activity-copy">
+                  <strong>{activity.title}</strong>
+                  {activity.detail ? <small>{activityPillLabel(activity)}</small> : null}
+                </span>
+              </button>
             ))}
           </div>
         )}
@@ -546,37 +897,99 @@ function ChatProgressArticle({ activities = [], activeSearch }) {
   );
 }
 
-function buildTimelineItems(messages, events, agentBusy, activeSearch) {
+function buildTimelineItems(messages, events, agentBusy, activeSearch, pendingPreparation) {
   const items = [];
   const latestUser = latestUserMessage(messages);
-  const latestUserEventIndex = numericIndex(latestUser?.eventIndex);
-  const activities = scopedActivities(events, latestUserEventIndex);
-  const shouldShowProgress = agentBusy && (activities.length > 0 || Boolean(activeSearch));
-  let progressRendered = false;
+  let pendingPreparationRendered = false;
+  let realProgressRendered = false;
 
-  messages.forEach((message) => {
+  messages.forEach((message, messageIndex) => {
     items.push({
       key: `message-${message.id}`,
       message,
       type: "message",
     });
 
-    if (shouldShowProgress && message.id === latestUser?.id) {
-      progressRendered = true;
-      items.push({
-        activities,
-        activeSearch,
-        key: `progress-${latestUser.id}`,
-        type: "progress",
-      });
+    if (message.role === "user") {
+      const currentIndex = numericIndex(message.eventIndex);
+      const previousUser = [...messages.slice(0, messageIndex)].reverse().find((item) => item.role === "user");
+      const previousUserIndex = numericIndex(previousUser?.eventIndex);
+      const nextUser = messages.slice(messageIndex + 1).find((item) => item.role === "user");
+      const nextUserIndex = numericIndex(nextUser?.eventIndex);
+      const isDirectResponse = isDirectResponseSegment(events, previousUserIndex, currentIndex, nextUserIndex, message);
+      let activities = currentIndex === null
+        ? []
+        : scopedActivities(events, currentIndex, nextUserIndex);
+      const isLatestUser = message.id === latestUser?.id;
+
+      if (isDirectResponse) {
+        activities = [];
+      }
+
+      if (!isDirectResponse && isLatestUser && activeSearch && !activities.some((activity) => activity.kind === "search")) {
+        activities = [
+          ...activities,
+          {
+            detail: activeSearch.query,
+            id: `active-search-${activeSearch.query}`,
+            kind: "search",
+            metadata: { query: activeSearch.query },
+            status: "running",
+            synthetic: true,
+            title: "Pesquisando na web",
+            tool: "browser_google_search",
+          },
+        ];
+      }
+
+      const shouldShowPendingPreparation = !isDirectResponse
+        && isLatestUser
+        && activities.length === 0
+        && (
+          matchesPendingPreparation(message, pendingPreparation)
+          || (agentBusy && likelyTaskPrompt(message.content))
+        );
+
+      if (shouldShowPendingPreparation) {
+        activities = [pendingPreparationActivity()];
+        pendingPreparationRendered = true;
+      }
+
+      const isOnlyPendingPreparation = activities.length === 1 && activities[0]?.tool === "planning";
+      if (activities.length > 0 && !isOnlyPendingPreparation) {
+        realProgressRendered = true;
+      }
+      if ((!isLatestUser || !agentBusy) && activities.length > 0 && !isOnlyPendingPreparation) {
+        activities = activities.map((activity) => (
+          activity.status === "running" ? { ...activity, status: "done" } : activity
+        ));
+      }
+
+      if (activities.length > 0) {
+        items.push({
+          activities,
+          activeSearch: isLatestUser ? activeSearch : null,
+          key: `progress-${message.id}-${activities.map((activity) => activity.id).join("-")}`,
+          type: "progress",
+        });
+      }
     }
   });
 
-  if (shouldShowProgress && !progressRendered) {
+  if (pendingPreparation && !pendingPreparationRendered && !realProgressRendered) {
     items.push({
-      activities,
+      activities: [pendingPreparationActivity()],
       activeSearch,
-      key: "progress-floating",
+      key: `progress-pending-preparation-${pendingPreparation.id || pendingPreparation.createdAt || "current"}`,
+      type: "progress",
+    });
+  }
+
+  if (items.length === 0 && agentBusy) {
+    items.push({
+      activities: [pendingPreparationActivity()],
+      activeSearch,
+      key: "progress-pending-empty",
       type: "progress",
     });
   }
@@ -611,12 +1024,20 @@ function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId })
 
 /* ── Message List ────────────────────────────────────────────────── */
 
-export function MessageList({ activeSearch, agentBusy = false, events = [], isTyping = false, messages }) {
+export function MessageList({
+  activeSearch,
+  agentBusy = false,
+  events = [],
+  isTyping = false,
+  messages,
+  onComputerFocus,
+  pendingPreparation,
+}) {
   const endRef = useRef(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const timelineItems = useMemo(
-    () => buildTimelineItems(messages, events, agentBusy, activeSearch),
-    [activeSearch, agentBusy, events, messages],
+    () => buildTimelineItems(messages, events, agentBusy, activeSearch, pendingPreparation),
+    [activeSearch, agentBusy, events, messages, pendingPreparation],
   );
   const showTypingMessage = isTyping && !timelineItems.some((item) => item.type === "progress");
   const scrollKey = useMemo(
@@ -644,6 +1065,7 @@ export function MessageList({ activeSearch, agentBusy = false, events = [], isTy
                   activities={item.activities}
                   activeSearch={item.activeSearch}
                   key={item.key}
+                  onComputerFocus={onComputerFocus}
                 />
               );
             }

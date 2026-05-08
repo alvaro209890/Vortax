@@ -274,6 +274,12 @@ def _real_completion_evidence(
         return None
 
     if hint == "execute":
+        document_profile = document_artifact_profile(description)
+        report_profile = report_artifact_profile(description)
+        if document_profile.get("requires_artifact") and not _has_requested_document_artifact(task_id, document_profile):
+            return None
+        if report_profile.get("requires_markdown") and not _has_markdown_artifact(task_id):
+            return None
         if _has_successful_tool(events, lambda name, _result: not name.startswith("browser_")):
             return {"status": "ok", "summary": "Ferramenta de execucao concluiu sem erro."}
         if final_content.strip():
@@ -450,7 +456,7 @@ def _is_code_agent_shell_call_from_params(params: dict[str, Any]) -> bool:
     except ValueError:
         parts = command.split()
     for part in parts:
-        if part == CODE_AGENT_COMMAND or part.endswith(f"/{CODE_AGENT_COMMAND}"):
+        if part == CODE_AGENT_COMMAND or Path(part).name == Path(CODE_AGENT_COMMAND).name:
             return True
     return False
 
@@ -476,7 +482,7 @@ def _code_agent_shell_command(event: dict[str, Any]) -> str | None:
         if cd_path.is_absolute() or ".." in cd_path.parts:
             return None
         parts = parts[3:]
-    return command if bool(parts) and parts[0] == CODE_AGENT_COMMAND else None
+    return command if bool(parts) and (parts[0] == CODE_AGENT_COMMAND or Path(parts[0]).name == Path(CODE_AGENT_COMMAND).name) else None
 
 
 def _looks_like_creation_code_agent_command(command: str) -> bool:
@@ -486,7 +492,7 @@ def _looks_like_creation_code_agent_command(command: str) -> bool:
         return False
     if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
         parts = parts[3:]
-    if not parts or parts[0] != CODE_AGENT_COMMAND:
+    if not parts or (parts[0] != CODE_AGENT_COMMAND and Path(parts[0]).name != Path(CODE_AGENT_COMMAND).name):
         return False
     if any(part in {"--version", "-v", "--help", "help"} for part in parts[1:]):
         return False

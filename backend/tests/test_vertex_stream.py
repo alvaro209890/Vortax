@@ -1,12 +1,16 @@
 import asyncio
 import unittest
 
+import tools.shell as shell_module
 from services.stream_contract import build_stream_event
 from services.web_validation import _vision_found_bug
 from tools.shell import (
+    _apply_code_agent_path,
     _clean_terminal_text,
+    _code_agent_unavailable_error,
     _display_terminal_line,
     _extract_command,
+    _has_blocked_patterns,
     _is_spinner_noise,
     _normalize_shell_command,
     _parse_code_agent_progress,
@@ -158,6 +162,27 @@ class OpenClaudeStreamTests(unittest.TestCase):
 
         self.assertEqual(command, "cd workspace/calc && python3 -m http.server 8080 --bind 127.0.0.1")
         self.assertEqual(_extract_command(command), "python3")
+
+    def test_allows_stderr_redirect_to_dev_null_for_diagnostics(self) -> None:
+        self.assertIsNone(_has_blocked_patterns("ls -la *.md *.pdf 2>/dev/null"))
+
+    def test_adds_code_agent_path_extra_to_shell_environment(self) -> None:
+        original = shell_module.settings.CODE_AGENT_PATH_EXTRA
+        try:
+            shell_module.settings.CODE_AGENT_PATH_EXTRA = "/tmp/openclaude-bin"
+            env = {"PATH": "/usr/bin"}
+            _apply_code_agent_path(env)
+        finally:
+            shell_module.settings.CODE_AGENT_PATH_EXTRA = original
+
+        self.assertEqual(env["PATH"].split(":")[:2], ["/tmp/openclaude-bin", "/usr/bin"])
+
+    def test_reports_missing_code_agent_before_shell_execution(self) -> None:
+        env = {"PATH": "/path/that/does/not/exist"}
+
+        message = _code_agent_unavailable_error("openclaude", env)
+
+        self.assertIn("OpenClaude indisponivel", message)
 
     def test_code_agent_terminal_status_uses_progress_event_not_screen_frame(self) -> None:
         class FakeBus:

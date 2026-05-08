@@ -467,7 +467,29 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
     except (KeyError, IndexError, TypeError) as exc:
         raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
 
-    action = _extract_json_object(content)
+    try:
+        action = _extract_json_object(content)
+    except DeepSeekError:
+        repair_payload = {
+            **payload,
+            "messages": [
+                *payload["messages"],
+                {"role": "assistant", "content": str(content or "")[:4000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "A resposta anterior nao era um objeto JSON valido para o Vortax. "
+                        "Responda agora somente com um unico JSON valido no schema de action, sem markdown e sem texto extra."
+                    ),
+                },
+            ],
+        }
+        repair_data = await _post_deepseek(repair_payload)
+        try:
+            repaired_content = repair_data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise DeepSeekError("Resposta DeepSeek sem choices[0].message.content") from exc
+        action = _extract_json_object(repaired_content)
     if "action" not in action:
         raise DeepSeekError("Planner DeepSeek retornou JSON sem action")
     return action

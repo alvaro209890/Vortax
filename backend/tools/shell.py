@@ -6,6 +6,7 @@ import pty
 import re
 import signal
 import shlex
+import shutil
 import subprocess
 import termios
 from pathlib import Path
@@ -13,6 +14,10 @@ from typing import Any
 
 from config import settings
 from services.project_files import missing_local_asset_refs
+
+
+CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "openclaude") or "openclaude").strip()
+CODE_AGENT_LABEL = str(getattr(settings, "CODE_AGENT_LABEL", "OpenClaude") or "OpenClaude").strip()
 
 # ── Dev server registry (processos em background) ──────────────────────────
 # task_id -> {"process": Popen, "port": int, "url": str, "cwd": str}
@@ -32,8 +37,9 @@ SHELL_WHITELIST = {
     "curl", "wget", "git", "pandoc", "ffmpeg", "libreoffice", "convert",
     "grep", "find", "wc", "head", "tail", "sort", "uniq", "awk", "sed", "cut", "tr",
     "df", "free", "uname",
-    # OpenClaude code agent
-    "openclaude",
+    # Code agent
+    CODE_AGENT_COMMAND,
+    Path(CODE_AGENT_COMMAND).name,
     # Node.js ecosystem (openclaude depende disso)
     "which", "whereis", "dirname", "basename", "readlink",
     # Gerenciamento de arquivos na workspace
@@ -60,7 +66,7 @@ BLOCKED_PATTERNS = [
     r"rm\s+-rf\s+/",
     r"rm\s+-rf\s+~",
     r"rm\s+-rf\s+\$HOME",
-    r">\s*/dev/",
+    r">\s*/dev/(?!null\b)",
     r"curl\s+.*\|\s*(ba)?sh",
     r"curl\s+.*\|\s*bash",
     r"wget\s+.*\|\s*(ba)?sh",
@@ -405,7 +411,7 @@ def _normalize_shell_command(cmd: str) -> str:
 
 
 def _is_whitelisted(executable: str) -> bool:
-    return executable in SHELL_WHITELIST
+    return executable in SHELL_WHITELIST or _is_code_agent_executable(executable)
 
 
 def _has_blocked_patterns(command: str) -> str | None:
@@ -416,7 +422,8 @@ def _has_blocked_patterns(command: str) -> str | None:
 
 
 def _shell_timeout(command: str) -> float:
-    if "openclaude" in command:
+    executable = _extract_command(command)
+    if _is_code_agent_executable(executable):
         return float(
             getattr(settings, "SHELL_CODE_AGENT_TIMEOUT_SECONDS", None)
             or getattr(settings, "SHELL_VERTEX_TIMEOUT_SECONDS", 300)
@@ -426,7 +433,35 @@ def _shell_timeout(command: str) -> float:
 
 
 def _is_code_agent_executable(executable: str) -> bool:
-    return executable == "openclaude"
+    value = str(executable or "").strip()
+    if not value:
+        return False
+    return value == CODE_AGENT_COMMAND or Path(value).name == Path(CODE_AGENT_COMMAND).name
+
+
+def _apply_code_agent_path(env: dict[str, str]) -> None:
+    extra = str(getattr(settings, "CODE_AGENT_PATH_EXTRA", "") or "").strip()
+    if not extra:
+        return
+    current_entries = [entry for entry in str(env.get("PATH") or "").split(os.pathsep) if entry]
+    extra_entries = [entry for entry in extra.split(os.pathsep) if entry]
+    merged: list[str] = []
+    for entry in [*extra_entries, *current_entries]:
+        if entry and entry not in merged:
+            merged.append(entry)
+    env["PATH"] = os.pathsep.join(merged)
+
+
+def _code_agent_unavailable_error(executable: str, env: dict[str, str]) -> str | None:
+    if not _is_code_agent_executable(executable):
+        return None
+    if shutil.which(executable, path=env.get("PATH")):
+        return None
+    return (
+        f"{CODE_AGENT_LABEL} indisponivel no ambiente do backend. "
+        f"Comando '{executable}' nao encontrado no PATH efetivo. "
+        "Verifique CODE_AGENT_PATH_EXTRA ou o PATH do servico systemd."
+    )
 
 
 def _is_noninteractive_code_agent_command(command: str) -> bool:
@@ -1139,6 +1174,7 @@ async def run_shell(
     is_dev_server = False if is_code_agent else _is_dev_server_command(cmd)
 
     env = os.environ.copy()
+    _apply_code_agent_path(env)
     runtime_tmp = settings.RUNTIME_PATH / "tmp"
     runtime_tmp.mkdir(parents=True, exist_ok=True)
     env.setdefault("TMPDIR", str(runtime_tmp))
@@ -1151,6 +1187,10 @@ async def run_shell(
         env["CI"] = "true"
         env["FORCE_COLOR"] = "0"
         env["BROWSER"] = "none"  # Evita abrir navegador automatico (create-react-app etc)
+
+    unavailable = _code_agent_unavailable_error(executable, env)
+    if unavailable:
+        return _shell_error(unavailable)
 
     timeout = _shell_timeout(cmd)
     if is_code_agent:
@@ -1479,10 +1519,10 @@ async def run_shell(
 
 
 async def run_code_agent(task_description: str, task_id: str | None = None) -> dict[str, Any]:
-    """Executa o OpenClaude com uma descricao de tarefa de desenvolvimento."""
+    """Executa o agente de codigo com uma descricao de tarefa de desenvolvimento."""
     safe_desc = shlex.quote(str(task_description)[:500])
     cmd = (
-        "openclaude -p --permission-mode bypassPermissions "
+        f"{CODE_AGENT_COMMAND} -p --permission-mode bypassPermissions "
         "--dangerously-skip-permissions --no-session-persistence "
         f"{safe_desc}"
     )

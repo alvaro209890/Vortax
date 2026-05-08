@@ -91,10 +91,10 @@ async function request(path, options = {}, retryingAfterAuthRefresh = false) {
   return response.json();
 }
 
-export function createTask(description) {
+export function createTask(description, clientMessageId = "") {
   return request("/api/tasks/", {
     method: "POST",
-    body: JSON.stringify({ description }),
+    body: JSON.stringify({ description, client_message_id: clientMessageId }),
   });
 }
 
@@ -124,10 +124,10 @@ export function deleteTask(taskId) {
   return request(`/api/tasks/${taskId}`, { method: "DELETE" });
 }
 
-export function appendTaskMessage(taskId, content) {
+export function appendTaskMessage(taskId, content, clientMessageId = "") {
   return request(`/api/tasks/${taskId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, client_message_id: clientMessageId }),
   });
 }
 
