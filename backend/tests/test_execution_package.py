@@ -23,7 +23,7 @@ class ExecutionPackageTests(unittest.TestCase):
         self.assertIn("https://github.com/psf/requests.git", command)
         self.assertIn("read-only", command)
         self.assertIn("RELATORIO_TECNICO.md", command)
-        self.assertTrue(command.startswith("openclaude "))
+        self.assertTrue(command.startswith("vertex "))
 
 
 if __name__ == "__main__":

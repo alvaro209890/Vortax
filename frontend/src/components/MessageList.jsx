@@ -505,7 +505,7 @@ function toolKind(name = "") {
 function stepKind(step = {}) {
   const hint = String(step.tool_hint || "").toLowerCase();
   if (/(research|search|web)/.test(hint)) return "search";
-  if (/(code|editor|openclaude|execute|shell|terminal)/.test(hint)) return "code";
+  if (/(code|editor|vertex|openclaude|execute|shell|terminal)/.test(hint)) return "code";
   if (/(valid|review|quality)/.test(hint)) return "validation";
   if (/(deliver|finish|file|document|report)/.test(hint)) return "file";
   return "analysis";

@@ -210,10 +210,10 @@ async def validate_project_after_code_agent(
     warnings: list[str] = []
 
     if not result_success:
-        bugs.append("OpenClaude terminou com erro antes de entregar um projeto valido.")
+        bugs.append("Agente de codigo terminou com erro antes de entregar um projeto valido.")
 
     if profile["kind"] == "empty":
-        bugs.append("OpenClaude nao gerou arquivos no diretorio da conversa.")
+        bugs.append("Agente de codigo nao gerou arquivos no diretorio da conversa.")
 
     if not profile.get("has_code") and profile["kind"] != "empty":
         warnings.append("Arquivos gerados nao parecem conter codigo executavel.")
@@ -225,7 +225,7 @@ async def validate_project_after_code_agent(
     report_profile = report_artifact_profile(command)
     if (web_intent_from_command(command) or report_profile.get("requires_markdown")) and not valid_markdown_files(project_dir):
         bugs.append(
-            "Entrega tecnica criada pelo OpenClaude precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
+            "Entrega tecnica criada pelo agente de codigo precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
         )
 
     if is_github_repo_analysis_request(command):

@@ -151,7 +151,7 @@ TOOLS_SCHEMA = [
     {
         "action": "shell_run",
         "params": {"command": "echo hello"},
-        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, openclaude, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, analisar repositorios publicos do GitHub ou gerar arquivos finais (.md, .pdf, .docx, .pptx, .xlsx, .csv), use 'openclaude \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
+        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, vertex, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, analisar repositorios publicos do GitHub ou gerar arquivos finais (.md, .pdf, .docx, .pptx, .xlsx, .csv), use 'vertex \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
     },
     {
         "action": "vision_analyze",
@@ -338,7 +338,7 @@ async def request_direct_chat_response(
 
     if mode == "exact":
         system_prompt = (
-            "Voce e o modo direto de matematica e exatas do Vortax. Responda sem acionar o planner e sem delegar ao OpenClaude. "
+            "Voce e o modo direto de matematica e exatas do Vortax. Responda sem acionar o planner e sem delegar ao Vertex. "
             "Resolva com rigor, mostre passos curtos e confira as contas. Se o contexto trouxer resultado de exact_solve, use-o como ferramenta de calculo. "
             "Se houver analise de imagem, use a transcricao/visible_text como enunciado; quando a imagem estiver ambigua, diga exatamente o que falta. "
             "Nao invente dados externos e nao pesquise; se a pergunta depender de dado atual, diga que precisa de pesquisa."
@@ -390,7 +390,7 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
 
     system_prompt = (
-        "Voce e o planner JSON do Vortax, um agente autonomo que pesquisa, cria software, gera arquivos e coordena o OpenClaude. "
+        "Voce e o planner JSON do Vortax, um agente autonomo que pesquisa, cria software, gera arquivos e coordena o Vertex. "
         "Responda sempre com um unico objeto JSON valido, sem markdown e sem texto fora do JSON. "
         "Escolha exatamente uma action por resposta. "
         "Se a tarefa envolver pesquisar, encontrar informacao atual, comparar sites, resumir conteudo da web ou responder algo que dependa da internet, seja proativo: "
@@ -423,29 +423,29 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "REGRAS IMPORTANTES PARA CRIACAO DE SOFTWARE: "
         "Se o usuario pedir para criar site, landing page, dashboard, app, sistema, API ou qualquer "
         "codigo que envolva design, interface, experiencia do usuario ou tecnologias atuais, PESQUISE "
-        "PRIMEIRO antes de chamar o OpenClaude. "
+        "PRIMEIRO antes de chamar o Vertex. "
         "Exemplo: usuario pede 'crie um site de vendas moderno' -> PRIMEIRO busque 'tendencias design ecommerce 2026', "
-        "abra uma referencia, extraia conteudo, DEPOIS chame openclaude com o prompt enriquecido pelas referencias. "
-        "Exemplo: usuario pede 'crie uma calculadora em Python' -> pode ir direto ao OpenClaude sem pesquisa. "
+        "abra uma referencia, extraia conteudo, DEPOIS chame vertex com o prompt enriquecido pelas referencias. "
+        "Exemplo: usuario pede 'crie uma calculadora em Python' -> pode ir direto ao Vertex sem pesquisa. "
         "Exemplo: usuario pede 'crie um dashboard financeiro' -> PRIMEIRO busque 'dashboard financeiro design exemplos 2026'. "
-        "A pesquisa deve alimentar o prompt do OpenClaude com informacao concreta: "
+        "A pesquisa deve alimentar o prompt do Vertex com informacao concreta: "
         "'Crie um site estilo [dribbble/behance], com as seguintes referencias de cores e layout extraidas de [URL...]'. "
         "Quando o backend executar pesquisa automatica antes de voce, as fontes ja estarao disponiveis "
-        "no contexto 'Fontes ja abertas e salvas nesta conversa'. USE-AS para enriquecer o prompt do OpenClaude "
+        "no contexto 'Fontes ja abertas e salvas nesta conversa'. USE-AS para enriquecer o prompt do Vertex "
         "com detalhes extraidos: tendencias de design, estrutura de layout, paleta de cores, "
         "exemplos de navegacao, tecnologias recomendadas e boas praticas encontradas nas referencias. "
         "Se houver resultado de vision_analyze no historico, ELE contem analise visual detalhada "
         "da pagina de referencia (cores exatas, estrutura de layout, estilo visual, tipografia, "
-        "elementos de UI). INCORPORE esses detalhes visuais no prompt do OpenClaude para gerar um "
+        "elementos de UI). INCORPORE esses detalhes visuais no prompt do Vertex para gerar um "
         "design mais fiel as referencias pesquisadas. "
-        "NUNCA chame openclaude com um prompt generico como 'crie um site' — voce DEVE incluir referencias "
+        "NUNCA chame vertex com um prompt generico como 'crie um site' — voce DEVE incluir referencias "
         "concretas das fontes pesquisadas. Exemplo de prompt bem estruturado: "
-        "openclaude 'Crie uma landing page para [setor]. Inspirado nas referencias coletadas: "
+        "vertex 'Crie uma landing page para [setor]. Inspirado nas referencias coletadas: "
         "layout com hero section de tela cheia, navegacao fixa no topo, secao de recursos em grid "
         "3 colunas, depoimentos em carrossel e rodape com formulario de contato. "
         "Use paleta de cores moderna (azul escuro #1a2332 + verde accent #08C65D), "
         "tipografia Inter e transicoes suaves. Responsivo e otimizado para mobile.' "
-        "NUNCA chame openclaude diretamente sem antes verificar se pesquisa previa traria valor ao resultado final. "
+        "NUNCA chame vertex diretamente sem antes verificar se pesquisa previa traria valor ao resultado final. "
         "Nao finalize uma pesquisa complexa baseado apenas na lista de resultados; abra pelo menos uma fonte relevante e extraia conteudo. "
         "Para pesquisas simples, uma fonte confiavel pode bastar; para temas controversos ou dados que podem variar, consulte duas ou tres fontes. "
         "Se uma ferramenta falhar, tente uma consulta alternativa, outro resultado ou browser_extract_links antes de finalizar com erro. "
@@ -461,29 +461,29 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Se o problema de exatas estiver em imagem, use vision_analyze primeiro pedindo transcricao do enunciado, depois use exact_solve com o texto extraido e finalize com passos curtos. "
         "Perguntas simples e conceituais devem ser respondidas diretamente pelo modo rapido do backend antes de chegar aqui; se chegarem ao planner, mantenha o caminho mais curto possivel. "
         "Para analise de repositorios publicos do GitHub, aceite formatos https://github.com/owner/repo, github.com/owner/repo e owner/repo quando o usuario mencionar GitHub/repositorio. "
-        "Use shell_run com openclaude e inclua a URL/owner/repo no prompt. O OpenClaude deve clonar por HTTPS dentro do workspace da conversa, analisar em modo read-only, nao alterar codigo clonado, "
+        "Use shell_run com vertex e inclua a URL/owner/repo no prompt. O Vertex deve clonar por HTTPS dentro do workspace da conversa, analisar em modo read-only, nao alterar codigo clonado, "
         "mapear stack, arquitetura, pontos fortes, riscos, bugs provaveis, seguranca, performance e testes, citar caminhos de arquivos e gerar RELATORIO_TECNICO.md na raiz do workspace. "
         "Nao use token, login ou repos privados nesta primeira versao; se o repo for privado, explique que so repositorios publicos sao suportados por enquanto. "
-        "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando openclaude: shell_run command=\"openclaude 'descricao completa do software que o usuario quer'\". "
-        "O OpenClaude criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao OpenClaude para garantir que o projeto seja funcional e completo. "
-        "IMPORTANTE: Sempre que o usuario pedir um codigo, script ou arquivo unico, alem de usar o OpenClaude para cria-lo, voce DEVE incluir o conteudo desse codigo na sua resposta final (action finish) dentro de um bloco de codigo Markdown com a linguagem correta (ex: ```python ... ```). "
+        "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando vertex: shell_run command=\"vertex 'descricao completa do software que o usuario quer'\". "
+        "O Vertex criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao Vertex para garantir que o projeto seja funcional e completo. "
+        "IMPORTANTE: Sempre que o usuario pedir um codigo, script ou arquivo unico, alem de usar o Vertex para cria-lo, voce DEVE incluir o conteudo desse codigo na sua resposta final (action finish) dentro de um bloco de codigo Markdown com a linguagem correta (ex: ```python ... ```). "
         "Isso permite que o usuario copie o codigo instantaneamente usando o botao de copiar no chat, enquanto o download oficial fica disponivel no card do Vortax. "
-        "Para pedidos de arquivos finais ou documentos (.md, PDF, TXT, DOCX, CSV, XLSX, JSON, PPTX), tambem use shell_run com openclaude e seja explicito sobre nome, formato, conteudo esperado e que o arquivo final precisa ficar salvo no diretorio atual para download. "
-        "Quando o usuario pedir PDF ou Markdown factual sem fornecer conteudo suficiente (ex: historia de clube, perfil, relatorio, guia, comparativo), pesquise primeiro: use browser_google_search, abra fontes relevantes e extraia com browser_extract_article/browser_extract_text antes de chamar OpenClaude. "
-        "Para documentos factuais, use no minimo 3 fontes boas quando possivel e passe ao OpenClaude os dados e URLs coletados. "
+        "Para pedidos de arquivos finais ou documentos (.md, PDF, TXT, DOCX, CSV, XLSX, JSON, PPTX), tambem use shell_run com vertex e seja explicito sobre nome, formato, conteudo esperado e que o arquivo final precisa ficar salvo no diretorio atual para download. "
+        "Quando o usuario pedir PDF ou Markdown factual sem fornecer conteudo suficiente (ex: historia de clube, perfil, relatorio, guia, comparativo), pesquise primeiro: use browser_google_search, abra fontes relevantes e extraia com browser_extract_article/browser_extract_text antes de chamar Vertex. "
+        "Para documentos factuais, use no minimo 3 fontes boas quando possivel e passe ao Vertex os dados e URLs coletados. "
         "Quando o usuario pedir PDF, gere sempre um Markdown fonte bem estruturado e o .pdf final; o Vortax pode converter o Markdown em PDF automaticamente, mas o Markdown fonte deve existir. "
         "Se o usuario pedir para melhorar, alterar, atualizar ou corrigir 'o PDF', 'o markdown', 'esse arquivo' ou 'o documento anterior', use o contexto ARQUIVOS_DA_CONVERSA/ALVO_DA_EDICAO para atualizar o arquivo certo, preservando o nome logico da entrega. "
-        "Quando o usuario pedir site, pagina, landing, frontend, dashboard, interface, sistema, app, script, API ou analise tecnica de codigo/repositorio, alem do resultado principal, exija que o OpenClaude gere um Markdown bonito e bem estruturado: DOCUMENTACAO.md para software criado ou RELATORIO_TECNICO.md para analises. "
+        "Quando o usuario pedir site, pagina, landing, frontend, dashboard, interface, sistema, app, script, API ou analise tecnica de codigo/repositorio, alem do resultado principal, exija que o Vertex gere um Markdown bonito e bem estruturado: DOCUMENTACAO.md para software criado ou RELATORIO_TECNICO.md para analises. "
         "Esse Markdown deve ter titulo, resumo, contexto, estrutura/arquitetura, como testar ou validar, limites e proximos passos, pois sera exibido em um card de leitura no chat. "
-        "Depois de cada execucao do OpenClaude, o Vortax roda revisao automatica do projeto. Para scripts Python, APIs, apps Node e outros codigos, observe project_validation; "
+        "Depois de cada execucao do Vertex, o Vortax roda revisao automatica do projeto. Para scripts Python, APIs, apps Node e outros codigos, observe project_validation; "
         "Para documentos/arquivos, observe project_validation: se o arquivo pedido ou DOCUMENTACAO.md estiver ausente/vazio, a revisao falhara. "
-        "Se project_validation.status='failed', use shell_run com openclaude novamente para corrigir exatamente os bugs descritos em project_validation.bugs e aguarde nova revisao. "
-        "Depois que o openclaude terminar criando site, pagina, frontend, dashboard, React/Vite/Vue/Next ou HTML/CSS, NAO finalize direto: "
+        "Se project_validation.status='failed', use shell_run com vertex novamente para corrigir exatamente os bugs descritos em project_validation.bugs e aguarde nova revisao. "
+        "Depois que o vertex terminar criando site, pagina, frontend, dashboard, React/Vite/Vue/Next ou HTML/CSS, NAO finalize direto: "
         "nao tente iniciar python -m http.server, vite ou outro servidor manualmente para HTML/CSS/JS estatico; o Vortax abre o preview interno automaticamente. "
         "Para projetos que realmente exigem dev server, o Vortax pode subir um preview temporario apenas para revisao e deve encerra-lo antes da entrega. "
         "Nunca inclua localhost, 127.0.0.1, 0.0.0.0 ou LINK_LOCAL_DO_SITE na resposta final ao usuario. "
         "O Vortax abrira o projeto no Chrome, testara funcionalidades de frontend, streamara screenshots, analisara o frontend com visao e rolara paginas longas ate o fim. "
-        "Se o resultado da ferramenta trouxer web_validation.status='failed', use shell_run com openclaude novamente para corrigir exatamente os bugs descritos em web_validation.bugs; "
+        "Se o resultado da ferramenta trouxer web_validation.status='failed', use shell_run com vertex novamente para corrigir exatamente os bugs descritos em web_validation.bugs; "
         "so use finish quando project_validation.status='passed' para projetos de codigo e, para sites, quando web_validation.status='passed' ou web_validation.requires_validation=false. "
         "Se web_validation.status='blocked' ou project_validation.status='blocked', informe o erro de configuracao em vez de fingir que testou. "
         "Quando finalizar site ou arquivo gerado, responda de forma proativa e curta: diga o que foi criado/alterado, cite que o documento/download esta disponivel no card do Vortax, mencione fontes usadas quando houve pesquisa e INCLUA o bloco de codigo no chat se for um script ou arquivo simples."
@@ -593,7 +593,7 @@ def _task_plan_system_prompt() -> str:
         "(understand, research, execute, validate ou deliver) e \"acceptance_criteria\" "
         "(1-3 criterios objetivos para considerar a etapa concluida).\n\n"
         "2. \"vertex_steps\": Se o pedido envolver desenvolvimento de software/site/script/codigo/arquivo, "
-        "produza 4-8 etapas ESPECIFICAS do que o OpenClaude fara para criar o projeto. "
+        "produza 4-8 etapas ESPECIFICAS do que o Vertex fara para criar o projeto. "
         "Exemplos de vertex_steps: \"Analisar requisitos do site\", \"Criar index.html com estrutura principal\", "
         "\"Estilizar com CSS responsivo\", \"Adicionar JavaScript para interatividade\", "
         "\"Gerar DOCUMENTACAO.md\", \"Revisar e corrigir bugs\". "
@@ -636,7 +636,7 @@ def _normalize_task_plan_response(parsed: dict[str, Any], *, provider: str, mode
         for step in raw_code_agent[:8]:
             if isinstance(step, dict):
                 code_agent_steps.append({
-                    "label": str(step.get("label") or "Etapa OpenClaude"),
+                    "label": str(step.get("label") or "Etapa Vertex"),
                     "detail": str(step.get("detail") or ""),
                 })
 

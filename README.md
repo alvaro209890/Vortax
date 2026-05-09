@@ -270,12 +270,24 @@ PUBLIC_HOSTS=vortax-api.cursar.space
 | Navegador | Playwright + Google Chrome CDP |
 | IA (planejamento) | DeepSeek V4 Flash |
 | IA (visão) | Groq + Llama 4 Scout |
-| Motor de software | Motor interno do Vortax via `shell_run` |
+| Motor de software | Vertex CLI via `shell_run` |
 | Shell | Whitelist, bloqueio de padrões perigosos, timeout |
 | Banco | SQLite com WAL |
 | Streaming | WebSocket com replay de eventos |
 | Validação | `py_compile`, `node --check`, `npm run build`, `npm test`, Chrome/visão |
 | Segurança | Middleware LAN-only, sanitização de segredos |
+
+## Agente de Programacao
+
+O agente de programacao padrao do Vortax e o Vertex CLI. O backend deve iniciar com:
+
+```bash
+CODE_AGENT_COMMAND=vertex
+CODE_AGENT_LABEL=Vertex
+CODE_AGENT_PATH_EXTRA=/home/server/.local/bin:/home/server/.nvm/versions/node/v20.20.0/bin
+```
+
+O contrato publico de streaming continua usando `vertex_progress` e `vertex_steps`, porque o frontend e o historico de conversas ja dependem desses nomes. Chamadas antigas com `openclaude` sao tratadas como alias legado e normalizadas para `vertex` antes da execucao.
 
 ## Validação e Correção Automática
 
@@ -301,6 +313,8 @@ cd backend
 
 cd ../frontend
 npm run build
+
+vertex --version
 ```
 
 ## Contexto e Compactação

@@ -19,12 +19,12 @@ from tools.shell import (
 from tools.tool_executor import _augment_code_agent_command_for_local_site, _augment_code_agent_command_for_quality
 
 
-class OpenClaudeStreamTests(unittest.TestCase):
+class VertexStreamTests(unittest.TestCase):
     def test_ai_exchange_is_known_stream_event(self) -> None:
         event = build_stream_event(
             "task-1",
             "ai_exchange",
-            {"actor": "deepseek", "target": "openclaude", "message": "delegando"},
+            {"actor": "deepseek", "target": "vertex", "message": "delegando"},
         )
 
         self.assertEqual(event["type"], "ai_exchange")
@@ -88,12 +88,12 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertEqual(progress["file"], "src/App.jsx")
 
     def test_cleans_terminal_control_sequences(self) -> None:
-        cleaned = _clean_terminal_text("\x1b[32mOpenClaude\x1b[0m\r\n")
+        cleaned = _clean_terminal_text("\x1b[32mVertex\x1b[0m\r\n")
 
-        self.assertEqual(cleaned, "OpenClaude\r\n")
+        self.assertEqual(cleaned, "Vertex\r\n")
 
-    def test_cleans_openclaude_osc_title_sequences(self) -> None:
-        cleaned = _clean_terminal_text("\x1b]0;✳ OpenClaude\x07Conectado\r\n")
+    def test_cleans_vertex_osc_title_sequences(self) -> None:
+        cleaned = _clean_terminal_text("\x1b]0;✳ Vertex\x07Conectado\r\n")
 
         self.assertEqual(cleaned, "Conectado\r\n")
 
@@ -105,48 +105,54 @@ class OpenClaudeStreamTests(unittest.TestCase):
     def test_removes_spinner_prefix_from_status_line(self) -> None:
         self.assertEqual(_display_terminal_line("◔ Aplicando…"), "Aplicando…")
 
-    def test_augments_openclaude_site_prompt_with_local_link_instruction(self) -> None:
-        command = _augment_code_agent_command_for_local_site("openclaude 'crie um site react'")
+    def test_augments_vertex_site_prompt_with_local_link_instruction(self) -> None:
+        command = _augment_code_agent_command_for_local_site("vertex 'crie um site react'")
 
         self.assertIn("LINK_LOCAL_DO_SITE", command)
-        self.assertIn("openclaude -p", command)
+        self.assertIn("vertex -p", command)
         self.assertIn("index.html", command)
         self.assertIn("DOCUMENTACAO.md", command)
 
-    def test_augments_openclaude_command_after_safe_cd(self) -> None:
-        command = _augment_code_agent_command_for_local_site("cd workspace/app && openclaude 'crie uma landing page'")
+    def test_augments_vertex_command_after_safe_cd(self) -> None:
+        command = _augment_code_agent_command_for_local_site("cd workspace/app && vertex 'crie uma landing page'")
 
-        self.assertTrue(command.startswith("cd workspace/app && openclaude -p"))
+        self.assertTrue(command.startswith("cd workspace/app && vertex -p"))
         self.assertIn("LINK_LOCAL_DO_SITE", command)
 
     def test_existing_local_link_instruction_still_uses_print_mode(self) -> None:
-        command = _augment_code_agent_command_for_local_site("openclaude 'crie site e imprima LINK_LOCAL_DO_SITE'")
+        command = _augment_code_agent_command_for_local_site("vertex 'crie site e imprima LINK_LOCAL_DO_SITE'")
 
-        self.assertIn("openclaude -p", command)
+        self.assertIn("vertex -p", command)
         self.assertEqual(command.count("LINK_LOCAL_DO_SITE"), 1)
 
-    def test_does_not_augment_non_site_openclaude_prompt(self) -> None:
+    def test_normalizes_non_site_legacy_prompt_to_vertex(self) -> None:
         command = _augment_code_agent_command_for_local_site("openclaude 'crie uma api python'")
 
-        self.assertEqual(command, "openclaude 'crie uma api python'")
+        self.assertEqual(command, "vertex 'crie uma api python'")
 
-    def test_augments_non_site_openclaude_prompt_with_quality_gate(self) -> None:
-        command = _augment_code_agent_command_for_quality("openclaude 'crie uma api python'")
+    def test_augments_non_site_vertex_prompt_with_quality_gate(self) -> None:
+        command = _augment_code_agent_command_for_quality("vertex 'crie uma api python'")
 
         self.assertIn("VALIDACAO_AUTOMATICA_VORTAX", command)
         self.assertIn("python3 -m py_compile", command)
         self.assertIn("DOCUMENTACAO.md", command)
-        self.assertIn("openclaude -p", command)
+        self.assertIn("vertex -p", command)
+
+    def test_augments_legacy_openclaude_prompt_with_vertex_quality_gate(self) -> None:
+        command = _augment_code_agent_command_for_quality("openclaude 'crie uma api python'")
+
+        self.assertIn("VALIDACAO_AUTOMATICA_VORTAX", command)
+        self.assertIn("vertex -p", command)
 
     def test_augments_technical_analysis_with_markdown_report(self) -> None:
-        command = _augment_code_agent_command_for_quality("openclaude 'analise o frontend deste repositorio'")
+        command = _augment_code_agent_command_for_quality("vertex 'analise o frontend deste repositorio'")
 
         self.assertIn("RELATORIO_TECNICO.md", command)
         self.assertIn("card de leitura", command)
-        self.assertIn("openclaude -p", command)
+        self.assertIn("vertex -p", command)
 
     def test_augments_github_repo_analysis_as_read_only(self) -> None:
-        command = _augment_code_agent_command_for_quality("openclaude 'analise https://github.com/psf/requests'")
+        command = _augment_code_agent_command_for_quality("vertex 'analise https://github.com/psf/requests'")
 
         self.assertIn("ANALISE_GITHUB_READONLY_VORTAX", command)
         self.assertIn("https://github.com/psf/requests.git", command)
@@ -154,14 +160,14 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertNotIn("python3 -m py_compile", command)
 
     def test_augments_document_prompt_with_file_delivery_instruction(self) -> None:
-        command = _augment_code_agent_command_for_quality("openclaude 'gere um relatorio em PDF'")
+        command = _augment_code_agent_command_for_quality("vertex 'gere um relatorio em PDF'")
 
         self.assertIn("arquivo/documento final (.pdf)", command)
         self.assertIn("Markdown fonte", command)
         self.assertIn("pronto para download", command)
 
     def test_augments_office_document_prompt_with_library_contract(self) -> None:
-        command = _augment_code_agent_command_for_quality("openclaude 'gere um docx, slides pptx, excel xlsx e csv'")
+        command = _augment_code_agent_command_for_quality("vertex 'gere um docx, slides pptx, excel xlsx e csv'")
 
         self.assertIn("ARQUIVOS_OFFICE_VORTAX", command)
         self.assertIn("python-docx", command)
@@ -169,10 +175,15 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertIn("openpyxl", command)
         self.assertIn("UTF-8", command)
 
-    def test_does_not_augment_openclaude_version_check_with_quality_gate(self) -> None:
+    def test_does_not_augment_vertex_version_check_with_quality_gate(self) -> None:
+        command = _augment_code_agent_command_for_quality("vertex --version")
+
+        self.assertEqual(command, "vertex --version")
+
+    def test_normalizes_legacy_version_check_to_vertex(self) -> None:
         command = _augment_code_agent_command_for_quality("openclaude --version")
 
-        self.assertEqual(command, "openclaude --version")
+        self.assertEqual(command, "vertex --version")
 
     def test_normalizes_background_dev_server_wrappers(self) -> None:
         command = _normalize_shell_command("cd workspace/calc && nohup python3 -m http.server 8080 --bind 127.0.0.1 &")
@@ -180,26 +191,32 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertEqual(command, "cd workspace/calc && python3 -m http.server 8080 --bind 127.0.0.1")
         self.assertEqual(_extract_command(command), "python3")
 
+    def test_normalizes_legacy_openclaude_shell_command_to_vertex(self) -> None:
+        command = _normalize_shell_command("cd workspace/app && openclaude 'crie um site'")
+
+        self.assertEqual(command, "cd workspace/app && vertex 'crie um site'")
+        self.assertEqual(_extract_command(command), "vertex")
+
     def test_allows_stderr_redirect_to_dev_null_for_diagnostics(self) -> None:
         self.assertIsNone(_has_blocked_patterns("ls -la *.md *.pdf 2>/dev/null"))
 
     def test_adds_code_agent_path_extra_to_shell_environment(self) -> None:
         original = shell_module.settings.CODE_AGENT_PATH_EXTRA
         try:
-            shell_module.settings.CODE_AGENT_PATH_EXTRA = "/tmp/openclaude-bin"
+            shell_module.settings.CODE_AGENT_PATH_EXTRA = "/tmp/vertex-bin"
             env = {"PATH": "/usr/bin"}
             _apply_code_agent_path(env)
         finally:
             shell_module.settings.CODE_AGENT_PATH_EXTRA = original
 
-        self.assertEqual(env["PATH"].split(":")[:2], ["/tmp/openclaude-bin", "/usr/bin"])
+        self.assertEqual(env["PATH"].split(":")[:2], ["/tmp/vertex-bin", "/usr/bin"])
 
     def test_reports_missing_code_agent_before_shell_execution(self) -> None:
         env = {"PATH": "/path/that/does/not/exist"}
 
-        message = _code_agent_unavailable_error("openclaude", env)
+        message = _code_agent_unavailable_error("vertex", env)
 
-        self.assertIn("OpenClaude indisponivel", message)
+        self.assertIn("Vertex indisponivel", message)
 
     def test_code_agent_terminal_status_uses_progress_event_not_screen_frame(self) -> None:
         class FakeBus:

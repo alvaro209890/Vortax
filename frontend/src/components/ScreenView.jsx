@@ -7,7 +7,7 @@ import { scaleIn } from "../animations/variants.js";
 
 function isCodeAgentCommand(command) {
   let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
-  return text.split(/\s+/)[0] === "openclaude";
+  return /^(vertex|openclaude)$/.test(text.split(/\s+/)[0] || "");
 }
 
 function publicText(value) {

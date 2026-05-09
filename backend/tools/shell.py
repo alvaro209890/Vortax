@@ -16,8 +16,9 @@ from config import settings
 from services.project_files import missing_local_asset_refs
 
 
-CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "openclaude") or "openclaude").strip()
-CODE_AGENT_LABEL = str(getattr(settings, "CODE_AGENT_LABEL", "OpenClaude") or "OpenClaude").strip()
+CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "vertex") or "vertex").strip()
+CODE_AGENT_LABEL = str(getattr(settings, "CODE_AGENT_LABEL", "Vertex") or "Vertex").strip()
+LEGACY_CODE_AGENT_COMMANDS = {"openclaude"}
 
 # ── Dev server registry (processos em background) ──────────────────────────
 # task_id -> {"process": Popen, "port": int, "url": str, "cwd": str}
@@ -40,7 +41,7 @@ SHELL_WHITELIST = {
     # Code agent
     CODE_AGENT_COMMAND,
     Path(CODE_AGENT_COMMAND).name,
-    # Node.js ecosystem (openclaude depende disso)
+    # Node.js ecosystem usado pelo CLI do agente de codigo
     "which", "whereis", "dirname", "basename", "readlink",
     # Gerenciamento de arquivos na workspace
     "rm", "rmdir",
@@ -82,7 +83,7 @@ BLOCKED_PATTERNS = [
 BLOCKED_RM_PATTERN = re.compile(r"\brm\b")
 
 # ── Code agent progress patterns ───────────────────────────────────────────
-# O OpenClaude pode emitir linhas como:
+# O agente de codigo pode emitir linhas como:
 #   "Planejando a tarefa..."
 #   "Criando arquivo src/index.html"
 #   "Instalando dependências..."
@@ -402,12 +403,32 @@ def _normalize_shell_command(cmd: str) -> str:
 
     cd_match = re.match(r"^(cd\s+[A-Za-z0-9_./-]+\s*&&\s*)nohup\s+(.+)$", normalized)
     if cd_match:
-        return cd_match.group(1) + cd_match.group(2).strip()
+        normalized = cd_match.group(1) + cd_match.group(2).strip()
 
     if normalized.startswith("nohup "):
-        return normalized[len("nohup ") :].strip()
+        normalized = normalized[len("nohup ") :].strip()
 
-    return normalized
+    return _normalize_legacy_code_agent_invocation(normalized)
+
+
+def _is_legacy_code_agent_token(token: str) -> bool:
+    return Path(str(token or "").strip()).name in LEGACY_CODE_AGENT_COMMANDS
+
+
+def _normalize_legacy_code_agent_invocation(command: str) -> str:
+    """Converte comandos legados openclaude para o agente configurado antes do shell."""
+    try:
+        parts = shlex.split(command or "")
+    except ValueError:
+        return command
+    if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&" and _is_legacy_code_agent_token(parts[3]):
+        cd_path = Path(parts[1])
+        if cd_path.is_absolute() or ".." in cd_path.parts:
+            return command
+        return f"cd {shlex.quote(parts[1])} && " + shlex.join([CODE_AGENT_COMMAND, *parts[4:]])
+    if parts and _is_legacy_code_agent_token(parts[0]):
+        return shlex.join([CODE_AGENT_COMMAND, *parts[1:]])
+    return command
 
 
 def _is_whitelisted(executable: str) -> bool:
@@ -534,9 +555,9 @@ async def _publish_code_agent_terminal_frame(
             "message": (
                 "Entrega pronta."
                 if status == "done"
-                else "OpenClaude encontrou um erro."
+                else f"{CODE_AGENT_LABEL} encontrou um erro."
                 if status == "error"
-                else "OpenClaude esta executando a tarefa."
+                else f"{CODE_AGENT_LABEL} esta executando a tarefa."
             ),
             "status": status,
             "current_stage": current_stage,
@@ -746,8 +767,8 @@ async def _ask_deepseek_for_response(
                 task_id,
                 bus,
                 actor="deepseek",
-                target="openclaude",
-                message=f"DeepSeek respondeu ao prompt interativo do OpenClaude: {content}",
+                target="vertex",
+                message=f"DeepSeek respondeu ao prompt interativo do {CODE_AGENT_LABEL}: {content}",
                 kind="auto_response",
             )
         return content[:500]
@@ -822,9 +843,9 @@ async def _run_code_agent_pty(
         await _publish_ai_exchange(
             task_id,
             bus,
-            actor="openclaude",
+            actor="vertex",
             target="deepseek",
-            message="OpenClaude iniciou em uma CLI com TTY real.",
+            message=f"{CODE_AGENT_LABEL} iniciou em uma CLI com TTY real.",
             kind="start",
         )
         await _publish_code_agent_terminal_frame(task_id, bus, terminal_lines, status="running")
@@ -888,7 +909,7 @@ async def _run_code_agent_pty(
                 await _publish_ai_exchange(
                     task_id,
                     bus,
-                    actor="openclaude",
+                    actor="vertex",
                     target="deepseek",
                     message=progress["message"],
                     kind="progress",
@@ -1011,13 +1032,13 @@ async def _run_code_agent_pty(
                             if static_missing_assets:
                                 static_project_incomplete = True
                                 await _publish_terminal_line(
-                                    "Projeto estatico incompleto: ha referencias locais sem arquivo. Vortax pedira correcao ao OpenClaude."
+                                    f"Projeto estatico incompleto: ha referencias locais sem arquivo. Vortax pedira correcao ao {CODE_AGENT_LABEL}."
                                 )
                                 await _interrupt_code_agent_group(pgid)
                                 break
                             static_project_detected_success = True
                             await _publish_terminal_line(
-                                "Projeto estatico detectado; Vortax encerrou o OpenClaude e iniciara a revisao no Chrome."
+                                f"Projeto estatico detectado; Vortax encerrou o {CODE_AGENT_LABEL} e iniciara a revisao no Chrome."
                             )
                             await _interrupt_code_agent_group(pgid)
                             break
@@ -1055,7 +1076,7 @@ async def _run_code_agent_pty(
                     await _publish_ai_exchange(
                         task_id,
                         bus,
-                        actor="openclaude",
+                        actor="vertex",
                         target="deepseek",
                         message=prompt_snapshot,
                         kind="prompt",
@@ -1136,7 +1157,7 @@ async def run_shell(
     Fluxo:
     1. Validação de segurança (whitelist, blocked patterns, rm restriction)
     2. Execução com Popen + streaming stdout/stderr via EventBus
-    3. Parse de progresso do OpenClaude → eventos vertex_progress (nome legado)
+    3. Parse de progresso do agente de codigo → eventos vertex_progress (nome legado)
     4. Detecção de prompts interativos → consulta DeepSeek para auto-resposta
     5. Listagem de arquivos criados
     """
@@ -1181,7 +1202,8 @@ async def run_shell(
     env.setdefault("TEMP", str(runtime_tmp))
     env.setdefault("TMP", str(runtime_tmp))
     if is_code_agent:
-        env["OPENCLAUDE_OUTPUT_DIR"] = cwd
+        env["CODE_AGENT_OUTPUT_DIR"] = cwd
+        env["VERTEX_OUTPUT_DIR"] = cwd
     # Para dev servers, adiciona CI=true e FORCE_COLOR=0 para evitar prompts
     if is_dev_server:
         env["CI"] = "true"
@@ -1229,9 +1251,9 @@ async def run_shell(
         await _publish_ai_exchange(
             task_id,
             bus,
-            actor="openclaude",
+            actor="vertex",
             target="deepseek",
-            message="OpenClaude iniciou a execucao local da tarefa.",
+            message=f"{CODE_AGENT_LABEL} iniciou a execucao local da tarefa.",
             kind="start",
         )
         await _publish_code_agent_terminal_frame(task_id, bus, terminal_lines, status="running")
@@ -1286,7 +1308,7 @@ async def run_shell(
                 await _publish_ai_exchange(
                     task_id,
                     bus,
-                    actor="openclaude",
+                    actor="vertex",
                     target="deepseek",
                     message=progress["message"],
                     kind="progress",
@@ -1344,7 +1366,7 @@ async def run_shell(
                             await _publish_ai_exchange(
                                 task_id,
                                 bus,
-                                actor="openclaude",
+                                actor="vertex",
                                 target="deepseek",
                                 message=prompt_snapshot,
                                 kind="prompt",

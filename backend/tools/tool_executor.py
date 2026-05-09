@@ -37,8 +37,9 @@ from tools.vision import vision_tool
 
 ToolCallable = Callable[..., Awaitable[dict[str, Any]]]
 
-CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "openclaude") or "openclaude").strip()
-CODE_AGENT_LABEL = str(getattr(settings, "CODE_AGENT_LABEL", "OpenClaude") or "OpenClaude").strip()
+CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "vertex") or "vertex").strip()
+CODE_AGENT_LABEL = str(getattr(settings, "CODE_AGENT_LABEL", "Vertex") or "Vertex").strip()
+LEGACY_CODE_AGENT_COMMANDS = {"openclaude"}
 
 
 LOCAL_PREVIEW_RE = re.compile(
@@ -245,7 +246,19 @@ def _is_code_agent_token(token: str) -> bool:
     if not value:
         return False
     configured = CODE_AGENT_COMMAND
-    return value == configured or Path(value).name == Path(configured).name
+    return (
+        value == configured
+        or Path(value).name == Path(configured).name
+        or Path(value).name in LEGACY_CODE_AGENT_COMMANDS
+    )
+
+
+def _normalize_code_agent_invocation(command: str) -> str:
+    split = _split_code_agent_command(command)
+    if split is None:
+        return command
+    cd_prefix, parts = split
+    return cd_prefix + shlex.join([CODE_AGENT_COMMAND, *parts[1:]])
 
 
 def _code_agent_creation_intent(command: str) -> bool:
@@ -318,8 +331,10 @@ def _split_code_agent_command(command: str) -> tuple[str, list[str]] | None:
 
 def _augment_code_agent_command_for_local_site(command: str) -> str:
     split = _split_code_agent_command(command)
-    if split is None or not web_intent_from_command(command):
+    if split is None:
         return command
+    if not web_intent_from_command(command):
+        return _normalize_code_agent_invocation(command)
 
     cd_prefix, parts = split
 
@@ -427,7 +442,7 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
 
     split = initial_split
     if split is None or not _code_agent_creation_intent(command):
-        return command
+        return _normalize_code_agent_invocation(command) if split is not None else command
 
     cd_prefix, parts = split
     pass_through_flags = {"-p", "--print", "--permission-mode", "--dangerously-skip-permissions", "--no-session-persistence"}
@@ -523,7 +538,7 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
         )
         if context:
             instruction += (
-                "\n\nCONTEXTO_VORTAX_PARA_OPENCLAUDE:\n"
+                "\n\nCONTEXTO_VORTAX_PARA_CODE_AGENT:\n"
                 + context
                 + "\nUse esse contexto ao criar ou editar arquivos. Se houver ALVO_DA_EDICAO, atualize esse arquivo fonte e preserve o nome logico da entrega."
             )
@@ -579,7 +594,7 @@ def _requested_document_artifact_error(task_id: str, command: str) -> str | None
     if profile.get("wants_pdf"):
         pdf_files = valid_pdf_files(project_dir)
         if not markdown_files and not pdf_files:
-            return "OpenClaude terminou sem gerar o Markdown fonte nem o PDF solicitado."
+            return f"{CODE_AGENT_LABEL} terminou sem gerar o Markdown fonte nem o PDF solicitado."
         if not markdown_files:
             return "Pedido de PDF exige um Markdown fonte valido antes da entrega."
         if not pdf_files:
@@ -737,7 +752,7 @@ async def execute_tool(
                     "ai_exchange",
                     {
                         "actor": "deepseek",
-                        "target": "openclaude",
+                        "target": "vertex",
                         "message": f"DeepSeek delegou a criacao de codigo ao {CODE_AGENT_LABEL}.",
                         "kind": "delegation",
                     },
@@ -906,7 +921,7 @@ async def execute_tool(
                     task_id,
                     "ai_exchange",
                     {
-                        "actor": "openclaude",
+                        "actor": "vertex",
                         "target": "deepseek",
                         "message": f"{CODE_AGENT_LABEL} terminou a criacao do projeto e devolveu o resultado.",
                         "kind": "completion",

@@ -163,7 +163,7 @@ async def _capture_and_analyze(task_id: str, bus: Any, viewport_index: int, bt: 
         },
     )
     question = (
-        "Analise esta captura do site criado pelo OpenClaude como revisor de frontend. "
+        "Analise esta captura do site criado pelo agente de codigo como revisor de frontend. "
         "Procure bugs visuais ou funcionais aparentes: pagina em branco, erros visiveis, elementos sobrepostos, "
         "texto cortado, layout quebrado, conteudo fora da tela, contraste ruim, botoes ilegíveis ou estado incompleto. "
         "Responda no JSON esperado pelo sistema; se houver bug, descreva exatamente o que corrigir em suggested_action. "

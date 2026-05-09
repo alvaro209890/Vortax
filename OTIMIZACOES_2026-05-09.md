@@ -6,7 +6,7 @@ Data: 2026-05-09
 
 ## Resumo das Alteracoes
 
-Foram implementadas 8 melhorias de performance, resiliencia e seguranca no sistema Vortax, abrangendo frontend, backend e infraestrutura.
+Foram implementadas 9 melhorias de performance, resiliencia, seguranca e operacao no sistema Vortax, abrangendo frontend, backend e infraestrutura.
 
 ---
 
@@ -94,7 +94,7 @@ Foram implementadas 8 melhorias de performance, resiliencia e seguranca no siste
 
 ---
 
-## Infraestrutura (1 arquivo)
+## Infraestrutura e Operacao (2 itens)
 
 ### 8. `backend/services/safe_diagnostics.py`
 **O que mudou**: Sanitizacao expandida para PII.
@@ -102,6 +102,16 @@ Foram implementadas 8 melhorias de performance, resiliencia e seguranca no siste
 **Novos padroes redatados**:
 - Paths do sistema de arquivos contendo `/home/` → `[REDACTED]`
 - Enderecos de email → `[REDACTED]`
+
+### 9. Agente de programacao Vertex
+**O que mudou**: O Vortax voltou a usar `vertex` como agente real de programacao no backend.
+
+**Detalhes operacionais**:
+- `CODE_AGENT_COMMAND=vertex` e `CODE_AGENT_LABEL=Vertex` viraram os defaults do backend
+- O service systemd inclui `/home/server/.local/bin` no PATH efetivo do agente
+- Comandos legados `openclaude ...` sao aceitos apenas como compatibilidade e normalizados para `vertex ...`
+- Eventos publicos `vertex_progress` e `vertex_steps` foram preservados para nao quebrar o frontend nem historico salvo
+- A documentacao de operacao foi atualizada com os env vars e o check `vertex --version`
 
 ---
 

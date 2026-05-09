@@ -20,7 +20,7 @@ function hasEvent(events, types) {
 
 function isCodeAgentCommand(command) {
   let text = String(command || "").trim().replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, "");
-  return text.split(/\s+/)[0] === "openclaude";
+  return /^(vertex|openclaude)$/.test(text.split(/\s+/)[0] || "");
 }
 
 function publicText(value) {
@@ -537,7 +537,7 @@ export function AiExchangePanel({ events }) {
         {exchanges.map((event, index) => {
           const payload = event.payload || {};
           const actor = payload.actor || "vortax";
-          const actorClass = actor === "vertex" ? "openclaude" : actor;
+          const actorClass = actor === "vertex" ? "code-agent" : actor;
           return (
             <div className={`ai-exchange-item ${actorClass}`} key={`${event.created_at}-${index}`}>
               <div className="ai-exchange-icon">{actorIcon(actor)}</div>

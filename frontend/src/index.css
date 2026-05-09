@@ -3806,6 +3806,7 @@ small {
   color: var(--accent-blue);
 }
 
+.ai-exchange-item.code-agent .ai-exchange-icon,
 .ai-exchange-item.openclaude .ai-exchange-icon {
   background: rgba(251, 191, 36, 0.11);
   color: var(--accent-warn);

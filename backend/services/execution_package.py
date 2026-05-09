@@ -8,6 +8,9 @@ from services.github_repos import is_github_repo_analysis_request, normalize_pub
 
 logger = logging.getLogger(__name__)
 
+CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "vertex") or "vertex").strip()
+LEGACY_CODE_AGENT_COMMANDS = {"openclaude"}
+
 _SKIP_DIRS = frozenset({"node_modules", ".git", "venv", ".venv", "__pycache__", ".next", "dist", "build", ".cache"})
 _CODE_EXTS = frozenset({
     ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".json",
@@ -104,7 +107,7 @@ def build_execution_package(
     success_criteria: list[str] | None = None,
     snippets_block: str = "",
 ) -> str:
-    """Monta ExecutionPackage estruturado em Markdown para o OpenClaude."""
+    """Monta ExecutionPackage estruturado em Markdown para o agente de codigo."""
     workspace = settings.WORKSPACE_PATH / task_id
     relevant = _select_relevant_files(workspace, objective)
 
@@ -159,8 +162,13 @@ def build_execution_package(
     return "\n\n".join(sections)
 
 
-def extract_openclaude_prompt(command: str) -> str | None:
-    """Extrai o argumento prompt de `openclaude '...'` ou `cd X && openclaude '...'`."""
+def _is_code_agent_name(value: str) -> bool:
+    name = Path(str(value or "").strip()).name
+    return name == Path(CODE_AGENT_COMMAND).name or name in LEGACY_CODE_AGENT_COMMANDS
+
+
+def extract_code_agent_prompt(command: str) -> str | None:
+    """Extrai o argumento prompt de `vertex '...'`, ou comando legado equivalente."""
     try:
         parts = shlex.split(command or "")
     except ValueError:
@@ -169,9 +177,14 @@ def extract_openclaude_prompt(command: str) -> str | None:
         parts = parts[3:]
     if not parts:
         return None
-    if Path(parts[0]).name != "openclaude":
+    if not _is_code_agent_name(parts[0]):
         return None
     return " ".join(parts[1:]) if len(parts) > 1 else None
+
+
+def extract_openclaude_prompt(command: str) -> str | None:
+    """Compatibilidade para imports antigos; use extract_code_agent_prompt."""
+    return extract_code_agent_prompt(command)
 
 
 def enrich_code_agent_command(
@@ -182,11 +195,11 @@ def enrich_code_agent_command(
     success_criteria: list[str] | None = None,
     snippets_block: str = "",
 ) -> str:
-    """Substitui o prompt plano do OpenClaude por um ExecutionPackage estruturado.
+    """Substitui o prompt plano do agente de codigo por um ExecutionPackage estruturado.
 
     Se não conseguir parsear o comando original, retorna o comando inalterado.
     """
-    original_prompt = extract_openclaude_prompt(command)
+    original_prompt = extract_code_agent_prompt(command)
     if not original_prompt:
         return command
 
@@ -197,7 +210,7 @@ def enrich_code_agent_command(
         success_criteria=success_criteria,
         snippets_block=snippets_block,
     )
-    enriched = f"openclaude {shlex.quote(package)}"
+    enriched = f"{CODE_AGENT_COMMAND} {shlex.quote(package)}"
     logger.debug(
         "[execution_package] prompt: %d chars → package: %d chars",
         len(original_prompt),

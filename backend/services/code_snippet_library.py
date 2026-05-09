@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class CodeSnippetLibrary:
-    """Biblioteca persistente de snippets de código reutilizáveis gerados pelo OpenClaude.
+    """Biblioteca persistente de snippets de código reutilizáveis gerados pelo agente de codigo.
 
     Evita que o agente de código regenere do zero soluções técnicas recorrentes
     (auth JWT, CRUD FastAPI, hooks React, configurações padrão, etc.).

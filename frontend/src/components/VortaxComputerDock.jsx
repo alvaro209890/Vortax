@@ -122,7 +122,7 @@ function fileName(value) {
 function compactCommand(command = "") {
   const value = String(command).trim().replace(/^cd\s+[^&]+\s*&&\s*/, "");
   if (!value) return "vortax://workspace/projeto";
-  if (/^openclaude\b/.test(value)) return "vortax://workspace/projeto";
+  if (/^(vertex|openclaude)\b/.test(value)) return "vortax://workspace/projeto";
   return value.length > 72 ? `${value.slice(0, 69)}...` : value;
 }
 
@@ -186,7 +186,7 @@ function latestBrowserActivity(events) {
 
 function isCodeAgentShell(event) {
   const command = String(event?.payload?.params?.command || "").trim();
-  return /\bopenclaude\b/.test(command.replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, ""));
+  return /^(vertex|openclaude)\b/.test(command.replace(/^cd\s+[A-Za-z0-9_./-]+\s*&&\s*/, ""));
 }
 
 function latestPreview(events) {

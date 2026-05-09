@@ -452,6 +452,14 @@ def _latest_user_prompt(history: list[dict[str, str]]) -> str:
     return ""
 
 
+LEGACY_CODE_AGENT_COMMANDS = {"openclaude"}
+
+
+def _is_code_agent_name(value: str) -> bool:
+    name = Path(str(value or "").strip()).name
+    return name == Path(CODE_AGENT_COMMAND).name or name in LEGACY_CODE_AGENT_COMMANDS
+
+
 def _is_code_agent_shell_call_from_params(params: dict[str, Any]) -> bool:
     """Detecta se os params de uma acao shell_run contem chamada ao agente de codigo."""
     command = str(params.get("command") or "").strip()
@@ -460,7 +468,7 @@ def _is_code_agent_shell_call_from_params(params: dict[str, Any]) -> bool:
     except ValueError:
         parts = command.split()
     for part in parts:
-        if part == CODE_AGENT_COMMAND or Path(part).name == Path(CODE_AGENT_COMMAND).name:
+        if _is_code_agent_name(part):
             return True
     return False
 
@@ -486,7 +494,7 @@ def _code_agent_shell_command(event: dict[str, Any]) -> str | None:
         if cd_path.is_absolute() or ".." in cd_path.parts:
             return None
         parts = parts[3:]
-    return command if bool(parts) and (parts[0] == CODE_AGENT_COMMAND or Path(parts[0]).name == Path(CODE_AGENT_COMMAND).name) else None
+    return command if bool(parts) and _is_code_agent_name(parts[0]) else None
 
 
 def _looks_like_creation_code_agent_command(command: str) -> bool:
@@ -496,7 +504,7 @@ def _looks_like_creation_code_agent_command(command: str) -> bool:
         return False
     if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
         parts = parts[3:]
-    if not parts or (parts[0] != CODE_AGENT_COMMAND and Path(parts[0]).name != Path(CODE_AGENT_COMMAND).name):
+    if not parts or not _is_code_agent_name(parts[0]):
         return False
     if any(part in {"--version", "-v", "--help", "help"} for part in parts[1:]):
         return False
@@ -1199,7 +1207,7 @@ async def _inject_pre_research_if_needed(
                 "role": "user",
                 "content": (
                     f"[CACHE_HIT] Fontes pré-carregadas do cache (query: {primary_query!r}). "
-                    "Consulte 'Fontes já abertas e salvas nesta conversa' para usá-las ao chamar o OpenClaude."
+                    "Consulte 'Fontes já abertas e salvas nesta conversa' para usá-las ao chamar o Vertex."
                 ),
             }
         ]
@@ -2045,7 +2053,7 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
             progress_label = _progress_label(action_name, str(action.get("description") or ""))
             action_params = action.get("params") if isinstance(action.get("params"), dict) else {}
 
-            # Enriquece chamadas ao OpenClaude com ExecutionPackage estruturado + snippets relevantes
+            # Enriquece chamadas ao agente de codigo com ExecutionPackage estruturado + snippets relevantes
             if action_name == "shell_run" and _is_code_agent_shell_call_from_params(action_params):
                 raw_cmd = str(action_params.get("command") or "")
                 snippets = snippet_library.search(description, limit=2)

@@ -22,7 +22,7 @@ function statusIcon(step) {
 function hintIcon(hint = "") {
   const value = hint.toLowerCase();
   if (value.includes("research") || value.includes("search") || value.includes("web")) return <Search size={13} />;
-  if (value.includes("openclaude") || value.includes("code") || value.includes("editor") || value.includes("execute")) return <Code2 size={13} />;
+  if (value.includes("vertex") || value.includes("openclaude") || value.includes("code") || value.includes("editor") || value.includes("execute")) return <Code2 size={13} />;
   if (value.includes("validation") || value.includes("validate")) return <Monitor size={13} />;
   if (value.includes("shell") || value.includes("terminal")) return <Terminal size={13} />;
   return <FileSearch size={13} />;
@@ -34,7 +34,7 @@ function hintLabel(step, sourceCount) {
     return sourceCount > 0 ? `Conhecimento recuperado(${sourceCount})` : "Conhecimento";
   }
   if (hint.includes("understand")) return "Analise do pedido";
-  if (hint.includes("openclaude") || hint.includes("code") || hint.includes("editor")) return "Editor";
+  if (hint.includes("vertex") || hint.includes("openclaude") || hint.includes("code") || hint.includes("editor")) return "Editor";
   if (hint.includes("execute")) return "Execucao";
   if (hint.includes("validation") || hint.includes("validate")) return "Validacao";
   if (hint.includes("delivery") || hint.includes("deliver") || hint.includes("finish")) return "Entrega";

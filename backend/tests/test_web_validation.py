@@ -50,8 +50,9 @@ class WebValidationTests(unittest.TestCase):
         self.assertEqual(detected["type"], "missing")
 
     def test_web_intent_matches_site_commands(self) -> None:
+        self.assertTrue(web_intent_from_command("vertex 'crie um site em react'"))
         self.assertTrue(web_intent_from_command("openclaude 'crie um site em react'"))
-        self.assertFalse(web_intent_from_command("openclaude 'crie uma api em python'"))
+        self.assertFalse(web_intent_from_command("vertex 'crie uma api em python'"))
 
     def test_vision_bug_heuristic(self) -> None:
         self.assertTrue(_vision_found_bug({"summary": "Ha texto cortado e elementos sobrepostos."}))
