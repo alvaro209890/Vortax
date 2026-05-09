@@ -215,6 +215,37 @@ def _required_source_count(categories: list[str], search_intent: bool, evidence_
     return required
 
 
+def _compute_complexity(
+    categories: list[str],
+    freshness_requested: bool,
+    search_intent: bool,
+    required_sources: int,
+) -> dict[str, object]:
+    cats = set(categories)
+    high_cost = cats & {"pessoa", "comparacao", "dados_economicos", "alto_risco"}
+    if high_cost or len(cats) >= 2 or (freshness_requested and cats):
+        return {"complexity": "COMPLEX", "max_sources": required_sources, "skip_crosscheck": False}
+    if (not cats or cats <= {"versao", "documentacao"}) and not freshness_requested and not search_intent:
+        return {"complexity": "SIMPLE", "max_sources": 2, "skip_crosscheck": True}
+    return {"complexity": "MODERATE", "max_sources": required_sources, "skip_crosscheck": False}
+
+
+def query_complexity(text: str) -> dict[str, object]:
+    """Classifica consulta como SIMPLE, MODERATE ou COMPLEX.
+
+    SIMPLE  → até 2 fontes, sem cross-check (perguntas conceituais sem urgência)
+    MODERATE → fluxo padrão
+    COMPLEX  → pessoa, comparação, dados econômicos, freshness ou 2+ categorias sensíveis
+    """
+    p = research_profile(text)
+    return _compute_complexity(
+        p["categories"],  # type: ignore[arg-type]
+        bool(p["freshness_requested"]),
+        bool(p["search_intent"]),
+        int(p["required_sources"]),  # type: ignore[arg-type]
+    )
+
+
 def research_profile(text: str) -> dict[str, object]:
     lowered = text.lower()
     development_intent = all(
@@ -240,6 +271,7 @@ def research_profile(text: str) -> dict[str, object]:
     evidence_topics = evidence_topics_for_query(text)
     requires_cross_check = bool(categories)
     required_sources = _required_source_count(categories, search_intent, evidence_topics)
+    complexity_info = _compute_complexity(categories, freshness_requested, search_intent, required_sources)
     return {
         "categories": categories,
         "evidence_topics": evidence_topics,
@@ -248,6 +280,9 @@ def research_profile(text: str) -> dict[str, object]:
         "required_sources": required_sources,
         "search_intent": search_intent,
         "development_intent": development_intent,
+        "complexity": complexity_info["complexity"],
+        "max_sources": complexity_info["max_sources"],
+        "skip_crosscheck": complexity_info["skip_crosscheck"],
     }
 
 

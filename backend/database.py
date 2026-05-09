@@ -182,6 +182,83 @@ class Database:
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_user_id_created_at ON tasks(user_id, created_at DESC)"
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS code_snippets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    language TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_code_snippets_language ON code_snippets(language)"
+            )
+
+    def add_snippet(self, tags: list[str], language: str, description: str, content: str) -> int:
+        import hashlib
+        from datetime import datetime, timezone
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT id FROM code_snippets WHERE content_hash = ?", (content_hash,)
+            ).fetchone()
+            if existing:
+                return int(existing["id"])
+            cursor = self._connection.execute(
+                "INSERT INTO code_snippets (tags, language, description, content, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    json.dumps(tags, ensure_ascii=False),
+                    language,
+                    description,
+                    content,
+                    content_hash,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def search_snippets(self, query: str, language: str | None = None, limit: int = 3) -> list[dict[str, Any]]:
+        terms = [w.lower() for w in query.split() if len(w) >= 3]
+        if not terms:
+            return []
+        with self._lock:
+            if language:
+                rows = self._connection.execute(
+                    "SELECT * FROM code_snippets WHERE language = ? ORDER BY use_count DESC LIMIT 100",
+                    (language,),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM code_snippets ORDER BY use_count DESC LIMIT 200"
+                ).fetchall()
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for row in rows:
+            row_dict = dict(row)
+            haystack = (str(row_dict.get("description") or "") + " " + str(row_dict.get("tags") or "")).lower()
+            score = sum(1 for t in terms if t in haystack)
+            if score > 0:
+                scored.append((score, row_dict))
+        scored.sort(key=lambda x: (-x[0], -x[1].get("use_count", 0)))
+        return [r for _, r in scored[:limit]]
+
+    def increment_snippet_use(self, snippet_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE code_snippets SET use_count = use_count + 1 WHERE id = ?", (snippet_id,)
+            )
+
+    def list_running_tasks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, description FROM tasks WHERE status = 'running'"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def create_task(self, task: dict[str, Any]) -> None:
         with self._lock, self._connection:

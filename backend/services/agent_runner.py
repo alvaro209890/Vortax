@@ -37,7 +37,10 @@ from services.document_intent import (
 from services.event_bus import EventBus
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
 from services.mock_runner import run_mock_task
-from services.research_policy import cross_check_status, document_research_profile, relevant_sources_for_query
+from services.research_policy import cross_check_status, document_research_profile, query_complexity, relevant_sources_for_query
+from services.ephemeral_cache import ephemeral_cache
+from services.code_snippet_library import snippet_library
+from services.execution_package import enrich_code_agent_command
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
 from services.task_store import TaskStore
@@ -954,7 +957,14 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
 
 
 def _history_with_research_context(task_id: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
-    sources = database.list_sources(task_id)[:8]
+    all_sources = database.list_sources(task_id)
+    # Filtra fontes de baixa qualidade: score < 30 e texto extraído curto são ruído no contexto
+    good = [
+        s for s in all_sources
+        if int(s.get("quality_score") or 0) >= 30 and len(str(s.get("extracted_text") or "").strip()) >= 80
+    ]
+    # Fallback: se filtro remover tudo, usa as originais para não perder contexto
+    sources = (good if good else all_sources)[:8]
     files = database.list_generated_files(task_id)
     document_context = document_context_for_code_agent(task_id, _latest_user_prompt(history), files, sources)
     if not sources and not document_context:
@@ -1147,6 +1157,23 @@ async def _inject_pre_research_if_needed(
         if len(relevant) >= 2:
             return _history_with_research_context(task_id, history)
 
+    # Consulta cache efêmero cross-task antes de abrir o navegador
+    primary_query = research_queries[0]
+    cached_sources = await ephemeral_cache.get(primary_query)
+    if cached_sources:
+        for src in cached_sources:
+            database.upsert_source(task_id, {**src, "used": True})
+        history = history + [
+            {
+                "role": "user",
+                "content": (
+                    f"[CACHE_HIT] Fontes pré-carregadas do cache (query: {primary_query!r}). "
+                    "Consulte 'Fontes já abertas e salvas nesta conversa' para usá-las ao chamar o OpenClaude."
+                ),
+            }
+        ]
+        return _history_with_research_context(task_id, history)
+
     import logging
     from datetime import datetime, timezone
 
@@ -1263,6 +1290,11 @@ async def _inject_pre_research_if_needed(
             detail=f"Dados prontos para orientar a criação com {CODE_AGENT_LABEL}.",
             status="done",
         )
+        # Salva no cache efêmero cross-task para reutilização em tasks futuras com mesma query
+        fresh_sources = database.list_sources(task_id)
+        if fresh_sources and primary_query:
+            complexity = str(query_complexity(description).get("complexity", "MODERATE"))
+            await ephemeral_cache.set(primary_query, fresh_sources, complexity)
     return _history_with_research_context(task_id, history)
 
 
@@ -1751,6 +1783,27 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
             history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
 
             action_name = str(action.get("action", "")).strip()
+
+            # Detecção de ciclo: 3 ações consecutivas idênticas → forçar finish
+            if action_name != "finish":
+                recent_assistant = [m["content"] for m in history if m.get("role") == "assistant"]
+                if len(recent_assistant) >= 3 and len(set(recent_assistant[-3:])) == 1:
+                    await bus.publish(
+                        task_id,
+                        "agent_progress",
+                        {"label": "Ciclo detectado", "detail": "Ações repetidas sem avanço; finalizando com o resultado atual."},
+                    )
+                    await publish_agent_activity(
+                        bus,
+                        task_id,
+                        kind="analysis",
+                        title="Ciclo detectado",
+                        detail="O agente repetiu a mesma ação 3 vezes consecutivas; forçando finalização.",
+                        status="failed",
+                    )
+                    action = {"action": "finish", "result": str(action.get("result") or "Tarefa finalizada (ciclo de ações detectado).")}
+                    action_name = "finish"
+
             if action_name == "finish":
                 # Limite de chamadas ao agente de codigo: forcar finalizacao se ja chamou demais
                 if code_agent_call_count >= MAX_CODE_AGENT_CALLS:
@@ -1959,6 +2012,16 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
 
             progress_label = _progress_label(action_name, str(action.get("description") or ""))
             action_params = action.get("params") if isinstance(action.get("params"), dict) else {}
+
+            # Enriquece chamadas ao OpenClaude com ExecutionPackage estruturado + snippets relevantes
+            if action_name == "shell_run" and _is_code_agent_shell_call_from_params(action_params):
+                raw_cmd = str(action_params.get("command") or "")
+                snippets = snippet_library.search(description, limit=2)
+                snippets_block = snippet_library.format_for_prompt(snippets) if snippets else ""
+                enriched = enrich_code_agent_command(raw_cmd, task_id, snippets_block=snippets_block)
+                if enriched != raw_cmd:
+                    action_params = {**action_params, "command": enriched}
+
             action_hint = _action_plan_hint(action_name, action_params)
             await _start_plan_step(task_id, action_hint, bus)
             await bus.publish(

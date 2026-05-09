@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -6,16 +8,42 @@ from access import install_lan_guard
 from api import control, files, providers, tasks, ws
 from config import settings
 from database import database
+from services.ephemeral_cache import ephemeral_cache
 from services.process_registry import kill_all_best_effort
 from tools.browser_pool import browser_pool
+
+logger = logging.getLogger(__name__)
+
+
+def _heal_stale_tasks() -> None:
+    """Marca como erro tasks que ficaram 'running' após queda ou reinício do servidor."""
+    from services.stream_contract import utc_now
+    stale = database.list_running_tasks()
+    if not stale:
+        return
+    for task in stale:
+        database.update_task(
+            task["id"],
+            status="error",
+            result="Tarefa interrompida por reinício do servidor.",
+            updated_at=utc_now(),
+        )
+        logger.warning("[startup] task %s marcada como erro (estava running ao reiniciar)", task["id"])
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _heal_stale_tasks()
     await browser_pool.initialize()
+    purge_task = asyncio.create_task(ephemeral_cache.purge_loop(interval=300.0))
     try:
         yield
     finally:
+        purge_task.cancel()
+        try:
+            await purge_task
+        except asyncio.CancelledError:
+            pass
         await browser_pool.shutdown()
         database.close()
         kill_all_best_effort()
