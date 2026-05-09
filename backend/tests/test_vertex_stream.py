@@ -160,6 +160,15 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertIn("Markdown fonte", command)
         self.assertIn("pronto para download", command)
 
+    def test_augments_office_document_prompt_with_library_contract(self) -> None:
+        command = _augment_code_agent_command_for_quality("openclaude 'gere um docx, slides pptx, excel xlsx e csv'")
+
+        self.assertIn("ARQUIVOS_OFFICE_VORTAX", command)
+        self.assertIn("python-docx", command)
+        self.assertIn("python-pptx", command)
+        self.assertIn("openpyxl", command)
+        self.assertIn("UTF-8", command)
+
     def test_does_not_augment_openclaude_version_check_with_quality_gate(self) -> None:
         command = _augment_code_agent_command_for_quality("openclaude --version")
 

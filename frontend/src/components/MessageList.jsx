@@ -7,10 +7,12 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileSpreadsheet,
   FileSearch,
   FileText,
   Loader2,
   Monitor,
+  Presentation,
   Search,
   ShieldCheck,
   Sparkles,
@@ -134,6 +136,10 @@ function documentKind(document) {
   const extension = String(document?.extension || fileExtension(document?.path)).toLowerCase();
   if (document?.kind === "markdown" || extension === ".md" || extension === ".markdown") return "markdown";
   if (document?.kind === "pdf" || extension === ".pdf") return "pdf";
+  if (document?.kind === "word" || extension === ".docx") return "word";
+  if (document?.kind === "presentation" || extension === ".pptx") return "presentation";
+  if (document?.kind === "spreadsheet" || extension === ".xlsx") return "spreadsheet";
+  if (document?.kind === "csv" || extension === ".csv") return "csv";
   return "document";
 }
 
@@ -141,7 +147,18 @@ function documentLabel(document) {
   const kind = documentKind(document);
   if (kind === "markdown") return "Markdown";
   if (kind === "pdf") return "PDF";
+  if (kind === "word") return "Word DOCX";
+  if (kind === "presentation") return "PowerPoint PPTX";
+  if (kind === "spreadsheet") return "Excel XLSX";
+  if (kind === "csv") return "CSV";
   return "Documento";
+}
+
+function DocumentIcon({ kind, size = 17 }) {
+  if (kind === "markdown") return <BookOpen size={size} />;
+  if (kind === "presentation") return <Presentation size={size} />;
+  if (kind === "spreadsheet" || kind === "csv") return <FileSpreadsheet size={size} />;
+  return <FileText size={size} />;
 }
 
 function formatBytes(value) {
@@ -220,7 +237,7 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
     >
       <div className="document-card-header">
         <span className="document-card-icon">
-          {isMarkdown ? <BookOpen size={17} /> : <FileText size={17} />}
+          <DocumentIcon kind={kind} size={17} />
         </span>
         <div className="document-card-title">
           <strong>{title}</strong>
@@ -251,7 +268,7 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || "Documento Markdown pronto para leitura."}</ReactMarkdown>
           )
         ) : (
-          <p>PDF pronto para leitura no visualizador interno e download.</p>
+          <p>{documentLabel(document)} pronto para download.</p>
         )}
       </div>
     </article>
@@ -279,6 +296,7 @@ function MessageDocuments({ documents = [], onOpenDocument, taskId }) {
 function DocumentViewerOverlay({ document, onClose, taskId }) {
   const kind = documentKind(document);
   const isMarkdown = kind === "markdown";
+  const isPdf = kind === "pdf";
   const { content, loading, error } = useMarkdownFile(taskId, document, isMarkdown && Boolean(document?.path));
   const title = document?.title || document?.name || document?.path || "Documento";
   const fileUrl = document?.path && taskId ? fileDownloadUrl(taskId, document.path) : "";
@@ -312,7 +330,7 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
           <header className="document-viewer-header">
             <div className="document-viewer-title">
               <span className="document-card-icon">
-                {isMarkdown ? <BookOpen size={18} /> : <FileText size={18} />}
+                <DocumentIcon kind={kind} size={18} />
               </span>
               <div>
                 <strong>{title}</strong>
@@ -345,8 +363,20 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
                   </ReactMarkdown>
                 )}
               </div>
-            ) : (
+            ) : isPdf ? (
               <iframe className="document-viewer-frame" src={fileUrl} title={title} />
+            ) : (
+              <div className="document-download-panel">
+                <span className="document-download-icon">
+                  <DocumentIcon kind={kind} size={32} />
+                </span>
+                <strong>{documentLabel(document)} pronto</strong>
+                <p>Este formato fica disponível para baixar e abrir no aplicativo compatível.</p>
+                <a className="message-download-btn" download href={fileUrl}>
+                  <Download size={16} />
+                  <span>Baixar {document.name || document.path}</span>
+                </a>
+              </div>
             )}
           </div>
         </motion.section>

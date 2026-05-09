@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import csv
 import re
 import shutil
 import unicodedata
@@ -10,10 +11,13 @@ from typing import Any
 
 from config import settings
 from services.document_intent import (
+    DOCUMENT_EXTENSIONS,
     document_extensions_from_text,
     is_markdown_document,
-    is_previewable_document,
 )
+
+
+VALIDATED_DOWNLOAD_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".csv"}
 
 
 EDIT_REQUEST_RE = re.compile(
@@ -23,7 +27,8 @@ EDIT_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 DOCUMENT_TARGET_RE = re.compile(
-    r"\b(pdf|markdown|\.md|md|arquivo|documento|relat[oó]rio|manual|guia|texto|"
+    r"\b(pdf|markdown|\.md|md|docx|word|pptx|powerpoint|xlsx|excel|csv|planilha|"
+    r"arquivo|documento|relat[oó]rio|manual|guia|texto|"
     r"esse|este|essa|esta|anterior|ultimo|último)\b",
     re.IGNORECASE,
 )
@@ -65,9 +70,10 @@ def _subject_from_text(text: str) -> str:
         flags=re.IGNORECASE,
     )
     subject = match.group(1) if match else value
-    subject = re.sub(r"\.(?:md|pdf|markdown)\b", " ", subject, flags=re.IGNORECASE)
+    subject = re.sub(r"\.(?:md|pdf|markdown|docx|pptx|xlsx|csv)\b", " ", subject, flags=re.IGNORECASE)
     subject = re.sub(
-        r"\b(gere|gerar|crie|criar|fa[cç]a|um|uma|arquivo|documento|pdf|markdown|md|com|em|para|sobre|hist[oó]ria)\b",
+        r"\b(gere|gerar|crie|criar|fa[cç]a|um|uma|arquivo|documento|pdf|markdown|md|docx|word|pptx|"
+        r"powerpoint|xlsx|excel|csv|planilha|slides?|apresenta[cç][aã]o|com|em|para|sobre|hist[oó]ria)\b",
         " ",
         subject,
         flags=re.IGNORECASE,
@@ -83,18 +89,22 @@ def artifact_profile(text: str) -> dict[str, Any]:
     requested_extensions = document_extensions_from_text(text)
     wants_markdown = ".md" in requested_extensions
     wants_pdf = ".pdf" in requested_extensions
-    explicit = wants_markdown or wants_pdf
+    wants_validated_download = any(extension in VALIDATED_DOWNLOAD_EXTENSIONS for extension in requested_extensions)
+    explicit = bool(requested_extensions)
     edit_requested = bool(EDIT_REQUEST_RE.search(str(text or "")) and DOCUMENT_TARGET_RE.search(str(text or "")))
     slug = _subject_from_text(text)
+    preferred_files = {extension: f"{slug}{extension}" for extension in requested_extensions}
     return {
         "requested_extensions": requested_extensions,
         "wants_markdown": wants_markdown,
         "wants_pdf": wants_pdf,
+        "wants_validated_download": wants_validated_download,
         "explicit_document": explicit,
         "edit_requested": edit_requested,
         "requires_artifact": explicit,
         "preferred_markdown": f"{slug}.md",
         "preferred_pdf": f"{slug}.pdf",
+        "preferred_files": preferred_files,
         "subject": slug.replace("_", " "),
     }
 
@@ -114,7 +124,8 @@ def resolve_document_target(task_id: str, text: str, files: list[dict[str, Any]]
     candidates = [
         file
         for file in files
-        if is_previewable_document(str(file.get("path") or "")) and not str(file.get("path") or "").startswith("versions/")
+        if _normalize_extension(str(file.get("path") or "")) in DOCUMENT_EXTENSIONS
+        and not str(file.get("path") or "").startswith("versions/")
     ]
     if requested:
         candidates = [
@@ -173,6 +184,111 @@ def pdf_file_valid(path: Path) -> bool:
         return False
 
 
+def docx_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 512:
+        return False
+    try:
+        from docx import Document
+
+        document = Document(path)
+        text = "\n".join(paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip())
+        table_cells = [
+            cell.text.strip()
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            if cell.text.strip()
+        ]
+        return len((text + "\n".join(table_cells)).strip()) >= 80
+    except Exception:
+        return False
+
+
+def pptx_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 1024:
+        return False
+    try:
+        from pptx import Presentation
+
+        presentation = Presentation(path)
+        slides_with_text = 0
+        total_text = []
+        for slide in presentation.slides:
+            slide_text = []
+            for shape in slide.shapes:
+                text = getattr(shape, "text", "")
+                if text and text.strip():
+                    slide_text.append(text.strip())
+            if slide_text:
+                slides_with_text += 1
+                total_text.extend(slide_text)
+        return len(presentation.slides) >= 1 and slides_with_text >= 1 and len(" ".join(total_text)) >= 40
+    except Exception:
+        return False
+
+
+def xlsx_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 512:
+        return False
+    try:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            populated_cells = 0
+            for worksheet in workbook.worksheets:
+                for row in worksheet.iter_rows():
+                    for cell in row:
+                        value = cell.value
+                        if value is not None and str(value).strip():
+                            populated_cells += 1
+                            if populated_cells >= 4:
+                                return True
+            return False
+        finally:
+            workbook.close()
+    except Exception:
+        return False
+
+
+def csv_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 8:
+        return False
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = [
+                [cell.strip() for cell in row]
+                for row in csv.reader(handle)
+                if any(cell.strip() for cell in row)
+            ]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return False
+    if len(rows) < 2:
+        return False
+    max_columns = max((len(row) for row in rows), default=0)
+    populated = sum(1 for row in rows for cell in row if cell)
+    return max_columns >= 2 and populated >= 4
+
+
+def document_file_valid(path: Path, extension: str | None = None) -> bool:
+    suffix = (extension or path.suffix).lower()
+    if suffix == ".markdown":
+        suffix = ".md"
+    if suffix == ".md":
+        return markdown_file_valid(path)
+    if suffix == ".pdf":
+        return pdf_file_valid(path)
+    if suffix == ".docx":
+        return docx_file_valid(path)
+    if suffix == ".pptx":
+        return pptx_file_valid(path)
+    if suffix == ".xlsx":
+        return xlsx_file_valid(path)
+    if suffix == ".csv":
+        return csv_file_valid(path)
+    return path.is_file() and path.stat().st_size > 0
+
+
 def valid_markdown_files(project_dir: Path) -> list[str]:
     matches: list[str] = []
     for suffix in ("*.md", "*.markdown"):
@@ -192,6 +308,17 @@ def valid_pdf_files(project_dir: Path) -> list[str]:
         if pdf_file_valid(path):
             matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
     return matches
+
+
+def valid_document_files(project_dir: Path, extension: str) -> list[str]:
+    normalized = ".md" if extension.lower() == ".markdown" else extension.lower()
+    matches: list[str] = []
+    for path in sorted(project_dir.rglob(f"*{normalized}")):
+        if any(part in {"node_modules", ".git", "dist", "build", "__pycache__", "versions"} for part in path.parts):
+            continue
+        if document_file_valid(path, normalized):
+            matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
+    return sorted(set(matches))
 
 
 def _inline_markdown(text: str) -> str:
@@ -350,7 +477,8 @@ def document_context_for_code_agent(task_id: str, prompt: str, files: list[dict[
     docs = [
         file
         for file in files
-        if is_previewable_document(str(file.get("path") or "")) and not str(file.get("path") or "").startswith("versions/")
+        if _normalize_extension(str(file.get("path") or "")) in DOCUMENT_EXTENSIONS
+        and not str(file.get("path") or "").startswith("versions/")
     ]
     if docs:
         lines = [f"- {file.get('path')} ({file.get('extension') or Path(str(file.get('path') or '')).suffix}, {int(file.get('size_bytes') or 0)} bytes)" for file in docs[:5]]

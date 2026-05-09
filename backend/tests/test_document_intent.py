@@ -10,6 +10,17 @@ class DocumentIntentTests(unittest.TestCase):
     def test_detects_common_document_words(self) -> None:
         self.assertEqual(document_extensions_from_text("crie uma planilha xlsx"), [".xlsx"])
         self.assertEqual(document_extensions_from_text("faca um PDF do contrato"), [".pdf"])
+        self.assertEqual(document_extensions_from_text("crie slides pptx sobre vendas"), [".pptx"])
+        self.assertEqual(document_extensions_from_text("gere um exel de custos"), [".xlsx"])
+
+    def test_office_documents_require_artifact(self) -> None:
+        from services.document_artifacts import artifact_profile
+
+        profile = artifact_profile("gere um docx, um pptx, um xlsx e um csv sobre o projeto")
+
+        self.assertTrue(profile["requires_artifact"])
+        self.assertCountEqual(profile["requested_extensions"], [".docx", ".pptx", ".xlsx", ".csv"])
+        self.assertIn(".docx", profile["preferred_files"])
 
     def test_json_requires_file_context_without_dot(self) -> None:
         self.assertEqual(document_extensions_from_text("uma api que retorna json"), [])

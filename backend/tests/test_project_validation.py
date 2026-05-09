@@ -204,6 +204,72 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "passed")
 
+    async def test_office_documents_pass_real_file_validation(self) -> None:
+        from docx import Document
+        from openpyxl import Workbook
+        from pptx import Presentation
+
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-office-ok"
+                task_dir.mkdir()
+
+                document = Document()
+                document.add_heading("Relatorio Executivo", level=1)
+                document.add_paragraph("Analise completa com contexto, detalhes, resultados e recomendacoes. " * 2)
+                document.save(task_dir / "relatorio.docx")
+
+                presentation = Presentation()
+                slide = presentation.slides.add_slide(presentation.slide_layouts[0])
+                slide.shapes.title.text = "Resumo Executivo"
+                slide.placeholders[1].text = "Contexto, dados principais, recomendacoes e proximos passos."
+                presentation.save(task_dir / "slides.pptx")
+
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.append(["Indicador", "Valor"])
+                sheet.append(["Receita", 1200])
+                sheet.append(["Custo", 800])
+                workbook.save(task_dir / "dados.xlsx")
+
+                (task_dir / "dados.csv").write_text("indicador,valor\nreceita,1200\ncusto,800\n", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_code_agent(
+                    "task-office-ok",
+                    "openclaude 'gere um docx, slides pptx, excel xlsx e csv'",
+                    bus,
+                    agent_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "passed")
+
+    async def test_office_documents_fail_when_corrupted(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-office-bug"
+                task_dir.mkdir()
+                (task_dir / "relatorio.docx").write_text("nao e docx real", encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_code_agent(
+                    "task-office-bug",
+                    "openclaude 'gere um arquivo docx'",
+                    bus,
+                    agent_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("DOCX" in bug for bug in result["bugs"]))
+
     async def test_github_repo_analysis_validates_only_technical_report(self) -> None:
         previous_workspace = settings.WORKSPACE_PATH
         with tempfile.TemporaryDirectory() as tmp:

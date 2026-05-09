@@ -1593,6 +1593,45 @@ small {
   background: #101012;
 }
 
+.document-download-panel {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  min-height: min(520px, calc(100dvh - 128px));
+  padding: 28px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.document-download-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(8, 198, 93, 0.22);
+  border-radius: 18px;
+  background: rgba(8, 198, 93, 0.1);
+  color: var(--accent-blue);
+}
+
+.document-download-panel strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.document-download-panel p {
+  max-width: 360px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.document-download-panel .message-download-btn {
+  margin-top: 4px;
+}
+
 @media (max-width: 720px) {
   .message-documents {
     width: 100%;
@@ -4895,7 +4934,7 @@ small {
   inset: 12px 12px 12px auto;
   z-index: 965;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   width: min(590px, calc(100vw - 24px));
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -6161,6 +6200,337 @@ small {
 
   .composer-container textarea {
     font-size: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-shell.manus-layout,
+  .app-shell.manus-layout.sidebar-closed,
+  .app-shell.manus-layout.sidebar-open {
+    width: 100%;
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .manus-layout .sidebar {
+    display: flex;
+    inset: max(8px, env(safe-area-inset-top)) auto max(8px, env(safe-area-inset-bottom)) 8px;
+    width: min(300px, calc(100vw - 16px)) !important;
+    max-width: calc(100vw - 16px);
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .manus-layout .brand {
+    margin-bottom: 14px;
+  }
+
+  .manus-layout .task-list {
+    min-height: 0;
+    margin-top: 18px;
+    overflow-y: auto;
+    padding-bottom: 8px;
+  }
+
+  .manus-layout .task-item {
+    padding: 12px 13px;
+  }
+
+  .manus-layout .chat-panel {
+    min-height: 0;
+  }
+
+  .manus-layout .chat-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .manus-layout .chat-header-actions {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+  }
+
+  .manus-layout .chat-header-left,
+  .manus-layout .chat-header-text {
+    min-width: 0;
+  }
+
+  .manus-layout .chat-header-text small {
+    max-width: 100%;
+  }
+
+  .manus-layout .message-list {
+    padding: 0;
+  }
+
+  .manus-layout .message-list-inner {
+    width: calc(100% - 24px);
+    max-width: none;
+    padding-top: 12px;
+  }
+
+  .manus-layout .message {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .manus-layout .message.assistant {
+    gap: 9px;
+  }
+
+  .manus-layout .message.assistant .message-avatar {
+    width: 20px;
+    height: 20px;
+  }
+
+  .message-content,
+  .markdown-body,
+  .message-documents,
+  .document-attachment-card,
+  .inline-task-timeline,
+  .inline-step-details,
+  .chat-progress-current,
+  .chat-progress-activity-list,
+  .shell-output,
+  .code-block {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .markdown-body table,
+  .document-viewer-markdown table,
+  .document-card-preview table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .markdown-body pre,
+  .code-block pre,
+  .shell-output-lines {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .chat-progress-current {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .chat-progress-current em {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .chat-progress-activity {
+    max-width: 100%;
+  }
+
+  .inline-task-timeline.direct,
+  .inline-task-timeline.empty,
+  .inline-task-timeline.generating {
+    max-width: 100%;
+    margin-left: 0;
+  }
+
+  .composer-wrapper {
+    flex-shrink: 0;
+  }
+
+  .composer-container textarea {
+    min-width: 0;
+  }
+
+  .task-detail-drawer,
+  .computer-side-panel {
+    inset: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+    width: auto;
+    max-width: none;
+  }
+
+  .detail-drawer-content {
+    padding: 10px;
+  }
+
+  .computer-side-panel {
+    grid-template-rows: auto auto minmax(180px, 1fr) auto auto;
+  }
+
+  .computer-side-context {
+    grid-template-columns: 22px minmax(0, 1fr);
+    margin: 0 10px 8px;
+    padding: 9px 10px;
+  }
+
+  .computer-side-context em {
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .computer-stage {
+    min-height: 180px;
+  }
+
+  .computer-live-controls {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .computer-live-state,
+  .computer-jump-live-btn {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .manus-layout .sidebar-open-btn {
+    top: 14px;
+    left: 12px;
+  }
+
+  .manus-layout .chat-header {
+    min-height: 58px;
+    padding: 12px 8px 9px 50px;
+  }
+
+  .manus-layout .chat-header-actions {
+    gap: 5px;
+  }
+
+  .chat-health-group {
+    display: none;
+  }
+
+  .detail-open-btn,
+  .user-menu-btn {
+    width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .detail-open-btn svg,
+  .user-menu-btn svg {
+    flex-shrink: 0;
+  }
+
+  .manus-layout .message-list-inner {
+    width: calc(100% - 18px);
+    gap: 14px;
+  }
+
+  .manus-layout .markdown-body {
+    font-size: 13.5px;
+    line-height: 1.58;
+  }
+
+  .manus-layout .message.user {
+    max-width: 96%;
+    padding: 10px 12px;
+  }
+
+  .message.progress-message {
+    padding: 0;
+  }
+
+  .chat-progress-activity-list {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chat-progress-activity {
+    width: 100%;
+    border-radius: 11px;
+  }
+
+  .vortax-computer-dock {
+    margin-bottom: 6px;
+  }
+
+  .computer-dock-count {
+    display: none;
+  }
+
+  .composer-wrapper {
+    width: calc(100% - 12px);
+    max-width: calc(100% - 12px);
+  }
+
+  .composer-container {
+    min-height: 68px;
+    border-radius: 16px;
+  }
+
+  .composer-row {
+    min-height: 66px;
+  }
+
+  .computer-side-header {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .computer-side-header strong,
+  .detail-drawer-header strong {
+    font-size: 14px;
+  }
+
+  .computer-side-header span,
+  .detail-drawer-title > div span {
+    font-size: 11px;
+    white-space: normal;
+  }
+
+  .computer-stage-address {
+    justify-content: flex-start;
+    font-size: 11px;
+  }
+
+  .computer-progress-card {
+    margin: 0 10px 10px;
+  }
+}
+
+@media (max-width: 360px) {
+  .composer-voice-btn {
+    display: none;
+  }
+
+  .computer-dock-open {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .computer-preview {
+    width: 44px;
+    height: 30px;
+  }
+
+  .computer-dock-toggle,
+  .computer-dock-detail-btn {
+    width: 30px;
+    height: 30px;
+  }
+}
+
+@media (max-height: 620px) and (max-width: 768px) {
+  .computer-side-panel {
+    grid-template-rows: auto auto minmax(150px, 1fr) auto auto;
+  }
+
+  .computer-stage {
+    min-height: 150px;
+  }
+
+  .computer-side-progress .computer-progress-list {
+    max-height: 86px;
+  }
+
+  .computer-progress-card {
+    padding: 10px;
   }
 }
 

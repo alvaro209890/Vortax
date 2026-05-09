@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
-from services.document_artifacts import valid_markdown_files, valid_pdf_files
+from services.document_artifacts import valid_document_files, valid_markdown_files, valid_pdf_files
 from services.document_intent import document_extensions_from_text, report_artifact_profile
 from services.github_repos import is_github_repo_analysis_request
 from services.project_files import missing_local_asset_refs, scan_task_workspace
@@ -151,10 +151,8 @@ def _nonempty_files_with_suffix(project_dir: Path, suffix: str) -> list[str]:
 
 
 def _valid_files_for_requested_suffix(project_dir: Path, suffix: str) -> list[str]:
-    if suffix.lower() in {".md", ".markdown"}:
-        return valid_markdown_files(project_dir)
-    if suffix.lower() == ".pdf":
-        return valid_pdf_files(project_dir)
+    if suffix.lower() in {".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".json"}:
+        return valid_document_files(project_dir, suffix)
     return _nonempty_files_with_suffix(project_dir, suffix)
 
 
@@ -267,6 +265,14 @@ async def validate_project_after_code_agent(
                 bugs.append("Pedido de PDF exige um arquivo .pdf valido, nao vazio e iniciado por %PDF no diretorio da conversa.")
             elif extension == ".md":
                 bugs.append("Pedido de Markdown exige um arquivo .md valido, com titulo H1 e conteudo suficiente no diretorio da conversa.")
+            elif extension == ".docx":
+                bugs.append("Pedido de Word/DOCX exige um arquivo .docx valido, abrivel com python-docx e com conteudo suficiente.")
+            elif extension == ".pptx":
+                bugs.append("Pedido de slides/PPTX exige um arquivo .pptx valido, abrivel com python-pptx e com slides preenchidos.")
+            elif extension == ".xlsx":
+                bugs.append("Pedido de Excel/XLSX exige um arquivo .xlsx valido, abrivel com openpyxl e com celulas preenchidas.")
+            elif extension == ".csv":
+                bugs.append("Pedido de CSV exige um arquivo .csv UTF-8 valido, nao vazio, com linhas e colunas preenchidas.")
             else:
                 bugs.append(
                     f"Pedido de documento/arquivo exige um arquivo {extension} nao vazio no diretorio da conversa."

@@ -16,10 +16,13 @@ _EXTENSION_ALIASES = {
     "csv": ".csv",
     "xlsx": ".xlsx",
     "excel": ".xlsx",
+    "exel": ".xlsx",
     "planilha": ".xlsx",
     "json": ".json",
     "pptx": ".pptx",
     "powerpoint": ".pptx",
+    "slides": ".pptx",
+    "slide": ".pptx",
     "apresentacao": ".pptx",
     "apresentação": ".pptx",
 }

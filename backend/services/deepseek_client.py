@@ -151,7 +151,7 @@ TOOLS_SCHEMA = [
     {
         "action": "shell_run",
         "params": {"command": "echo hello"},
-        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, openclaude, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts ou analisar repositorios publicos do GitHub, use 'openclaude \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
+        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, openclaude, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, analisar repositorios publicos do GitHub ou gerar arquivos finais (.md, .pdf, .docx, .pptx, .xlsx, .csv), use 'openclaude \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
     },
     {
         "action": "vision_analyze",
@@ -346,7 +346,10 @@ async def request_direct_chat_response(
     else:
         system_prompt = (
             "Voce e o assistente de chat do Vortax. Responda diretamente no chat, sem planejamento, sem ferramentas. "
-            "Seja claro e curto. Nao mencione que executou acoes no PC. "
+            "Seja claro, completo e bem formatado em Markdown. Use titulo curto em negrito quando ajudar, paragrafos curtos, "
+            "listas com marcadores, tabelas pequenas quando compararem dados, e destaques em **negrito** para fatos importantes. "
+            "Para respostas factuais, organize em: resumo direto, pontos principais, detalhes relevantes e limites/observacoes quando houver incerteza. "
+            "Nao entregue um bloco unico de texto longo. Nao mencione que executou acoes no PC. "
             "Se nao conseguir responder sem internet, arquivos ou dados atuais, decline de forma natural e breve, sem revelar termos tecnicos ou modos internos do sistema."
         )
 
@@ -447,9 +450,11 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Para pesquisas simples, uma fonte confiavel pode bastar; para temas controversos ou dados que podem variar, consulte duas ou tres fontes. "
         "Se uma ferramenta falhar, tente uma consulta alternativa, outro resultado ou browser_extract_links antes de finalizar com erro. "
         "Use browser_get_state quando estiver incerto sobre a pagina atual. "
-        "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, direto e com as fontes/URLs visitadas. "
+        "Depois que as ferramentas retornarem informacao suficiente, use action finish com result claro, completo, bem formatado em Markdown e com as fontes/URLs visitadas. "
         "Na resposta final, estruture evidencias quando houver pesquisa: para cada conclusao importante, indique fonte/URL; diferencie 'confirmado em fonte aberta', 'inferido' e 'nao encontrado'. "
-        "Respostas finais devem ser um pouco mais completas por padrao: traga uma conclusao curta, os dados principais organizados, URLs usadas e limites da apuracao. "
+        "Respostas finais devem ser mais completas e mais bonitas por padrao: use titulo curto em negrito, uma conclusao/resumo inicial, secoes curtas, listas com marcadores, "
+        "destaques em **negrito**, tabelas pequenas quando houver comparacao ou cronologia, e uma secao final de fontes/limites quando houver pesquisa. "
+        "Nao entregue tudo em um unico paragrafo; quebre a resposta para leitura facil no chat. "
         "Nao finalize dizendo que nao foi possivel comparar apenas porque uma pagina bloqueou ou o cache nao tinha dados; tente consultas alternativas, dominios oficiais e uma busca por indicador antes de desistir. "
         "Para dados economicos comparativos (PIB, inflacao/IPCA, desemprego, Selic, cambio), pesquise por indicador e periodo, priorizando IBGE, Ipea, Banco Central, World Bank, OECD ou IMF; nao use biografias como evidencia quantitativa. "
         "Para perguntas de matematica, fisica, quimica, estatistica, engenharia ou outras exatas, use exact_solve antes de finalizar quando houver conta, porcentagem, equacao ou numeros para calcular. "

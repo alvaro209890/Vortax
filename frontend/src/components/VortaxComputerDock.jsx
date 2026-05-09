@@ -26,6 +26,13 @@ function latestEvent(events, predicate) {
   return null;
 }
 
+function latestEventIndex(events, predicate) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (predicate(events[index])) return index;
+  }
+  return -1;
+}
+
 function formatElapsed(start, now) {
   if (!start) return "";
   const seconds = Math.max(0, Math.floor((now - new Date(start).getTime()) / 1000));
@@ -859,6 +866,9 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
     title: isLive ? "Tela ao vivo" : "Cena selecionada",
     tool: visiblePreview.using || "",
   };
+  const panelRunStateLabel = ["done", "error", "stopped"].includes(agentStatus)
+    ? statusLabel(agentStatus)
+    : elapsed;
 
   const handlePrevFrame = () => {
     setSceneOverride(null);
@@ -899,7 +909,7 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
             <strong>Computador do Vortax</strong>
             <span>
               {visiblePreview.mode === "search" || visiblePreview.mode === "browser" ? <Globe2 size={13} /> : <Monitor size={13} />}
-              {elapsed ? `${elapsed} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}
+              {panelRunStateLabel ? `${panelRunStateLabel} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}
             </span>
           </div>
           <div className="computer-side-actions">
@@ -958,7 +968,24 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
 export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, focusRequest, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
-  const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
+  const latestUserEventIndexForStatus = useMemo(
+    () => latestEventIndex(events, (event) => event.type === "user_message"),
+    [events],
+  );
+  const latestAssistantDoneIndex = useMemo(
+    () => latestEventIndex(events, (event) => event.type === "assistant_message_done"),
+    [events],
+  );
+  const latestErrorIndex = useMemo(
+    () => latestEventIndex(events, (event) => event.type === "error"),
+    [events],
+  );
+  const effectiveAgentStatus = latestAssistantDoneIndex > latestUserEventIndexForStatus
+    ? "done"
+    : latestErrorIndex > latestUserEventIndexForStatus
+      ? "error"
+      : agentStatus;
+  const busy = ["queued", "thinking", "executing", "running"].includes(effectiveAgentStatus);
   const latestUserEventIndex = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       if (events[index].type === "user_message") return index;
@@ -981,7 +1008,7 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
     () => focusSceneFromRequest(focusRequest, frameHistory, preview, codingSnapshot),
     [codingSnapshot, focusRequest, frameHistory, preview],
   );
-  const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, agentStatus), [agentStatus, promptEvents]);
+  const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, effectiveAgentStatus), [effectiveAgentStatus, promptEvents]);
   const noWorkEventsYet = promptEvents.length === 0;
   const planningFallbackSteps = busy && (livePlan.isGeneratingPlan || noWorkEventsYet)
     ? [
@@ -1011,13 +1038,16 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
   const progressDone = codeAgentProgress?.doneCount || livePlan.doneCount || 0;
   const total = progressTotal || livePlan.totalCount || 0;
   const done = progressDone || livePlan.doneCount || 0;
-  const terminalLabel = agentStatus === "done"
+  const terminalLabel = effectiveAgentStatus === "done"
     ? "Pedido concluido"
-    : agentStatus === "error"
+    : effectiveAgentStatus === "error"
       ? "Ajuste necessario"
-      : agentStatus === "stopped"
+      : effectiveAgentStatus === "stopped"
         ? "Tarefa interrompida"
         : "";
+  const runStateLabel = ["done", "error", "stopped"].includes(effectiveAgentStatus)
+    ? statusLabel(effectiveAgentStatus)
+    : elapsed;
   const current = terminalLabel
     || (codingSnapshot.hasCodingActivity ? codingSnapshot.stageLabel : "")
     || livePlan.currentStep?.label
@@ -1058,7 +1088,7 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
               <span className="computer-live-dot" />
               <strong>Computador do Vortax</strong>
             </div>
-            <small>{elapsed ? `${elapsed} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}</small>
+            <small>{runStateLabel ? `${runStateLabel} · ` : ""}{current} · {statusLabel(effectiveAgentStatus)} · {connectionState}</small>
           </div>
           <span className="computer-dock-count">{done}/{total || 1}</span>
         </button>
@@ -1101,7 +1131,7 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
               </span>
             </div>
             <ComputerProgressCard
-              agentStatus={agentStatus}
+              agentStatus={effectiveAgentStatus}
               elapsed={elapsed}
               progressDone={progressDone}
               progressSteps={progressSteps}
@@ -1114,7 +1144,7 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
       <AnimatePresence>
         {sideOpen && (
           <ComputerSidePanel
-            agentStatus={agentStatus}
+            agentStatus={effectiveAgentStatus}
             connectionState={connectionState}
             current={current}
             elapsed={elapsed}

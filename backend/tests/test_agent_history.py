@@ -252,6 +252,32 @@ class GeneratedFilePayloadTests(unittest.TestCase):
         self.assertTrue(payload["documents"][0]["primary"])
         self.assertEqual(payload["documents"][0]["kind"], "pdf")
 
+    def test_payload_attaches_requested_office_document_cards(self) -> None:
+        task_dir = settings.WORKSPACE_PATH / self.task_id
+        task_dir.mkdir(parents=True)
+        (task_dir / "relatorio.docx").write_bytes(b"docx-bytes")
+        (task_dir / "slides.pptx").write_bytes(b"pptx-bytes")
+        self._sync_files(
+            [
+                {"path": "relatorio.docx", "size_bytes": 1024, "extension": ".docx", "modified_at": 1},
+                {"path": "slides.pptx", "size_bytes": 2048, "extension": ".pptx", "modified_at": 1},
+            ]
+        )
+        events = [
+            {
+                "event_id": 1,
+                "type": "tool_call",
+                "payload": {"name": "shell_run", "params": {"command": "openclaude 'gere um arquivo docx e slides pptx'"}},
+            }
+        ]
+
+        payload = _generated_file_response_payload(self.task_id, "ok", events)
+
+        self.assertEqual([item["path"] for item in payload["documents"]], ["relatorio.docx", "slides.pptx"])
+        self.assertEqual([item["kind"] for item in payload["documents"]], ["word", "presentation"])
+        self.assertTrue(all(item["previewable"] for item in payload["documents"]))
+        self.assertEqual([item["path"] for item in payload["downloads"]], ["relatorio.docx", "slides.pptx"])
+
 
 class SupportedStepCompletionTests(unittest.TestCase):
     def setUp(self) -> None:

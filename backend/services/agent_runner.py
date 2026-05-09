@@ -23,6 +23,7 @@ from services.document_artifacts import (
     document_context_for_code_agent,
     is_document_edit_request,
     resolve_document_target,
+    valid_document_files,
     valid_markdown_files,
     valid_pdf_files,
 )
@@ -772,6 +773,14 @@ def _document_kind(path: str) -> str:
         return "markdown"
     if extension == ".pdf":
         return "pdf"
+    if extension == ".docx":
+        return "word"
+    if extension == ".pptx":
+        return "presentation"
+    if extension == ".xlsx":
+        return "spreadsheet"
+    if extension == ".csv":
+        return "csv"
     return "document"
 
 
@@ -807,7 +816,7 @@ def _document_payload(task_id: str, file: dict[str, Any], *, primary: bool = Fal
             "title": _document_title(task_id, file),
             "kind": _document_kind(path),
             "primary": primary,
-            "previewable": is_previewable_document(path),
+            "previewable": True,
             "source": source,
         }
     )
@@ -826,11 +835,18 @@ def _has_markdown_artifact(task_id: str) -> bool:
 
 def _has_requested_document_artifact(task_id: str, profile: dict[str, Any]) -> bool:
     project_dir = settings.WORKSPACE_PATH / task_id
+    requested_extensions = [str(extension) for extension in profile.get("requested_extensions") or []]
     if profile.get("wants_pdf"):
-        return bool(valid_pdf_files(project_dir) and valid_markdown_files(project_dir))
+        if not (valid_pdf_files(project_dir) and valid_markdown_files(project_dir)):
+            return False
     if profile.get("wants_markdown") and not valid_markdown_files(project_dir):
         return False
-    return bool(profile.get("wants_pdf") or profile.get("wants_markdown"))
+    for extension in requested_extensions:
+        if extension in {".pdf", ".md", ".markdown"}:
+            continue
+        if not valid_document_files(project_dir, extension):
+            return False
+    return bool(requested_extensions)
 
 
 def _format_report_gate_instruction(description: str, profile: dict[str, Any]) -> str:
@@ -861,6 +877,15 @@ def _format_document_gate_instruction(description: str, profile: dict[str, Any])
         parts.append(
             f"Crie o Markdown final {profile.get('preferred_markdown')} com H1, resumo, secoes bem estruturadas, validacao e fontes quando houver pesquisa."
         )
+    preferred_files = profile.get("preferred_files") if isinstance(profile.get("preferred_files"), dict) else {}
+    for extension in profile.get("requested_extensions") or []:
+        if extension in {".md", ".markdown", ".pdf"}:
+            continue
+        filename = preferred_files.get(extension) or f"documento{extension}"
+        parts.append(
+            f"Para {extension}, crie obrigatoriamente {filename} como arquivo real e valido, nao texto renomeado. "
+            "Use as bibliotecas fixas do Python disponiveis no backend quando aplicavel e valide abrindo o arquivo antes de finalizar."
+        )
     parts.append("A resposta final deve explicar o que foi entregue e deixar o card de documento no chat.")
     parts.append(f"Pedido original: {description}")
     return " ".join(str(part) for part in parts if part)
@@ -877,7 +902,7 @@ def _format_document_research_gate_instruction(description: str, status: dict[st
     if queries:
         pieces.append("Pesquise e abra fontes com estas consultas: " + " | ".join(queries[:5]) + ".")
     pieces.append("Use browser_google_search, abra resultados relevantes e salve evidencias com browser_extract_article ou browser_extract_text.")
-    pieces.append(f"Depois chame {CODE_AGENT_LABEL} com as fontes pesquisadas para criar o Markdown/PDF e so finalize quando o arquivo aparecer no card.")
+    pieces.append(f"Depois chame {CODE_AGENT_LABEL} com as fontes pesquisadas para criar o arquivo final solicitado e so finalize quando ele aparecer no card.")
     pieces.append(f"Pedido original: {description}")
     return " ".join(pieces)
 
@@ -918,10 +943,13 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
     )
     if include_markdown:
         document_files.extend((file, "documentation") for file in docs)
-    if not pdf_requested:
-        for file in requested_downloads:
-            if is_previewable_document(str(file.get("path") or "")):
-                document_files.append((file, "requested"))
+    for file in requested_downloads:
+        path = str(file.get("path") or "")
+        extension = Path(path).suffix.lower()
+        if pdf_requested and extension == ".pdf":
+            continue
+        if is_previewable_document(path) or extension in {".docx", ".pptx", ".xlsx", ".csv"}:
+            document_files.append((file, "requested"))
 
     documents: list[dict[str, Any]] = []
     seen_documents: set[str] = set()
@@ -1037,6 +1065,7 @@ async def _finish_text_response(
     final_content = _sanitize_chat_content(str(payload.get("content") or result))
     payload["content"] = final_content
     store.update_status(task_id, "done", result=final_content)
+    await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluido"})
     await bus.publish(task_id, "assistant_message_done", payload)
     if emit_activity:
         await publish_agent_activity(
@@ -1892,10 +1921,11 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
                 if is_document_edit_request(description) and not document_profile.get("requires_artifact"):
                     target = resolve_document_target(task_id, description, database.list_generated_files(task_id))
                     target_extension = Path(str((target or {}).get("path") or "")).suffix.lower()
-                    if target_extension in {".md", ".markdown", ".pdf"}:
+                    if target_extension in {".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".csv"}:
                         document_profile["requires_artifact"] = True
                         document_profile["wants_markdown"] = target_extension in {".md", ".markdown"}
                         document_profile["wants_pdf"] = target_extension == ".pdf"
+                        document_profile["requested_extensions"] = [".md" if target_extension == ".markdown" else target_extension]
 
                 document_research = document_research_profile(description)
                 if document_research.get("requires_research"):
@@ -1942,7 +1972,7 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
 
                 if needs_document or needs_report:
                     label = "Preparando arquivo final"
-                    detail = "A resposta precisa anexar o PDF/Markdown solicitado antes de finalizar."
+                    detail = "A resposta precisa anexar o arquivo solicitado antes de finalizar."
                     if needs_document and needs_report:
                         combined = {**report_profile, **document_profile}
                         gate_content = _format_document_gate_instruction(description, combined)

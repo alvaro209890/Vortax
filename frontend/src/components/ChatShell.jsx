@@ -5,6 +5,13 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 export function ChatShell({ sidebar, main }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  function handleSidebarClick(event) {
+    if (!window.matchMedia("(max-width: 768px)").matches) return;
+    if (event.target.closest(".task-item, .task-list-header button")) {
+      setIsSidebarOpen(false);
+    }
+  }
+
   return (
     <div className={`app-shell manus-layout ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
       <AnimatePresence>
@@ -22,6 +29,7 @@ export function ChatShell({ sidebar, main }) {
       </AnimatePresence>
       <motion.aside
         className="sidebar"
+        onClickCapture={handleSidebarClick}
         animate={{
           x: isSidebarOpen ? 0 : -320,
           width: "300px",
@@ -39,6 +47,7 @@ export function ChatShell({ sidebar, main }) {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsSidebarOpen(false)}
+            type="button"
             title="Recolher menu"
           >
             <PanelLeftClose size={18} />
@@ -56,6 +65,7 @@ export function ChatShell({ sidebar, main }) {
               exit={{ opacity: 0, scale: 0.8 }}
               transition={{ type: "spring", stiffness: 200, damping: 20 }}
               onClick={() => setIsSidebarOpen(true)}
+              type="button"
               title="Expandir menu"
             >
               <PanelLeftOpen size={18} />

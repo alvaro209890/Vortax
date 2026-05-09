@@ -12,6 +12,7 @@ from services.document_artifacts import (
     preferred_markdown_for_pdf,
     render_markdown_to_pdf,
     resolve_document_target,
+    valid_document_files,
     valid_markdown_files,
     valid_pdf_files,
 )
@@ -381,6 +382,40 @@ def _command_involves_code(prompt: str) -> bool:
     return any(kw in lowered for kw in code_keywords)
 
 
+def _office_artifact_instructions(requested_extensions: list[str], preferred_files: dict[str, str]) -> str:
+    pieces: list[str] = []
+    for extension in requested_extensions:
+        filename = preferred_files.get(extension) or f"documento{extension}"
+        if extension == ".docx":
+            pieces.append(
+                f"Para DOCX, gere obrigatoriamente {filename} usando python-docx. "
+                "Use estilos de titulo, subtitulos, paragrafos claros, listas/tabelas quando ajudarem, e salve um .docx real abrivel no Word/LibreOffice."
+            )
+        elif extension == ".pptx":
+            pieces.append(
+                f"Para PPTX, gere obrigatoriamente {filename} usando python-pptx. "
+                "Monte slides profissionais com capa, agenda/estrutura, conteudo por slide, titulos claros e fechamento; o arquivo precisa abrir como apresentacao real."
+            )
+        elif extension == ".xlsx":
+            pieces.append(
+                f"Para XLSX, gere obrigatoriamente {filename} usando openpyxl. "
+                "Crie planilhas com cabecalhos, dados organizados, larguras, formatos numericos/datas, totais ou formulas quando fizer sentido."
+            )
+        elif extension == ".csv":
+            pieces.append(
+                f"Para CSV, gere obrigatoriamente {filename} em UTF-8, com cabecalho, linhas consistentes e colunas separadas por virgula. "
+                "Nao use ponto e virgula a menos que o usuario peça explicitamente."
+            )
+    if not pieces:
+        return ""
+    return (
+        " ARQUIVOS_OFFICE_VORTAX: "
+        + " ".join(pieces)
+        + " Depois de criar, valide localmente abrindo/lendo o arquivo com a biblioteca correspondente. "
+        "Nao entregue arquivo vazio, corrompido, com extensao errada ou apenas texto renomeado."
+    )
+
+
 def _augment_code_agent_command_for_quality(command: str, task_id: str | None = None) -> str:
     initial_split = _split_code_agent_command(command)
     initial_prompt = ""
@@ -458,6 +493,10 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
                 "Use nome descritivo, conteudo completo e pronto para download pelo Vortax. "
                 "Se gerar PDF, entregue o .pdf final e, quando fizer sentido, tambem deixe a fonte editavel em Markdown."
             )
+            instruction += _office_artifact_instructions(
+                requested_extensions,
+                artifact.get("preferred_files") if isinstance(artifact.get("preferred_files"), dict) else {},
+            )
         if artifact.get("wants_pdf"):
             instruction += (
                 f" Para PDF, crie obrigatoriamente tambem o Markdown fonte {artifact.get('preferred_markdown')} "
@@ -532,7 +571,8 @@ async def _ensure_pdf_artifact_after_code_agent(task_id: str, command: str, bus:
 
 def _requested_document_artifact_error(task_id: str, command: str) -> str | None:
     profile = artifact_profile(command)
-    if not profile.get("wants_pdf") and not profile.get("wants_markdown"):
+    requested_extensions = [str(extension) for extension in profile.get("requested_extensions") or []]
+    if not requested_extensions:
         return None
     project_dir = _project_dir(task_id)
     markdown_files = valid_markdown_files(project_dir)
@@ -546,6 +586,17 @@ def _requested_document_artifact_error(task_id: str, command: str) -> str | None
             return "Pedido de PDF exige um arquivo .pdf valido antes da entrega."
     if profile.get("wants_markdown") and not markdown_files:
         return "Pedido de Markdown exige um arquivo .md valido antes da entrega."
+    labels = {
+        ".docx": "Word/DOCX",
+        ".pptx": "slides/PPTX",
+        ".xlsx": "Excel/XLSX",
+        ".csv": "CSV",
+    }
+    for extension in requested_extensions:
+        if extension in {".md", ".markdown", ".pdf"}:
+            continue
+        if not valid_document_files(project_dir, extension):
+            return f"Pedido de {labels.get(extension, extension)} exige um arquivo {extension} real, valido e com conteudo suficiente antes da entrega."
     return None
 
 
