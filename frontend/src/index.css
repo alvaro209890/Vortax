@@ -1386,7 +1386,12 @@ small {
   width: 32px;
   height: 32px;
   border-radius: 7px;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
   text-decoration: none;
 }
 
@@ -1400,9 +1405,11 @@ small {
   position: relative;
   max-height: 270px;
   padding: 14px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   color: var(--text-secondary);
   font-size: 13px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .document-card-preview::after {
@@ -1440,6 +1447,23 @@ small {
 .document-card-preview td {
   padding: 7px 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.document-card-preview pre {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre;
+}
+
+.document-card-preview code {
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.document-card-preview img {
+  max-width: 100%;
+  height: auto;
 }
 
 .document-viewer-overlay {
@@ -1544,6 +1568,8 @@ small {
   width: min(760px, calc(100% - 36px));
   margin: 0 auto;
   padding: 28px 0 56px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .document-viewer-markdown.markdown-body {
@@ -1583,6 +1609,23 @@ small {
 
 .document-viewer-markdown th {
   background: rgba(255, 255, 255, 0.06);
+}
+
+.document-viewer-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre;
+}
+
+.document-viewer-markdown code {
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.document-viewer-markdown img {
+  max-width: 100%;
+  height: auto;
 }
 
 .document-viewer-frame {
@@ -1639,11 +1682,33 @@ small {
 
   .document-attachment-card {
     min-height: 148px;
-    max-height: 300px;
+    max-height: none;
   }
 
   .document-card-header {
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
     padding: 10px 12px;
+  }
+
+  .document-card-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .document-card-title strong {
+    font-size: 13px;
+  }
+
+  .document-card-title span {
+    font-size: 11px;
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .document-card-download {
+    width: 30px;
+    height: 30px;
   }
 
   .document-card-preview {
@@ -1678,6 +1743,117 @@ small {
 
   .document-viewer-markdown.markdown-body {
     font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .message-documents {
+    gap: 8px;
+  }
+
+  .document-attachment-card {
+    min-height: auto;
+    max-height: none;
+    border-radius: var(--radius-sm);
+  }
+
+  .document-card-header {
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 10px;
+  }
+
+  .document-card-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .document-card-icon > svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .document-card-title strong {
+    font-size: 12px;
+  }
+
+  .document-card-title span {
+    font-size: 10px;
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  .document-card-download {
+    display: none;
+  }
+
+  .document-card-preview {
+    max-height: 180px;
+    padding: 10px;
+    font-size: 13px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .document-card-preview.markdown-body {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .document-card-preview h1,
+  .document-card-preview h2 {
+    font-size: 15px;
+  }
+
+  .document-card-preview h3 {
+    font-size: 13px;
+  }
+
+  .document-card-preview p {
+    margin-bottom: 6px;
+  }
+
+  .document-card-preview table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+
+  .document-card-preview pre {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .document-viewer-header {
+    min-height: 48px;
+    padding: 8px 10px;
+  }
+
+  .document-viewer-title strong {
+    font-size: 13px;
+  }
+
+  .document-viewer-actions {
+    gap: 6px;
+  }
+
+  .document-viewer-actions a,
+  .document-viewer-actions button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .document-viewer-markdown {
+    width: calc(100% - 20px);
+    padding: 16px 0 32px;
+  }
+
+  .document-viewer-markdown.markdown-body {
+    font-size: 13px;
   }
 }
 

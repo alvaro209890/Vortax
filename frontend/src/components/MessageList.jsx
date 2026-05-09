@@ -209,6 +209,28 @@ function useMarkdownFile(taskId, document, enabled) {
   return { content, loading, error };
 }
 
+function downloadBlob(taskId, path, filename) {
+  const url = fileDownloadUrl(taskId, path);
+  fetch(url)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.blob();
+    })
+    .then((blob) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename || path.split("/").pop() || "download";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    })
+    .catch(() => {
+      window.open(url, "_blank");
+    });
+}
+
 function DocumentAttachmentCard({ document, onOpen, taskId }) {
   if (!document?.path || !taskId) return null;
   const kind = documentKind(document);
@@ -216,7 +238,6 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
   const { content, loading, error } = useMarkdownFile(taskId, document, isMarkdown);
   const title = document.title || document.name || document.path;
   const size = formatBytes(document.size_bytes);
-  const downloadUrl = fileDownloadUrl(taskId, document.path);
 
   const handleOpen = () => onOpen?.({ ...document, taskId });
   const handleKeyDown = (event) => {
@@ -224,6 +245,12 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
       event.preventDefault();
       handleOpen();
     }
+  };
+
+  const handleDownload = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    downloadBlob(taskId, document.path, document.name || document.path);
   };
 
   return (
@@ -247,15 +274,14 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
             {document.project_name ? ` · ${document.project_name}` : ""}
           </span>
         </div>
-        <a
+        <button
           className="document-card-download"
-          download
-          href={downloadUrl}
-          onClick={(event) => event.stopPropagation()}
+          onClick={handleDownload}
           title={`Baixar ${document.name || document.path}`}
+          type="button"
         >
           <Download size={15} />
-        </a>
+        </button>
       </div>
 
       <div className="document-card-preview markdown-body">
@@ -299,7 +325,6 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
   const isPdf = kind === "pdf";
   const { content, loading, error } = useMarkdownFile(taskId, document, isMarkdown && Boolean(document?.path));
   const title = document?.title || document?.name || document?.path || "Documento";
-  const fileUrl = document?.path && taskId ? fileDownloadUrl(taskId, document.path) : "";
 
   useEffect(() => {
     if (!document) return undefined;
@@ -310,7 +335,15 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [document, onClose]);
 
-  if (!document || !taskId || !fileUrl) return null;
+  if (!document || !taskId || !document.path) return null;
+
+  const handleDownload = () => {
+    downloadBlob(taskId, document.path, document.name || document.path);
+  };
+
+  const handleExternalOpen = () => {
+    window.open(fileDownloadUrl(taskId, document.path), "_blank");
+  };
 
   return (
     <AnimatePresence>
@@ -338,12 +371,12 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
               </div>
             </div>
             <div className="document-viewer-actions">
-              <a href={fileUrl} target="_blank" rel="noreferrer" title="Abrir em nova aba">
+              <button onClick={handleExternalOpen} title="Abrir em nova aba" type="button">
                 <ExternalLink size={16} />
-              </a>
-              <a href={fileUrl} download title="Baixar documento">
+              </button>
+              <button onClick={handleDownload} title="Baixar documento" type="button">
                 <Download size={16} />
-              </a>
+              </button>
               <button onClick={onClose} title="Fechar documento" type="button">
                 <X size={18} />
               </button>
@@ -364,7 +397,7 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
                 )}
               </div>
             ) : isPdf ? (
-              <iframe className="document-viewer-frame" src={fileUrl} title={title} />
+              <iframe className="document-viewer-frame" src={fileDownloadUrl(taskId, document.path)} title={title} />
             ) : (
               <div className="document-download-panel">
                 <span className="document-download-icon">
@@ -372,10 +405,10 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
                 </span>
                 <strong>{documentLabel(document)} pronto</strong>
                 <p>Este formato fica disponível para baixar e abrir no aplicativo compatível.</p>
-                <a className="message-download-btn" download href={fileUrl}>
+                <button className="message-download-btn" onClick={handleDownload} type="button">
                   <Download size={16} />
                   <span>Baixar {document.name || document.path}</span>
-                </a>
+                </button>
               </div>
             )}
           </div>
