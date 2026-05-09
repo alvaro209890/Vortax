@@ -29,6 +29,14 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -45,7 +53,7 @@ body {
 
 button, textarea {
   font: inherit;
-  transition: all 0.2s ease;
+  transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 }
 
 button {
@@ -691,6 +699,7 @@ small {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .chat-header-icon {
@@ -710,6 +719,7 @@ small {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .chat-header-badge {
@@ -763,6 +773,7 @@ small {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   flex-shrink: 0;
 }
 
@@ -887,6 +898,7 @@ small {
   gap: 32px;
   width: 100%;
   max-width: 860px;
+  min-width: 0;
   min-height: 100%;
   margin: 0 auto;
   padding: 32px 40px;
@@ -903,7 +915,7 @@ small {
   padding: 24px;
   border-radius: var(--radius-lg);
   border: 1px solid transparent;
-  transition: all 0.3s ease;
+  transition: border-color 0.3s ease, background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
 }
 
 .message.user {
@@ -1191,6 +1203,9 @@ small {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: 15px;
   line-height: 1.6;
   color: var(--text-primary);
@@ -1204,6 +1219,7 @@ small {
 }
 
 .markdown-body pre {
+  max-width: 100%;
   background: #0d1115;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
@@ -1962,6 +1978,9 @@ small {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 16px 32px 20px;
   background: transparent;
   border-top: none;
@@ -1972,6 +1991,7 @@ small {
   flex-direction: column;
   width: 100%;
   max-width: 860px;
+  min-width: 0;
   background: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: 24px;
@@ -2045,6 +2065,8 @@ small {
   display: flex;
   align-items: flex-end;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   padding: 6px 8px 6px 6px;
 }
 
@@ -2073,6 +2095,7 @@ small {
 
 .composer-container textarea {
   flex: 1;
+  min-width: 0;
   min-height: 40px;
   max-height: 200px;
   resize: none;
@@ -4614,6 +4637,8 @@ small {
 .vortax-computer-dock {
   position: relative;
   width: min(100% - 32px, 672px);
+  max-width: 100%;
+  min-width: 0;
   margin: 0 auto 8px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 14px;
@@ -5912,6 +5937,11 @@ small {
   .vortax-computer-dock,
   .composer-wrapper {
     width: calc(100% - 20px);
+    max-width: calc(100% - 20px);
+  }
+
+  .composer-row {
+    gap: 6px;
   }
 
   .computer-dock-bar {
@@ -6020,6 +6050,59 @@ small {
 
   .computer-jump-live-btn {
     justify-content: center;
+  }
+}
+
+@media (max-width: 420px) {
+  .manus-layout .chat-header {
+    padding-right: 10px;
+  }
+
+  .detail-open-btn,
+  .user-menu-btn,
+  .computer-dock-toggle,
+  .computer-dock-detail-btn,
+  .composer-icon-btn,
+  .composer-voice-btn,
+  .composer-send-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .computer-dock-open {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .computer-preview {
+    width: 52px;
+    height: 34px;
+  }
+
+  .composer-wrapper {
+    width: calc(100% - 14px);
+    max-width: calc(100% - 14px);
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  .composer-row {
+    gap: 4px;
+    padding: 7px;
+  }
+
+  .composer-container textarea {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 

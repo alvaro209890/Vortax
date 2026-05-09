@@ -73,6 +73,14 @@ Exemplo:
 VITE_API_BASE_URL=https://vortax-api.cursar.space
 ```
 
+## Fluidez em tempo real
+
+O chat recebe eventos em tempo real por `src/hooks/useWebSocket.js`. Para manter a interface fluida durante tarefas longas, o hook agrupa eventos recebidos em pequenos lotes, evita duplicatas por chave/evento e tenta reconectar com backoff quando o WebSocket fecha inesperadamente.
+
+A lista de arquivos da task é mantida por `src/hooks/useTaskFiles.js`. Ela processa apenas eventos novos relevantes, faz merge direto de `files_created` quando o backend já envia os metadados e evita recarregar `/api/files/task/...` a cada evento não relacionado.
+
+`components/MessageList.jsx` usa uma chave de rolagem baseada no último item da timeline, evitando recalcular uma string com todos os itens em cada atualização do stream.
+
 ## Desenvolvimento local
 
 Instale dependências:
@@ -172,7 +180,7 @@ Resultado esperado:
 
 ## Responsividade mobile
 
-A maior parte da responsividade está em `src/index.css`.
+A maior parte da responsividade está em `src/index.css`. O CSS também contém contenção horizontal em `html`, `body` e `#root`, ajustes para telas muito estreitas e suporte a `prefers-reduced-motion` para reduzir animações em dispositivos ou usuários sensíveis a movimento.
 
 Áreas críticas:
 

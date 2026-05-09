@@ -1040,14 +1040,11 @@ export function MessageList({
     [activeSearch, agentBusy, events, messages, pendingPreparation],
   );
   const showTypingMessage = isTyping && !timelineItems.some((item) => item.type === "progress");
-  const scrollKey = useMemo(
-    () => timelineItems.map((item) => item.key).join("|"),
-    [timelineItems],
-  );
+  const lastTimelineKey = timelineItems.at(-1)?.key || "";
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [showTypingMessage, scrollKey]);
+  }, [showTypingMessage, lastTimelineKey, timelineItems.length]);
 
   return (
     <motion.div
