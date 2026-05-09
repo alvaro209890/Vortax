@@ -4904,6 +4904,7 @@ small {
   color: var(--text-primary);
   box-shadow: 0 28px 74px rgba(0, 0, 0, 0.62);
   backdrop-filter: blur(18px);
+  will-change: transform, opacity;
 }
 
 .computer-side-header {
@@ -5063,6 +5064,39 @@ small {
   min-height: 0;
   object-fit: contain;
   background: #000;
+}
+
+.browser-frame-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.browser-frame-prev,
+.browser-frame-curr {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.browser-frame-prev {
+  z-index: 0;
+  opacity: 1;
+}
+
+.browser-frame-curr {
+  z-index: 1;
+  animation: frame-fade-in 0.22s ease forwards;
+}
+
+@keyframes frame-fade-in {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
 }
 
 .computer-search-page {
@@ -5575,10 +5609,12 @@ small {
 }
 
 .computer-progress-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  max-height: 260px;
+  max-height: 300px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 4px;
 }
 
@@ -5587,7 +5623,9 @@ small {
   grid-template-columns: 16px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
+  overflow: hidden;
   color: var(--text-secondary);
+  transition: color 0.18s ease;
 }
 
 .computer-progress-step > span {
@@ -5596,6 +5634,7 @@ small {
   width: 16px;
   height: 16px;
   color: var(--text-muted);
+  transition: color 0.2s ease;
 }
 
 .computer-progress-step.done > span,

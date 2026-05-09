@@ -242,6 +242,37 @@ function screenFrameHistory(events, eventIndexOffset = 0) {
     .map(({ event, eventIndex }, frameIndex) => framePreview(event, frameIndex, eventIndex + eventIndexOffset));
 }
 
+const BrowserFrame = memo(function BrowserFrame({ image }) {
+  const [display, setDisplay] = useState({ prev: null, curr: image, seq: 0 });
+  const currRef = useRef(image);
+  const tidRef = useRef(null);
+
+  useEffect(() => {
+    if (!image || image === currRef.current) return;
+    clearTimeout(tidRef.current);
+    const prevImg = currRef.current;
+    currRef.current = image;
+    setDisplay((d) => ({ prev: prevImg, curr: image, seq: d.seq + 1 }));
+    tidRef.current = setTimeout(() => setDisplay((d) => ({ ...d, prev: null })), 280);
+  }, [image]);
+
+  useEffect(() => () => clearTimeout(tidRef.current), []);
+
+  return (
+    <div className="browser-frame-wrap">
+      {display.prev && (
+        <img aria-hidden="true" className="browser-frame-prev" src={`data:image/jpeg;base64,${display.prev}`} />
+      )}
+      <img
+        alt="Tela ao vivo"
+        className="browser-frame-curr"
+        key={display.seq}
+        src={`data:image/jpeg;base64,${display.curr}`}
+      />
+    </div>
+  );
+});
+
 const ComputerPreview = memo(function ComputerPreview({ preview, snapshot }) {
   if (preview.image) {
     return (
@@ -328,7 +359,7 @@ const ComputerStage = memo(function ComputerStage({ preview, snapshot }) {
     return (
       <div className="computer-stage browser-live">
         <div className="computer-stage-address">{preview.url || preview.title || "Tela ao vivo"}</div>
-        <img alt="Tela atual do computador do Vortax" src={`data:image/jpeg;base64,${preview.image}`} />
+        <BrowserFrame image={preview.image} />
       </div>
     );
   }
@@ -663,25 +694,40 @@ const ComputerProgressCard = memo(function ComputerProgressCard({ agentStatus, e
         <span>{progressDone}/{progressTotal || 1}</span>
       </div>
       <div className="computer-progress-list">
-        {progressSteps.length > 0 ? (
-          progressSteps.map((step) => (
-            <div className={`computer-progress-step ${step.state}`} key={step.id}>
-              <span>{stepIcon(step)}</span>
+        <AnimatePresence initial={false}>
+          {progressSteps.length > 0 ? (
+            progressSteps.map((step, index) => (
+              <motion.div
+                className={`computer-progress-step ${step.state}`}
+                key={step.id}
+                initial={{ opacity: 0, y: -10, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.22, ease: "easeOut", delay: index * 0.04 }}
+              >
+                <span>{stepIcon(step)}</span>
+                <div>
+                  <strong>{step.label}</strong>
+                  <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
+                </div>
+              </motion.div>
+            ))
+          ) : (
+            <motion.div
+              className="computer-progress-step running"
+              key="preparing"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
+              <span><Code2 size={13} /></span>
               <div>
-                <strong>{step.label}</strong>
-                <small>{step.detail || (step.status === "running" ? `${elapsed ? `${elapsed} · ` : ""}${statusLabel(agentStatus)}` : "")}</small>
+                <strong>Preparando trabalho</strong>
+                <small>O progresso aparece aqui.</small>
               </div>
-            </div>
-          ))
-        ) : (
-          <div className="computer-progress-step running">
-            <span><Code2 size={13} /></span>
-            <div>
-              <strong>Preparando trabalho</strong>
-              <small>O progresso aparece aqui.</small>
-            </div>
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -816,7 +862,7 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: 420, opacity: 0 }}
         role="dialog"
-        transition={{ type: "spring", stiffness: 260, damping: 30 }}
+        transition={{ type: "spring", stiffness: 380, damping: 38 }}
       >
         <header className="computer-side-header">
           <div>
