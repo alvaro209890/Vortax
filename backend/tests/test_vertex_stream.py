@@ -145,6 +145,14 @@ class OpenClaudeStreamTests(unittest.TestCase):
         self.assertIn("card de leitura", command)
         self.assertIn("openclaude -p", command)
 
+    def test_augments_github_repo_analysis_as_read_only(self) -> None:
+        command = _augment_code_agent_command_for_quality("openclaude 'analise https://github.com/psf/requests'")
+
+        self.assertIn("ANALISE_GITHUB_READONLY_VORTAX", command)
+        self.assertIn("https://github.com/psf/requests.git", command)
+        self.assertIn("RELATORIO_TECNICO.md", command)
+        self.assertNotIn("python3 -m py_compile", command)
+
     def test_augments_document_prompt_with_file_delivery_instruction(self) -> None:
         command = _augment_code_agent_command_for_quality("openclaude 'gere um relatorio em PDF'")
 

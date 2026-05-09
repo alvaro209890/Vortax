@@ -5094,6 +5094,36 @@ small {
   animation: frame-fade-in 0.22s ease forwards;
 }
 
+.computer-browser-placeholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 24px;
+  color: var(--text-secondary);
+  text-align: center;
+  background: #080a0a;
+}
+
+.computer-browser-placeholder svg {
+  color: var(--accent-blue);
+}
+
+.computer-browser-placeholder strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.computer-browser-placeholder span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 @keyframes frame-fade-in {
   from { opacity: 0.2; }
   to { opacity: 1; }

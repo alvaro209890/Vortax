@@ -17,6 +17,7 @@ from services.document_artifacts import (
 )
 from services.document_intent import document_extensions_from_text, document_intent_from_text, report_artifact_profile
 from services.event_bus import EventBus
+from services.github_repos import is_github_repo_analysis_request, normalize_public_github_repo
 from services.project_validation import validate_project_after_code_agent
 from services.research_policy import cached_search_result
 from services.safe_diagnostics import sanitize_payload
@@ -255,6 +256,8 @@ def _code_agent_creation_intent(command: str) -> bool:
         return False
     text = " ".join(parts[1:]).lower()
     report_profile = report_artifact_profile(text)
+    if is_github_repo_analysis_request(text):
+        return True
     return bool(
         web_intent_from_command(command)
         or document_intent_from_text(text)
@@ -410,7 +413,9 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
     requested_extensions = document_extensions_from_text(prompt)
     report_profile = report_artifact_profile(prompt)
     artifact = artifact_profile(prompt)
-    involves_code = _command_involves_code(prompt)
+    repo_analysis = is_github_repo_analysis_request(prompt)
+    github_repo = normalize_public_github_repo(prompt)
+    involves_code = _command_involves_code(prompt) and not repo_analysis
 
     if "VALIDACAO_AUTOMATICA_VORTAX" in prompt:
         instruction = ""
@@ -424,6 +429,17 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
                 "Se for Node/JavaScript, garanta package.json valido, sintaxe JS valida e scripts build/test quando o projeto precisar. "
                 "Se estiver corrigindo uma falha anterior, preserve o projeto existente e corrija exatamente os bugs descritos. "
                 "Nao finalize deixando TODO, arquivo vazio, dependencia quebrada, caminho inexistente ou instrucao que impeca a revisao automatica."
+            )
+        if repo_analysis and github_repo:
+            instruction += (
+                "\n\nANALISE_GITHUB_READONLY_VORTAX: clone o repositorio publico por HTTPS dentro do diretorio atual, "
+                f"usando {github_repo['clone_url']}. Nao use token, nao faca login e nao altere codigo do repositorio clonado. "
+                "Leia a estrutura, manifests, scripts, dependencias, pontos de entrada e arquivos mais relevantes. "
+                "Produza uma analise tecnica precisa com evidencias por caminho de arquivo: stack, arquitetura, fluxo principal, "
+                "pontos fortes, riscos, bugs provaveis, seguranca, performance, testes existentes/ausentes e proximos passos. "
+                "Crie obrigatoriamente RELATORIO_TECNICO.md na raiz do workspace da conversa, fora da pasta do repositorio clonado, "
+                "com H1, resumo executivo, escopo, achados priorizados, evidencias por arquivo, limites da analise e recomendacoes. "
+                "A validacao do Vortax para este fluxo confere somente o relatorio; nao rode build/testes pesados a menos que o usuario peça explicitamente."
             )
         if report_profile.get("requires_markdown"):
             filename = str(report_profile.get("preferred_filename") or "RELATORIO_TECNICO.md")

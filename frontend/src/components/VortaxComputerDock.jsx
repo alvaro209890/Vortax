@@ -222,7 +222,17 @@ function latestPreview(events) {
   }
 
   if (candidates.length > 0) {
-    return candidates.sort((a, b) => b.createdAt - a.createdAt)[0];
+    const latest = candidates.sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (frame && latest.mode === "browser" && !latest.image) {
+      return {
+        ...latest,
+        image: frame.payload.image_base64,
+        label: latest.label || frame.payload.caption || frame.payload.title || "Navegador",
+        title: latest.title || frame.payload.title || "",
+        url: latest.url || frame.payload.url || "",
+      };
+    }
+    return latest;
   }
   return { label: "Ambiente pronto", mode: "idle", using: "Computador" };
 }
@@ -367,6 +377,19 @@ const ComputerStage = memo(function ComputerStage({ preview, snapshot }) {
       <div className="computer-stage browser-live">
         <div className="computer-stage-address">{preview.url || preview.title || "Tela ao vivo"}</div>
         <BrowserFrame image={preview.image} />
+      </div>
+    );
+  }
+
+  if (preview.mode === "browser") {
+    return (
+      <div className="computer-stage browser-live">
+        <div className="computer-stage-address">{preview.url || preview.title || preview.label || "Navegador"}</div>
+        <div className="computer-browser-placeholder">
+          <Globe2 size={28} />
+          <strong>{preview.title || "Aguardando captura da tela"}</strong>
+          <span>{preview.url || preview.label || "O proximo print do navegador aparece aqui."}</span>
+        </div>
       </div>
     );
   }

@@ -4,6 +4,7 @@ import shlex
 from pathlib import Path
 
 from config import settings
+from services.github_repos import is_github_repo_analysis_request, normalize_public_github_repo
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,17 @@ def build_execution_package(
     relevant = _select_relevant_files(workspace, objective)
 
     sections: list[str] = [f"## Objetivo\n{objective.strip()}"]
+    github_repo = normalize_public_github_repo(objective)
+
+    if github_repo and is_github_repo_analysis_request(objective):
+        sections.append(
+            "## Repositorio GitHub Publico\n"
+            f"- Nome: {github_repo['full_name']}\n"
+            f"- URL: {github_repo['html_url']}\n"
+            f"- Clone HTTPS: {github_repo['clone_url']}\n"
+            "- Modo: analise read-only. Clone o repositorio publico dentro do diretorio atual, leia os arquivos e nao modifique o codigo clonado.\n"
+            "- Entrega obrigatoria: crie RELATORIO_TECNICO.md na raiz do workspace da conversa, fora da pasta .git, com achados precisos e caminhos de arquivos citados."
+        )
 
     if relevant:
         file_parts: list[str] = []
@@ -129,6 +141,17 @@ def build_execution_package(
 
     if success_criteria:
         sections.append("## Critérios de Sucesso\n" + "\n".join(f"- [ ] {s}" for s in success_criteria))
+
+    if github_repo and is_github_repo_analysis_request(objective):
+        sections.append(
+            "## Checklist da Analise\n"
+            "- [ ] Clonar o repositorio publico por HTTPS, sem token e sem credenciais.\n"
+            "- [ ] Identificar stack, pontos de entrada, scripts, dependencias e estrutura principal.\n"
+            "- [ ] Apontar pontos fortes, riscos, bugs provaveis, seguranca, performance e lacunas de testes.\n"
+            "- [ ] Citar arquivos/caminhos relevantes para cada achado importante.\n"
+            "- [ ] Explicar limites da analise e o que nao foi executado.\n"
+            "- [ ] Gerar RELATORIO_TECNICO.md completo e bem formatado."
+        )
 
     if snippets_block:
         sections.append(snippets_block)
@@ -174,8 +197,7 @@ def enrich_code_agent_command(
         success_criteria=success_criteria,
         snippets_block=snippets_block,
     )
-    workspace = settings.WORKSPACE_PATH / task_id
-    enriched = f"cd {shlex.quote(str(workspace))} && openclaude {shlex.quote(package)}"
+    enriched = f"openclaude {shlex.quote(package)}"
     logger.debug(
         "[execution_package] prompt: %d chars → package: %d chars",
         len(original_prompt),

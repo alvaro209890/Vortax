@@ -151,7 +151,7 @@ TOOLS_SCHEMA = [
     {
         "action": "shell_run",
         "params": {"command": "echo hello"},
-        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, openclaude, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts, use 'openclaude \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
+        "use": "Executar um comando seguro no terminal Linux deste PC. Comandos permitidos: python3, node, npm, npx, openclaude, git, curl, wget, ls, cat, mkdir, cp, mv, grep, find, echo, pwd e outros utilitarios basicos. Para desenvolver software/sites/scripts ou analisar repositorios publicos do GitHub, use 'openclaude \"descricao da tarefa\"'. O comando roda na pasta persistente de projetos da conversa no Vortax. Retorna stdout, stderr e returncode.",
     },
     {
         "action": "vision_analyze",
@@ -455,6 +455,10 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "Para perguntas de matematica, fisica, quimica, estatistica, engenharia ou outras exatas, use exact_solve antes de finalizar quando houver conta, porcentagem, equacao ou numeros para calcular. "
         "Se o problema de exatas estiver em imagem, use vision_analyze primeiro pedindo transcricao do enunciado, depois use exact_solve com o texto extraido e finalize com passos curtos. "
         "Perguntas simples e conceituais devem ser respondidas diretamente pelo modo rapido do backend antes de chegar aqui; se chegarem ao planner, mantenha o caminho mais curto possivel. "
+        "Para analise de repositorios publicos do GitHub, aceite formatos https://github.com/owner/repo, github.com/owner/repo e owner/repo quando o usuario mencionar GitHub/repositorio. "
+        "Use shell_run com openclaude e inclua a URL/owner/repo no prompt. O OpenClaude deve clonar por HTTPS dentro do workspace da conversa, analisar em modo read-only, nao alterar codigo clonado, "
+        "mapear stack, arquitetura, pontos fortes, riscos, bugs provaveis, seguranca, performance e testes, citar caminhos de arquivos e gerar RELATORIO_TECNICO.md na raiz do workspace. "
+        "Nao use token, login ou repos privados nesta primeira versao; se o repo for privado, explique que so repositorios publicos sao suportados por enquanto. "
         "Para desenvolvimento de software (sites, scripts, APIs, qualquer codigo), use shell_run com o comando openclaude: shell_run command=\"openclaude 'descricao completa do software que o usuario quer'\". "
         "O OpenClaude criara todos os arquivos dentro da pasta persistente de projetos da conversa. Nao tente escrever codigo manualmente — delegue ao OpenClaude para garantir que o projeto seja funcional e completo. "
         "IMPORTANTE: Sempre que o usuario pedir um codigo, script ou arquivo unico, alem de usar o OpenClaude para cria-lo, voce DEVE incluir o conteudo desse codigo na sua resposta final (action finish) dentro de um bloco de codigo Markdown com a linguagem correta (ex: ```python ... ```). "

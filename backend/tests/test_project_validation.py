@@ -204,6 +204,58 @@ class ProjectValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "passed")
 
+    async def test_github_repo_analysis_validates_only_technical_report(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-github-analysis"
+                repo_dir = task_dir / "requests"
+                repo_dir.mkdir(parents=True)
+                (repo_dir / "broken.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+                (repo_dir / "package.json").write_text('{"scripts":{"test":"exit 1"}}', encoding="utf-8")
+                (task_dir / "RELATORIO_TECNICO.md").write_text(
+                    "# Analise do repositorio\n\n" + "Achado tecnico com evidencias por arquivo. " * 12,
+                    encoding="utf-8",
+                )
+                bus = FakeBus()
+
+                result = await validate_project_after_code_agent(
+                    "task-github-analysis",
+                    "openclaude 'analise https://github.com/psf/requests'",
+                    bus,
+                    agent_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["checks"][0]["command"], "github repository analysis report scan")
+        self.assertFalse(any("py_compile" in check["command"] for check in result["checks"]))
+
+    async def test_github_repo_analysis_requires_root_technical_report(self) -> None:
+        previous_workspace = settings.WORKSPACE_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                settings.WORKSPACE_PATH = Path(tmp)
+                task_dir = settings.WORKSPACE_PATH / "task-github-no-report"
+                repo_dir = task_dir / "repo"
+                repo_dir.mkdir(parents=True)
+                (repo_dir / "README.md").write_text("# Repo\n\n" + "Readme existente do projeto. " * 12, encoding="utf-8")
+                bus = FakeBus()
+
+                result = await validate_project_after_code_agent(
+                    "task-github-no-report",
+                    "openclaude 'analise https://github.com/example/repo'",
+                    bus,
+                    agent_result={"success": True},
+                )
+            finally:
+                settings.WORKSPACE_PATH = previous_workspace
+
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("RELATORIO_TECNICO.md" in bug for bug in result["bugs"]))
+
 
 if __name__ == "__main__":
     unittest.main()

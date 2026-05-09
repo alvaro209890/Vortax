@@ -6,6 +6,7 @@ from typing import Any
 from config import settings
 from services.document_artifacts import valid_markdown_files, valid_pdf_files
 from services.document_intent import document_extensions_from_text, report_artifact_profile
+from services.github_repos import is_github_repo_analysis_request
 from services.project_files import missing_local_asset_refs, scan_task_workspace
 from services.web_validation import web_intent_from_command
 
@@ -157,6 +158,14 @@ def _valid_files_for_requested_suffix(project_dir: Path, suffix: str) -> list[st
     return _nonempty_files_with_suffix(project_dir, suffix)
 
 
+def _valid_technical_report_files(project_dir: Path) -> list[str]:
+    return [
+        path
+        for path in valid_markdown_files(project_dir)
+        if "/" not in path and Path(path).name.lower() in {"relatorio_tecnico.md", "relatorio-técnico.md", "relatorio-tecnico.md"}
+    ]
+
+
 def _load_package_json(project_dir: Path) -> tuple[dict[str, Any] | None, Path, str | None]:
     package_paths = sorted(project_dir.rglob("package.json"), key=lambda path: len(path.parts))
     if not package_paths:
@@ -220,6 +229,36 @@ async def validate_project_after_code_agent(
         bugs.append(
             "Entrega tecnica criada pelo OpenClaude precisa incluir DOCUMENTACAO.md ou RELATORIO_TECNICO.md em Markdown claro, bem formatado, com H1 e conteudo suficiente."
         )
+
+    if is_github_repo_analysis_request(command):
+        report_files = _valid_technical_report_files(project_dir)
+        if not report_files:
+            bugs.append("Analise de repositorio GitHub precisa gerar RELATORIO_TECNICO.md valido na raiz do workspace da conversa.")
+        status = "failed" if bugs else "passed"
+        checks = [
+            {
+                "command": "github repository analysis report scan",
+                "returncode": 0 if report_files else 1,
+                "stdout": f"Relatorios encontrados: {', '.join(report_files) if report_files else 'nenhum'}",
+                "stderr": "",
+                "passed": bool(report_files),
+            }
+        ]
+        result = {
+            "status": status,
+            "requires_validation": True,
+            "project": profile,
+            "checks": checks,
+            "bugs": bugs[:12],
+            "warnings": warnings[:8],
+            "reason": (
+                "Relatorio tecnico da analise de repositorio revisado."
+                if not bugs
+                else "A analise de repositorio precisa gerar o relatorio tecnico solicitado."
+            ),
+        }
+        await bus.publish(task_id, "project_validation_result", result)
+        return result
 
     for extension in document_extensions_from_text(command):
         matches = _valid_files_for_requested_suffix(project_dir, extension)
