@@ -130,6 +130,7 @@ Vortax/
 │   ├── tools/            # Browser, visão, executor
 │   └── tests/            # Testes automatizados
 ├── frontend/             # React 18 + Vite
+│   ├── README.md         # Documentação dedicada do frontend
 │   └── src/
 │       ├── components/   # Chat, stream, preview, arquivos e painéis
 │       ├── hooks/        # WebSocket, estado persistente e dados da task
@@ -177,6 +178,12 @@ cp .env.example .env
 ```
 
 Acesse o frontend em `http://localhost:5173` ou pelo IP da máquina na LAN.
+
+---
+
+## Frontend
+
+A documentação dedicada do frontend fica em [`frontend/README.md`](frontend/README.md). Ela cobre a stack React/Vite, estrutura de componentes, configuração de API, responsividade mobile, build local e deploy no Firebase Hosting.
 
 ---
 
@@ -232,6 +239,8 @@ npm run build
 cd ..
 firebase deploy --project notazap-2520f --only hosting:notazap-2520f
 ```
+
+A política de cache do Firebase Hosting fica em `firebase.json`: o HTML/rotas da SPA são servidos com `no-cache, no-store, must-revalidate`, enquanto os assets versionados do Vite em `/assets/**` usam `public,max-age=31536000,immutable`. Com isso, um reload normal busca o `index.html` novo e carrega os novos arquivos JS/CSS hashados, sem depender de Ctrl+F5.
 
 Validação esperada:
 
