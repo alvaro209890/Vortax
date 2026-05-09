@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getAuthToken, WS_BASE_URL } from "../lib/api.js";
 
@@ -34,6 +34,73 @@ function parseSocketEvent(rawData, taskId) {
 export function useWebSocket(taskId) {
   const [events, setEvents] = useState([]);
   const [connectionState, setConnectionState] = useState("idle");
+  const taskRef = useRef(taskId);
+  taskRef.current = taskId;
+
+  const connect = useCallback(
+    async function connect(cancelledRef, stateRef) {
+      if (cancelledRef.current) return;
+
+      const { clearPing, scheduleReconnect, queueEvent, setFlush } = stateRef;
+
+      clearPing();
+      const currentState = stateRef.connectionState;
+      stateRef.setConnectionState(
+        currentState === "reconnecting" ? currentState : "connecting",
+      );
+
+      const token = await getAuthToken();
+      if (cancelledRef.current) return;
+
+      const socketRef = stateRef.socketRef;
+      if (
+        socketRef.current?.readyState === WebSocket.CONNECTING ||
+        socketRef.current?.readyState === WebSocket.OPEN
+      ) {
+        socketRef.current.close();
+      }
+
+      const query = token ? `?token=${encodeURIComponent(token)}` : "";
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/${taskRef.current}${query}`);
+      socketRef.current = ws;
+
+      ws.addEventListener("open", () => {
+        stateRef.reconnectDelay = INITIAL_RECONNECT_DELAY;
+        stateRef.setConnectionState("open");
+        clearPing();
+        stateRef.ping = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send("ping");
+          }
+        }, 30000);
+      });
+
+      ws.addEventListener("close", () => {
+        clearPing();
+        if (cancelledRef.current) {
+          stateRef.setConnectionState("closed");
+          return;
+        }
+        // Pausa reconexao se a aba estiver escondida
+        if (document.visibilityState === "hidden") {
+          stateRef.setConnectionState("paused");
+          stateRef._closeWasHidden = true;
+          return;
+        }
+        scheduleReconnect(cancelledRef, stateRef);
+      });
+
+      ws.addEventListener("error", () => {
+        if (!cancelledRef.current) stateRef.setConnectionState("error");
+      });
+
+      ws.addEventListener("message", (message) => {
+        const event = parseSocketEvent(message.data, taskRef.current);
+        if (event) queueEvent(event, stateRef, setFlush);
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!taskId) {
@@ -42,8 +109,8 @@ export function useWebSocket(taskId) {
       return undefined;
     }
 
-    let socket = null;
-    let cancelled = false;
+    const cancelledRef = { current: false };
+    const socketRef = { current: null };
     let ping = null;
     let reconnectTimer = null;
     let reconnectDelay = INITIAL_RECONNECT_DELAY;
@@ -62,7 +129,7 @@ export function useWebSocket(taskId) {
     function flushEvents() {
       flushHandle = null;
       const nextEvents = pendingEvents.splice(0, pendingEvents.length);
-      if (!nextEvents.length || cancelled) return;
+      if (!nextEvents.length || cancelledRef.current) return;
       setEvents((current) => [...current, ...nextEvents]);
     }
 
@@ -77,88 +144,126 @@ export function useWebSocket(taskId) {
       }
     }
 
-    function queueEvent(event) {
-      const key = eventKey(event);
-      if (seenEventKeys.has(key)) return;
-      seenEventKeys.add(key);
-      pendingEvents.push(event);
+    function setFlush() {
       scheduleFlush();
     }
 
-    function scheduleReconnect() {
-      if (cancelled || reconnectTimer) return;
-      setConnectionState("reconnecting");
-      const delay = reconnectDelay;
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null;
-        connect();
+    function queueEvent(event, state, setFlushFn) {
+      const key = eventKey(event);
+      const seen = state?.seenEventKeys || seenEventKeys;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const pending = state?.pendingEvents || pendingEvents;
+      pending.push(event);
+      if (setFlushFn) {
+        setFlushFn();
+      } else {
+        scheduleFlush();
+      }
+    }
+
+    function scheduleReconnect(cancelled, state) {
+      if (cancelled.current || state.reconnectTimer) return;
+      // Nao reconectar se offline ou aba escondida
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        state.setConnectionState("offline");
+        return;
+      }
+      if (document.visibilityState === "hidden") {
+        state.setConnectionState("paused");
+        return;
+      }
+      state.setConnectionState("reconnecting");
+      const delay = state.reconnectDelay;
+      state.reconnectDelay = Math.min(state.reconnectDelay * 2, MAX_RECONNECT_DELAY);
+      state.reconnectTimer = window.setTimeout(() => {
+        state.reconnectTimer = null;
+        connect(cancelled, state);
       }, delay);
     }
 
-    async function connect() {
-      if (cancelled) return;
-      clearPing();
-      setConnectionState((current) => (current === "reconnecting" ? current : "connecting"));
+    // State bag compartilhado com connect()
+    const stateRef = {
+      clearPing,
+      setConnectionState,
+      connectionState,
+      reconnectDelay,
+      reconnectTimer,
+      pendingEvents,
+      seenEventKeys,
+      socketRef,
+      ping,
+      scheduleFlush,
+      setFlush,
+      queueEvent,
+      scheduleReconnect,
+    };
 
-      const token = await getAuthToken();
-      if (cancelled) return;
-      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) {
-        socket.close();
-      }
-
-      const query = token ? `?token=${encodeURIComponent(token)}` : "";
-      socket = new WebSocket(`${WS_BASE_URL}/ws/${taskId}${query}`);
-
-      socket.addEventListener("open", () => {
-        reconnectDelay = INITIAL_RECONNECT_DELAY;
-        setConnectionState("open");
-        clearPing();
-        ping = window.setInterval(() => {
-          if (socket?.readyState === WebSocket.OPEN) {
-            socket.send("ping");
-          }
-        }, 30000);
-      });
-
-      socket.addEventListener("close", () => {
-        clearPing();
-        if (cancelled) {
-          setConnectionState("closed");
+    // Handler de visibilidade da pagina
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && stateRef._closeWasHidden) {
+        stateRef._closeWasHidden = false;
+        // Reconectar imediatamente ao voltar
+        if (
+          cancelledRef.current ||
+          socketRef.current?.readyState === WebSocket.OPEN
+        )
           return;
-        }
-        scheduleReconnect();
-      });
-
-      socket.addEventListener("error", () => {
-        if (!cancelled) setConnectionState("error");
-      });
-
-      socket.addEventListener("message", (message) => {
-        const event = parseSocketEvent(message.data, taskId);
-        if (event) queueEvent(event);
-      });
+        stateRef.reconnectDelay = INITIAL_RECONNECT_DELAY;
+        connect(cancelledRef, stateRef);
+      }
     }
+
+    // Handler de status da rede
+    function handleOnline() {
+      if (cancelledRef.current) return;
+      if (
+        socketRef.current?.readyState === WebSocket.OPEN ||
+        socketRef.current?.readyState === WebSocket.CONNECTING
+      )
+        return;
+      stateRef.reconnectDelay = INITIAL_RECONNECT_DELAY;
+      connect(cancelledRef, stateRef);
+    }
+
+    function handleOffline() {
+      stateRef.setConnectionState("offline");
+      clearPing();
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
 
     setEvents([]);
     seenEventKeys.clear();
     setConnectionState("connecting");
-    connect();
+    connect(cancelledRef, stateRef);
 
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       clearPing();
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (flushHandle !== null) {
-        if (flushWithAnimationFrame && typeof window.cancelAnimationFrame === "function") {
+        if (
+          flushWithAnimationFrame &&
+          typeof window.cancelAnimationFrame === "function"
+        ) {
           window.cancelAnimationFrame(flushHandle);
         } else {
           window.clearTimeout(flushHandle);
         }
       }
-      if (socket) socket.close();
+      if (socketRef.current) socketRef.current.close();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
-  }, [taskId]);
+  }, [taskId, connect]);
 
   return { events, connectionState };
 }

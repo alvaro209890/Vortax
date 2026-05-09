@@ -1,14 +1,18 @@
 import asyncio
+import logging
 import os
 import re
 import signal
 import shutil
+import time
 from pathlib import Path
 from typing import Callable
 
 from config import settings
 from services.credential_store import credential_store
 from tools.browser import BrowserTool
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserPoolError(RuntimeError):
@@ -50,6 +54,10 @@ class BrowserPool:
         self._lock = asyncio.Lock()
         self._profile_root = Path(profile_root) if profile_root else _profile_root()
         self._tool_factory = tool_factory
+        # Hibernacao de browsers ociosos
+        self._last_activity: dict[str, float] = {}
+        self._hibernation_task: asyncio.Task | None = None
+        self._idle_timeout = getattr(settings, "BROWSER_IDLE_TIMEOUT_SECONDS", 600)
 
     @property
     def profile_root(self) -> Path:
@@ -60,6 +68,41 @@ class BrowserPool:
         self._kill_orphan_chrome_processes()
         await self._remove_path(self._profile_root)
         self._profile_root.mkdir(parents=True, exist_ok=True)
+        self._start_hibernation()
+
+    def _start_hibernation(self) -> None:
+        if self._hibernation_task is not None:
+            return
+        self._hibernation_task = asyncio.ensure_future(self._hibernation_loop())
+
+    def _stop_hibernation(self) -> None:
+        if self._hibernation_task is None:
+            return
+        self._hibernation_task.cancel()
+        self._hibernation_task = None
+
+    async def _hibernation_loop(self) -> None:
+        """Fecha browsers ociosos apos IDLE_TIMEOUT segundos sem atividade."""
+        while True:
+            try:
+                await asyncio.sleep(60)
+                now = time.time()
+                to_release: list[str] = []
+                async with self._lock:
+                    for task_id, last_used in list(self._last_activity.items()):
+                        if task_id in self._instances and (now - last_used) >= self._idle_timeout:
+                            to_release.append(task_id)
+                for task_id in to_release:
+                    logger.info(
+                        "Hibernando browser ocioso task=%s apos %ds inativo",
+                        task_id,
+                        int(now - self._last_activity.get(task_id, now)),
+                    )
+                    await self.release(task_id)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Erro no loop de hibernacao de browsers")
 
     async def acquire(self, task_id: str, timeout: float = 30.0) -> BrowserTool:
         key = str(task_id or "").strip()
@@ -69,6 +112,7 @@ class BrowserPool:
         async with self._lock:
             existing = self._instances.get(key)
             if existing is not None:
+                self._last_activity[key] = time.time()
                 return existing
 
         try:
@@ -99,6 +143,7 @@ class BrowserPool:
                 self._instances[key] = tool
                 self._ports_by_task[key] = port
                 self._profile_dirs_by_task[key] = profile_dir
+                self._last_activity[key] = time.time()
                 return tool
         except Exception:
             async with self._lock:
@@ -129,6 +174,7 @@ class BrowserPool:
             tool = self._instances.pop(key, None)
             port = self._ports_by_task.pop(key, None)
             profile_dir = self._profile_dirs_by_task.pop(key, None)
+            self._last_activity.pop(key, None)
 
         if tool is None:
             if profile_dir is not None:
@@ -148,6 +194,7 @@ class BrowserPool:
         return True
 
     async def shutdown(self) -> None:
+        self._stop_hibernation()
         async with self._lock:
             task_ids = list(self._instances.keys())
         for task_id in task_ids:

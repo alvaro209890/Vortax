@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
@@ -26,16 +26,6 @@ function latestEvent(events, predicate) {
   return null;
 }
 
-function useNow(active) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!active) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
-}
-
 function formatElapsed(start, now) {
   if (!start) return "";
   const seconds = Math.max(0, Math.floor((now - new Date(start).getTime()) / 1000));
@@ -51,6 +41,25 @@ function statusLabel(status) {
   if (status === "stopped") return "Interrompido";
   if (["queued", "thinking", "executing", "running"].includes(status)) return "Pensando";
   return "Pronto";
+}
+
+function useElapsedTimer(busy, startTime) {
+  const [now, setNow] = useState(Date.now());
+  const startRef = useRef(null);
+  startRef.current = startTime;
+
+  useEffect(() => {
+    if (!busy) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
+
+  const elapsed = useMemo(
+    () => formatElapsed(startRef.current, now),
+    [now, startRef.current],
+  );
+
+  return elapsed;
 }
 
 function publicText(value) {
@@ -233,7 +242,7 @@ function screenFrameHistory(events, eventIndexOffset = 0) {
     .map(({ event, eventIndex }, frameIndex) => framePreview(event, frameIndex, eventIndex + eventIndexOffset));
 }
 
-function ComputerPreview({ preview, snapshot }) {
+const ComputerPreview = memo(function ComputerPreview({ preview, snapshot }) {
   if (preview.image) {
     return (
       <div className="computer-preview image">
@@ -254,9 +263,9 @@ function ComputerPreview({ preview, snapshot }) {
       <small>{snapshot?.activeFile || fileName(preview.file) || preview.label}</small>
     </div>
   );
-}
+});
 
-function CodingWorkspace({ snapshot }) {
+const CodingWorkspace = memo(function CodingWorkspace({ snapshot }) {
   return (
     <div className="computer-coding-workspace">
       <div className="computer-ide-topbar">
@@ -312,9 +321,9 @@ function CodingWorkspace({ snapshot }) {
       </div>
     </div>
   );
-}
+});
 
-function ComputerStage({ preview, snapshot }) {
+const ComputerStage = memo(function ComputerStage({ preview, snapshot }) {
   if (preview.image) {
     return (
       <div className="computer-stage browser-live">
@@ -354,7 +363,7 @@ function ComputerStage({ preview, snapshot }) {
       <CodingWorkspace snapshot={snapshot} />
     </div>
   );
-}
+});
 
 function phaseStatus(started, done, failed = false) {
   if (failed) return "failed";
@@ -646,7 +655,7 @@ function focusSceneFromRequest(focusRequest, frameHistory, preview, snapshot) {
   };
 }
 
-function ComputerProgressCard({ agentStatus, elapsed, progressDone, progressSteps, progressTitle, progressTotal }) {
+const ComputerProgressCard = memo(function ComputerProgressCard({ agentStatus, elapsed, progressDone, progressSteps, progressTitle, progressTotal }) {
   return (
     <div className="computer-progress-card">
       <div className="computer-progress-head">
@@ -676,9 +685,9 @@ function ComputerProgressCard({ agentStatus, elapsed, progressDone, progressStep
       </div>
     </div>
   );
-}
+});
 
-function ComputerLiveControls({ activeFrameIndex, frameCount, isLive, onFrameChange, onJumpLive, onNextFrame, onPrevFrame }) {
+const ComputerLiveControls = memo(function ComputerLiveControls({ activeFrameIndex, frameCount, isLive, onFrameChange, onJumpLive, onNextFrame, onPrevFrame }) {
   if (frameCount <= 0) return null;
 
   return (
@@ -710,9 +719,9 @@ function ComputerLiveControls({ activeFrameIndex, frameCount, isLive, onFrameCha
       </button>
     </div>
   );
-}
+});
 
-function ComputerSidePanel({
+const ComputerSidePanel = memo(function ComputerSidePanel({
   agentStatus,
   focusScene,
   connectionState,
@@ -868,13 +877,12 @@ function ComputerSidePanel({
       </motion.aside>
     </>
   );
-}
+});
 
-export function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, focusRequest, livePlan, onOpenDetails }) {
+export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask, agentStatus, connectionState, events, focusRequest, livePlan, onOpenDetails }) {
   const [expanded, setExpanded] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
   const busy = ["queued", "thinking", "executing", "running"].includes(agentStatus);
-  const now = useNow(busy);
   const latestUserEventIndex = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       if (events[index].type === "user_message") return index;
@@ -885,6 +893,10 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     () => (latestUserEventIndex >= 0 ? events.slice(latestUserEventIndex + 1) : events),
     [events, latestUserEventIndex],
   );
+  const firstEvent = events[latestUserEventIndex]
+    || promptEvents.find((event) => event.type === "user_message" || event.type === "task_created")
+    || events.find((event) => event.type === "user_message" || event.type === "task_created");
+  const elapsed = useElapsedTimer(busy, firstEvent?.created_at || activeTask?.created_at);
   const frameHistory = useMemo(() => screenFrameHistory(events), [events]);
   const livePreview = useMemo(() => latestPreview(promptEvents), [promptEvents]);
   const preview = livePreview;
@@ -894,10 +906,6 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     [codingSnapshot, focusRequest, frameHistory, preview],
   );
   const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, agentStatus), [agentStatus, promptEvents]);
-  const firstEvent = events[latestUserEventIndex]
-    || promptEvents.find((event) => event.type === "user_message" || event.type === "task_created")
-    || events.find((event) => event.type === "user_message" || event.type === "task_created");
-  const elapsed = formatElapsed(firstEvent?.created_at || activeTask?.created_at, now);
   const planningFallbackSteps = busy && livePlan.isGeneratingPlan
     ? [
       progressStep(
@@ -947,6 +955,10 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
     || Boolean(focusRequest)
     || promptEvents.some((event) => ["agent_activity", "agent_progress", "tool_call", "tool_result", "source_saved"].includes(event.type));
 
+  const handleOpenSide = useCallback(() => setSideOpen(true), []);
+  const handleCloseSide = useCallback(() => setSideOpen(false), []);
+  const handleToggleExpand = useCallback(() => setExpanded((value) => !value), []);
+
   useEffect(() => {
     if (focusRequest) setSideOpen(true);
   }, [focusRequest]);
@@ -960,7 +972,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
           aria-label="Ver o computador do Vortax"
           className="computer-dock-open"
           data-tooltip="Ver o computador do Vortax"
-          onClick={() => setSideOpen(true)}
+          onClick={handleOpenSide}
           type="button"
         >
           <ComputerPreview preview={preview} snapshot={codingSnapshot} />
@@ -976,7 +988,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
         <button
           aria-expanded={expanded}
           className="computer-dock-toggle"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={handleToggleExpand}
           title={expanded ? "Recolher progresso" : "Mostrar progresso"}
           type="button"
         >
@@ -1032,7 +1044,7 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
             focusScene={focusScene}
             frameHistory={frameHistory}
             key="computer-side-panel"
-            onClose={() => setSideOpen(false)}
+            onClose={handleCloseSide}
             preview={preview}
             progressDone={progressDone}
             progressSteps={progressSteps}
@@ -1044,4 +1056,4 @@ export function VortaxComputerDock({ activeTask, agentStatus, connectionState, e
       </AnimatePresence>
     </section>
   );
-}
+});

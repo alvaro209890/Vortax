@@ -30,6 +30,11 @@ _SECRET_PATTERNS = (
     re.compile(r"((?:DEEPSEEK|GROQ)_API_KEY=)[^\s]+", re.IGNORECASE),
     re.compile(r"\b(password|passwd|pwd|senha|token|secret|otp|mfa|2fa)\s*[:=]\s*([^\s,;]+)", re.IGNORECASE),
 )
+# PII patterns - paths com usuario e emails
+_PII_PATTERNS = (
+    re.compile(r"/home/[A-Za-z0-9_.-]+(?:/[^\s,;\"')\]>]+)?"),
+    re.compile(r"[A-Za-z0-9_.%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}"),
+)
 
 
 def redact_text(value: str) -> str:
@@ -41,6 +46,9 @@ def redact_text(value: str) -> str:
                 return f"{match.group(1)}{separator}[REDACTED]"
             return f"{match.group(1)}[REDACTED]" if match.groups() else "[REDACTED]"
         redacted = pattern.sub(repl, redacted)
+    # Redact PII: emails e paths do sistema de arquivos
+    for pattern in _PII_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
     return redacted
 
 

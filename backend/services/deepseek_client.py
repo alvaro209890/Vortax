@@ -1,4 +1,6 @@
+import asyncio
 import json
+import random
 from typing import Any
 
 import httpx
@@ -10,6 +12,44 @@ from services.safe_diagnostics import format_exception_for_user, text_len_hint
 
 class DeepSeekError(RuntimeError):
     pass
+
+
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_retryable_error(exc: httpx.HTTPError) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_STATUSES
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)):
+        return True
+    return False
+
+
+async def with_retry(
+    fn,
+    *args,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    provider_name: str = "API",
+    **kwargs,
+) -> Any:
+    """Executa fn(*args, **kwargs) com exponential backoff + jitter em erros transientes."""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt >= max_retries or not _is_retryable_error(exc):
+                mapped = map_httpx_error(exc, provider_name=provider_name)
+                if settings.LOG_API_ERROR_DETAILS:
+                    raise DeepSeekError(format_exception_for_user(mapped)) from exc
+                raise DeepSeekError(str(mapped)) from exc
+            # Exponential backoff com jitter
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+            await asyncio.sleep(delay)
+    # Nao deve chegar aqui, mas por seguranca
+    raise last_error  # type: ignore[misc]
 
 
 TOOLS_SCHEMA = [
@@ -166,31 +206,27 @@ def _groq_url() -> str:
 
 
 async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
+    return await with_retry(_post_deepseek_inner, payload, provider_name="DeepSeek")
+
+
+async def _post_deepseek_inner(payload: dict[str, Any]) -> dict[str, Any]:
     timeout = httpx.Timeout(settings.DEEPSEEK_TIMEOUT_SECONDS, connect=10.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(_deepseek_url(), headers=_headers(), json=payload)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPError as exc:
-        mapped = map_httpx_error(exc, provider_name="DeepSeek")
-        if settings.LOG_API_ERROR_DETAILS:
-            raise DeepSeekError(format_exception_for_user(mapped)) from exc
-        raise DeepSeekError(str(mapped)) from exc
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(_deepseek_url(), headers=_headers(), json=payload)
+        response.raise_for_status()
+        return response.json()
 
 
 async def _post_groq(payload: dict[str, Any]) -> dict[str, Any]:
+    return await with_retry(_post_groq_inner, payload, provider_name="Groq")
+
+
+async def _post_groq_inner(payload: dict[str, Any]) -> dict[str, Any]:
     timeout = httpx.Timeout(settings.GROQ_TASK_PLANNER_TIMEOUT_SECONDS, connect=10.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(_groq_url(), headers=_groq_headers(), json=payload)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPError as exc:
-        mapped = map_httpx_error(exc, provider_name="Groq")
-        if settings.LOG_API_ERROR_DETAILS:
-            raise DeepSeekError(format_exception_for_user(mapped)) from exc
-        raise DeepSeekError(str(mapped)) from exc
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(_groq_url(), headers=_groq_headers(), json=payload)
+        response.raise_for_status()
+        return response.json()
 
 
 def _json_error(message: str, text: str, exc: Exception | None = None) -> DeepSeekError:

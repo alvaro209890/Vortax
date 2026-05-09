@@ -254,23 +254,64 @@ class Database:
                 (task_id, event_type, created_at, payload_json),
             )
             event_id = int(cursor.lastrowid)
-            if event_type == "screen_frame" and payload.get("image_base64"):
-                self._connection.execute(
-                    """
-                    INSERT INTO screenshots (task_id, event_id, created_at, caption, title, url, image_base64)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        task_id,
-                        event_id,
-                        created_at,
-                        payload.get("caption"),
-                        payload.get("title"),
-                        payload.get("url"),
-                        payload["image_base64"],
-                    ),
-                )
+        # Screenshot insert movido para fora da secao critica
+        if event_type == "screen_frame" and payload.get("image_base64"):
+            self.insert_screenshot(task_id, event_id, created_at, payload)
         return event_id
+
+    def insert_events_batch(
+        self,
+        task_id: str,
+        events: list[tuple[str, str, dict[str, Any]]],
+    ) -> list[int]:
+        """Insere multiplos eventos em uma unica transacao.
+        Cada item em events deve ser (event_type, created_at, payload).
+        Retorna a lista de event_id gerados.
+        """
+        if not events:
+            return []
+        with self._lock, self._connection:
+            cursor = self._connection.executemany(
+                """
+                INSERT INTO events (task_id, event_type, created_at, payload_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (task_id, event_type, created_at, json.dumps(payload, ensure_ascii=False))
+                    for event_type, created_at, payload in events
+                ],
+            )
+            first_id = int(cursor.lastrowid)
+        event_ids = list(range(first_id, first_id + len(events)))
+        # Insere screenshots fora da secao critica
+        for event_id, (event_type, created_at, payload) in zip(event_ids, events):
+            if event_type == "screen_frame" and payload.get("image_base64"):
+                self.insert_screenshot(task_id, event_id, created_at, payload)
+        return event_ids
+
+    def insert_screenshot(
+        self,
+        task_id: str,
+        event_id: int,
+        created_at: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO screenshots (task_id, event_id, created_at, caption, title, url, image_base64)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    event_id,
+                    created_at,
+                    payload.get("caption"),
+                    payload.get("title"),
+                    payload.get("url"),
+                    payload["image_base64"],
+                ),
+            )
 
     def insert_chat_image(self, image: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self._connection:

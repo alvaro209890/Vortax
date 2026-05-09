@@ -30,14 +30,24 @@ class EventBus:
         event = build_stream_event(task_id, event_type, payload)
         event_id = database.insert_event(task_id, event["type"], event["created_at"], event["payload"])
         event["event_id"] = event_id
+
         async with self._lock:
             sockets = list(self._connections.get(task_id, []))
 
+        if not sockets:
+            return event
+
+        # Broadcast paralelo para todos os WebSockets da task
+        # Cada send_json roda em paralelo; erros sao capturados individualmente
+        results = await asyncio.gather(
+            *[socket.send_json(event) for socket in sockets],
+            return_exceptions=True,
+        )
+
+        # Coleta sockets que falharam para cleanup
         disconnected: list[WebSocket] = []
-        for socket in sockets:
-            try:
-                await socket.send_json(event)
-            except Exception:
+        for socket, result in zip(sockets, results):
+            if isinstance(result, Exception):
                 disconnected.append(socket)
 
         if disconnected:
@@ -55,8 +65,8 @@ class EventBus:
     async def close_task_connections(self, task_id: str) -> None:
         async with self._lock:
             sockets = list(self._connections.pop(task_id, []))
-        for socket in sockets:
-            try:
-                await socket.close(code=1000)
-            except Exception:
-                pass
+        if sockets:
+            await asyncio.gather(
+                *[socket.close(code=1000) for socket in sockets],
+                return_exceptions=True,
+            )
