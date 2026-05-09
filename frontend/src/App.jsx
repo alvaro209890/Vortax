@@ -593,14 +593,19 @@ export default function App() {
   useEffect(() => {
     if (!activeTaskId) return;
 
-    const lastStatus = [...currentEvents].reverse().find((event) => event.type === "agent_status");
-    if (lastStatus?.payload?.status) {
-      const status = lastStatus.payload.status;
-      setAgentStatus(status);
-      setTasks((current) => current.map((task) => (task.id === activeTaskId ? { ...task, status } : task)));
-      setActiveTask((current) => (current && current.id === activeTaskId ? { ...current, status } : current));
-      if (status === "stopped" || status === "done" || status === "error" || status === "idle") {
-        setStopping(false);
+    const lastStatusIdx = latestEventIndex(currentEvents, (e) => e.type === "agent_status");
+    if (lastStatusIdx >= 0) {
+      const status = currentEvents[lastStatusIdx].payload?.status;
+      if (status) {
+        const isTerminal = ["done", "error", "stopped", "idle"].includes(status);
+        const lastUserMsgIdx = latestEventIndex(currentEvents, (e) => e.type === "user_message");
+        // Nunca rebaixa para status terminal se chegou uma mensagem nova depois do último status
+        if (!isTerminal || lastUserMsgIdx <= lastStatusIdx) {
+          setAgentStatus(status);
+          setTasks((current) => current.map((task) => (task.id === activeTaskId ? { ...task, status } : task)));
+          setActiveTask((current) => (current && current.id === activeTaskId ? { ...current, status } : current));
+          if (isTerminal) setStopping(false);
+        }
       }
     }
 

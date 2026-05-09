@@ -735,6 +735,8 @@ def _sanitize_chat_content(content: str) -> str:
 
 
 async def _cleanup_project_runtime(task_id: str, bus: EventBus, reason: str) -> None:
+    # Libera o navegador imediatamente (run_agent_task.finally e idempotente)
+    await browser_pool.release(task_id)
     try:
         from tools.shell import stop_dev_server
 

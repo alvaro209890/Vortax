@@ -94,9 +94,9 @@ def _message_payload(content: str, client_message_id: str | None = None) -> dict
 
 
 async def _publish_preparing_environment(task_id: str, description: str) -> None:
+    await event_bus.publish(task_id, "agent_status", {"status": "queued", "label": "Preparando"})
     if should_answer_directly(description):
         return
-    await event_bus.publish(task_id, "agent_status", {"status": "queued", "label": "Preparando"})
     await event_bus.publish(
         task_id,
         "agent_progress",

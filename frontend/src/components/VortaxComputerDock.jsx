@@ -45,21 +45,28 @@ function statusLabel(status) {
 
 function useElapsedTimer(busy, startTime) {
   const [now, setNow] = useState(Date.now());
+  const [frozenElapsed, setFrozenElapsed] = useState("");
   const startRef = useRef(null);
   startRef.current = startTime;
+  const wasBusyRef = useRef(false);
 
   useEffect(() => {
-    if (!busy) return undefined;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    if (busy) {
+      wasBusyRef.current = true;
+      setFrozenElapsed("");
+      const timer = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(timer);
+    }
+    if (wasBusyRef.current) {
+      setFrozenElapsed(formatElapsed(startRef.current, Date.now()));
+      wasBusyRef.current = false;
+    }
+    return undefined;
   }, [busy]);
 
-  const elapsed = useMemo(
-    () => formatElapsed(startRef.current, now),
-    [now, startRef.current],
-  );
+  const liveElapsed = useMemo(() => formatElapsed(startRef.current, now), [now]);
 
-  return elapsed;
+  return busy ? liveElapsed : frozenElapsed;
 }
 
 function publicText(value) {
@@ -952,7 +959,8 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
     [codingSnapshot, focusRequest, frameHistory, preview],
   );
   const codeAgentProgress = useMemo(() => buildCodeAgentProgress(promptEvents, agentStatus), [agentStatus, promptEvents]);
-  const planningFallbackSteps = busy && livePlan.isGeneratingPlan
+  const noWorkEventsYet = promptEvents.length === 0;
+  const planningFallbackSteps = busy && (livePlan.isGeneratingPlan || noWorkEventsYet)
     ? [
       progressStep(
         "instant-plan",
