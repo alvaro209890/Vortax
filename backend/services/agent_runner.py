@@ -45,6 +45,12 @@ from services.execution_package import enrich_code_agent_command
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
 from services.task_store import TaskStore
+from services.user_memory import (
+    extract_facts_from_conversation,
+    format_memory_context,
+    recall_facts,
+    save_facts,
+)
 from services.task_plan_store import direct_response_steps, fallback_steps, task_plan_store
 from tools.tool_executor import CODE_AGENT_COMMAND, CODE_AGENT_LABEL, compact_tool_result, execute_tool
 from tools.browser_pool import browser_pool
@@ -65,8 +71,22 @@ def _message_history_from_events(events: list[dict[str, Any]], fallback_descript
     messages: list[dict[str, str]] = []
     for event in events:
         event_type = event.get("type")
+        if event_type not in {"user_message", "assistant_message_done"}:
+            continue
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         content = str(payload.get("content") or "").strip()
+        files = payload.get("files") if isinstance(payload.get("files"), list) else []
+        if files:
+            file_lines = []
+            for file in files[:8]:
+                if not isinstance(file, dict):
+                    continue
+                path = str(file.get("path") or file.get("name") or "").strip()
+                summary = str(file.get("summary") or "").strip()
+                if path:
+                    file_lines.append(f"- {path}" + (f": {summary}" if summary else ""))
+            if file_lines:
+                content = (content + "\n\nArquivos enviados:\n" + "\n".join(file_lines)).strip()
         if not content:
             continue
         if event_type == "user_message":
@@ -1038,6 +1058,31 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
     return [{"role": "system", "content": source_context}, *history]
 
 
+def _schedule_memory_extraction(task_id: str, store: TaskStore) -> None:
+    """Agenda extracao de fatos do usuario ao fim da conversa (fire-and-forget)."""
+    async def _extract():
+        try:
+            task = store.get(task_id)
+            user_id = task.get("user_id") if task else None
+            if not user_id:
+                return
+            from services.event_bus import EventBus as _EB
+            events = database.list_events(task_id)
+            messages = [
+                {"role": ("user" if e.get("type") == "user_message" else "assistant"),
+                 "content": str((e.get("payload") or {}).get("content", ""))}
+                for e in events
+                if e.get("type") in ("user_message", "assistant_message_done")
+            ]
+            if not messages:
+                return
+            facts = await extract_facts_from_conversation(user_id, task_id, messages)
+            save_facts(facts)
+        except Exception:
+            pass  # silencioso — nunca atrapalha o usuario
+    asyncio.create_task(_extract())
+
+
 async def _finish_text_response(
     task_id: str,
     description: str,
@@ -1096,6 +1141,9 @@ async def _finish_text_response(
         await bus.publish(task_id, "context_compacted", final_context)
     await bus.publish(task_id, "context_status", final_context)
     await bus.publish(task_id, "agent_status", {"status": "done", "label": "Entrega pronta"})
+
+    # Extrai fatos do usuario em background (fire-and-forget)
+    _schedule_memory_extraction(task_id, store)
 
 
 async def _answer_exact_prompt(
@@ -1764,6 +1812,13 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
         if compacted:
             await bus.publish(task_id, "context_compacted", context_payload)
         await bus.publish(task_id, "context_status", context_payload)
+
+        # Injeta memoria do usuario no contexto
+        task = store.get(task_id)
+        user_id = task.get("user_id") if task else None
+        memory_context = format_memory_context(user_id)
+        if memory_context:
+            history.insert(0, {"role": "system", "content": memory_context})
         await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
         await bus.publish(task_id, "agent_progress", {"label": "Analisando pedido", "detail": description})
 

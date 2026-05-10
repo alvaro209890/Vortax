@@ -199,6 +199,99 @@ class Database:
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_code_snippets_language ON code_snippets(language)"
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    fact_key TEXT NOT NULL,
+                    fact_value TEXT NOT NULL,
+                    fact_type TEXT NOT NULL DEFAULT 'general',
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_task_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_accessed_at TEXT,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(user_id, fact_key)
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_facts_user_id ON user_facts(user_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_facts_type ON user_facts(user_id, fact_type)"
+            )
+
+    # ── user_facts (memória de longo prazo do usuário) ──
+
+    def upsert_user_fact(self, user_id: str, fact_key: str, fact_value: str, fact_type: str = "general", confidence: float = 0.5, source_task_id: str | None = None) -> None:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO user_facts (user_id, fact_key, fact_value, fact_type, confidence, source_task_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, fact_key) DO UPDATE SET
+                    fact_value = excluded.fact_value,
+                    fact_type = excluded.fact_type,
+                    confidence = excluded.confidence,
+                    source_task_id = excluded.source_task_id,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, fact_key, fact_value, fact_type, confidence, source_task_id, now, now),
+            )
+
+    def get_user_facts(self, user_id: str, fact_type: str | None = None) -> list[dict[str, Any]]:
+        from datetime import datetime, timezone
+        with self._lock:
+            if fact_type:
+                rows = self._connection.execute(
+                    "SELECT * FROM user_facts WHERE user_id = ? AND fact_type = ? ORDER BY confidence DESC",
+                    (user_id, fact_type),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM user_facts WHERE user_id = ? ORDER BY fact_type, confidence DESC",
+                    (user_id,),
+                ).fetchall()
+        result = [dict(row) for row in rows]
+        # Atualiza last_accessed_at e access_count em background
+        if result:
+            now = datetime.now(timezone.utc).isoformat()
+            ids = [r["id"] for r in result]
+            with self._lock, self._connection:
+                self._connection.executemany(
+                    "UPDATE user_facts SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?",
+                    [(now, fid) for fid in ids],
+                )
+        return result
+
+    def search_user_facts(self, user_id: str, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        terms = [w.lower() for w in query.split() if len(w) >= 3]
+        if not terms:
+            return self.get_user_facts(user_id)[:limit]
+        all_facts = self.get_user_facts(user_id)
+        if not all_facts:
+            return []
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for fact in all_facts:
+            haystack = f"{fact.get('fact_key', '')} {fact.get('fact_value', '')} {fact.get('fact_type', '')}".lower()
+            score = sum(1 for t in terms if t in haystack)
+            if score > 0:
+                scored.append((score, fact))
+        scored.sort(key=lambda x: -x[0])
+        return [r for _, r in scored[:limit]]
+
+    def delete_user_fact(self, user_id: str, fact_key: str) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "DELETE FROM user_facts WHERE user_id = ? AND fact_key = ?",
+                (user_id, fact_key),
+            )
+        return cursor.rowcount > 0
 
     def add_snippet(self, tags: list[str], language: str, description: str, content: str) -> int:
         import hashlib

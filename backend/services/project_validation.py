@@ -151,7 +151,7 @@ def _nonempty_files_with_suffix(project_dir: Path, suffix: str) -> list[str]:
 
 
 def _valid_files_for_requested_suffix(project_dir: Path, suffix: str) -> list[str]:
-    if suffix.lower() in {".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".json"}:
+    if suffix.lower() in {".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".json", ".zip"}:
         return valid_document_files(project_dir, suffix)
     return _nonempty_files_with_suffix(project_dir, suffix)
 
@@ -273,6 +273,8 @@ async def validate_project_after_code_agent(
                 bugs.append("Pedido de Excel/XLSX exige um arquivo .xlsx valido, abrivel com openpyxl e com celulas preenchidas.")
             elif extension == ".csv":
                 bugs.append("Pedido de CSV exige um arquivo .csv UTF-8 valido, nao vazio, com linhas e colunas preenchidas.")
+            elif extension == ".zip":
+                bugs.append("Pedido de ZIP/shapefile exige um arquivo .zip valido, nao vazio e com componentes finais completos.")
             else:
                 bugs.append(
                     f"Pedido de documento/arquivo exige um arquivo {extension} nao vazio no diretorio da conversa."

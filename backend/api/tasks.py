@@ -25,6 +25,12 @@ from services.deepseek_client import (
     task_planner_configured,
 )
 from services.exact_solver import format_exact_answer, is_exact_prompt, should_answer_directly, solve_exact_problem
+from services.file_ingestion import (
+    FileIngestionError,
+    build_file_agent_prompt,
+    public_uploaded_file_payloads,
+    save_and_analyze_uploads,
+)
 from services.registry import event_bus, runner_tasks, task_plan_store, task_store
 from services.stream_contract import utc_now
 from services.task_plan_store import direct_response_steps
@@ -70,6 +76,12 @@ class TaskPlanRequest(BaseModel):
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+IMAGE_TYPE_BY_EXTENSION = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
 INLINE_CREDENTIAL_RE = re.compile(
     r"\b(password|passwd|pwd|senha|token|secret|otp|mfa|2fa)\s*[:=]",
@@ -227,6 +239,8 @@ def _analysis_text(analyses: list[dict]) -> str:
 
 async def _read_image_upload(file: UploadFile) -> dict:
     content_type = (file.content_type or "").lower()
+    if not content_type or content_type == "application/octet-stream":
+        content_type = IMAGE_TYPE_BY_EXTENSION.get(Path(file.filename or "").suffix.lower(), content_type)
     if content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail=f"Tipo de imagem nao suportado: {content_type or 'desconhecido'}")
     data = await file.read()
@@ -380,6 +394,183 @@ def _format_vision_answer(analysis: dict) -> str:
     return "\n".join(parts) if parts else "Analise concluida."
 
 
+def _is_image_upload(file: UploadFile) -> bool:
+    content_type = (file.content_type or "").lower()
+    suffix = Path(file.filename or "").suffix.lower()
+    return content_type in ALLOWED_IMAGE_TYPES or suffix in IMAGE_TYPE_BY_EXTENSION
+
+
+def _split_attachment_uploads(files: list[UploadFile]) -> tuple[list[UploadFile], list[UploadFile]]:
+    if not files:
+        raise FileIngestionError("Nenhum arquivo enviado.")
+    if len(files) > 8:
+        raise FileIngestionError("Envie no maximo 8 arquivos por vez.")
+    document_uploads: list[UploadFile] = []
+    image_uploads: list[UploadFile] = []
+    for file in files:
+        if _is_image_upload(file):
+            image_uploads.append(file)
+        else:
+            document_uploads.append(file)
+    return document_uploads, image_uploads
+
+
+def _build_attachment_agent_prompt(question: str, file_analyses: list[dict], image_analyses: list[dict]) -> str:
+    prompt = build_file_agent_prompt(question, file_analyses) if file_analyses else question.strip()
+    if image_analyses:
+        image_context = _analysis_text(image_analyses)
+        image_block = [
+            "IMAGENS_ENVIADAS_PELO_USUARIO_VORTAX:",
+            image_context or "Imagens recebidas; use a analise visual como contexto.",
+            "",
+            "INSTRUCOES_DE_IMAGEM_VORTAX:",
+            "- Use as imagens enviadas como fonte visual para responder junto com os arquivos anexados.",
+            "- Quando houver divergencia entre arquivo e imagem, destaque a incerteza em vez de assumir.",
+        ]
+        prompt = "\n\n".join(part for part in (prompt, "\n".join(image_block).strip()) if part)
+    return prompt or "Analise os anexos enviados pelo usuario."
+
+
+async def _save_and_analyze_images_for_agent(task_id: str, question: str, raw_images: list[dict], user_event_id: str | None) -> dict:
+    saved_images = []
+    analyses = []
+    if not raw_images:
+        return {"images": saved_images, "analysis": analyses}
+
+    await event_bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "thinking", "label": "Analisando anexos"},
+    )
+    for index, image in enumerate(raw_images, start=1):
+        saved = database.insert_chat_image(
+            {
+                "task_id": task_id,
+                "event_id": user_event_id,
+                "created_at": utc_now(),
+                "filename": image["filename"],
+                "content_type": image["content_type"],
+                "question": question,
+                "image_base64": image["image_base64"],
+            }
+        )
+        saved_images.append(saved)
+        await event_bus.publish(
+            task_id,
+            "image_saved",
+            {
+                "id": saved["id"],
+                "filename": saved.get("filename"),
+                "content_type": saved["content_type"],
+                "question": question,
+            },
+        )
+        await event_bus.publish(
+            task_id,
+            "agent_progress",
+            {"label": "Analisando imagem anexada", "detail": image["filename"], "step": index},
+        )
+        analysis = await vision_tool.analyze(
+            image["image_base64"],
+            question=_vision_question_for_chat(question),
+            content_type=image["content_type"],
+            task_id=task_id,
+        )
+        analyses.append(analysis)
+        updated_saved = database.update_chat_image_analysis(saved["id"], analysis.get("summary") or "")
+        if updated_saved:
+            saved_images[-1] = updated_saved
+    return {"images": saved_images, "analysis": analyses}
+
+
+def _normalize_file_question(question: str | None) -> str:
+    value = (question or "").strip()
+    return value or "Analise estes arquivos."
+
+
+async def _publish_and_register_files(
+    task_id: str,
+    question: str,
+    files: list[UploadFile],
+    client_message_id: str | None = None,
+) -> dict:
+    await _start_live_step(task_id, "understand")
+    document_uploads, image_uploads = _split_attachment_uploads(files)
+    analyses = await save_and_analyze_uploads(task_id, document_uploads) if document_uploads else []
+    uploaded_files = public_uploaded_file_payloads(analyses)
+    raw_images = [await _read_image_upload(file) for file in image_uploads]
+    chat_images = [
+        {
+            "filename": image["filename"],
+            "content_type": image["content_type"],
+            "image_base64": image["image_base64"],
+            "size": image["size"],
+        }
+        for image in raw_images
+    ]
+    user_event = await event_bus.publish(
+        task_id,
+        "user_message",
+        {
+            **_message_payload(question, client_message_id),
+            "files": uploaded_files,
+            "images": chat_images,
+        },
+    )
+    if uploaded_files:
+        await event_bus.publish(task_id, "files_uploaded", {"files": uploaded_files})
+        await publish_agent_activity(
+            event_bus,
+            task_id,
+            kind="file",
+            title="Arquivos recebidos",
+            detail=f"{len(uploaded_files)} arquivo(s) prontos para analise.",
+            status="done",
+            metadata={"file_count": len(uploaded_files)},
+        )
+    analysis_payload = [
+        {
+            "path": item.get("path"),
+            "name": item.get("name"),
+            "extension": item.get("extension"),
+            "kind": item.get("kind"),
+            "summary": item.get("summary"),
+            "archive_contents": item.get("archive_contents", []),
+            "geospatial_layers": item.get("geospatial_layers", []),
+        }
+        for item in analyses
+    ]
+    if analysis_payload:
+        await event_bus.publish(task_id, "file_analysis_done", {"files": analysis_payload})
+    image_result = await _save_and_analyze_images_for_agent(
+        task_id,
+        question,
+        raw_images,
+        user_event.get("event_id"),
+    )
+    _, context_payload, compacted = await prepare_context_history(task_id, event_bus.history(task_id), question)
+    if compacted:
+        await event_bus.publish(task_id, "context_compacted", context_payload)
+    await event_bus.publish(task_id, "context_status", context_payload)
+    summary_parts = []
+    if uploaded_files:
+        summary_parts.append(f"{len(uploaded_files)} arquivo(s)")
+    if image_result["images"]:
+        summary_parts.append(f"{len(image_result['images'])} imagem(ns)")
+    await _complete_live_step(
+        task_id,
+        "understand",
+        f"{' e '.join(summary_parts) or 'Anexos'} registrados para analise.",
+    )
+    return {
+        "files": uploaded_files,
+        "images": image_result["images"],
+        "analysis": analysis_payload,
+        "image_analysis": image_result["analysis"],
+        "agent_prompt": _build_attachment_agent_prompt(question, analyses, image_result["analysis"]),
+    }
+
+
 @router.post("/")
 async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(require_auth)) -> dict:
     _reject_inline_credentials(payload.description)
@@ -471,6 +662,97 @@ async def create_task_message(
     task_store.update_status(task_id, "queued")
     runner_tasks[task_id] = asyncio.create_task(run_agent_task(task_id, content, task_store, event_bus))
     return {"ok": True, "task_id": task_id}
+
+
+@router.post("/files")
+async def create_file_task(
+    question: str = Form(""),
+    client_message_id: str = Form(""),
+    files: list[UploadFile] = File(...),
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    normalized_question = _normalize_file_question(question)
+    _reject_inline_credentials(normalized_question)
+    task = task_store.create(normalized_question, current_user.uid)
+    await event_bus.publish(task["id"], "task_created", {"task": task})
+    try:
+        upload_result = await _publish_and_register_files(task["id"], normalized_question, files, client_message_id)
+    except FileIngestionError as exc:
+        task_store.update_status(task["id"], "error", result=str(exc))
+        await _complete_live_step(task["id"], "understand", str(exc), status="failed")
+        await event_bus.publish(task["id"], "error", {"message": str(exc)})
+        await event_bus.publish(task["id"], "agent_status", {"status": "error", "label": "Erro no arquivo"})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (VisionError, DeepSeekError) as exc:
+        task_store.update_status(task["id"], "error", result=str(exc))
+        await _complete_live_step(task["id"], "understand", str(exc), status="failed")
+        await event_bus.publish(task["id"], "error", {"message": str(exc)})
+        await event_bus.publish(task["id"], "agent_status", {"status": "error", "label": "Erro na visão"})
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await _publish_preparing_environment(task["id"], normalized_question)
+    steps = await _create_live_plan(task["id"], normalized_question)
+    task_store.update_status(task["id"], "queued")
+    runner_tasks[task["id"]] = asyncio.create_task(
+        run_agent_task(task["id"], upload_result["agent_prompt"], task_store, event_bus)
+    )
+    return {
+        "ok": True,
+        "task_id": task["id"],
+        "task": task_store.get(task["id"]) or task,
+        "files": upload_result["files"],
+        "images": upload_result["images"],
+        "analysis": upload_result["analysis"],
+        "image_analysis": upload_result["image_analysis"],
+        "plan": {"steps": steps},
+    }
+
+
+@router.post("/{task_id}/files")
+async def create_task_files(
+    task_id: str,
+    question: str = Form(""),
+    client_message_id: str = Form(""),
+    files: list[UploadFile] = File(...),
+    current_user: AuthUser = Depends(require_auth),
+) -> dict:
+    ensure_task_owner(task_store.get(task_id), current_user)
+
+    runner = runner_tasks.get(task_id)
+    if runner and not runner.done():
+        raise HTTPException(status_code=409, detail="A tarefa ainda esta em execucao")
+
+    normalized_question = _normalize_file_question(question)
+    _reject_inline_credentials(normalized_question)
+    try:
+        upload_result = await _publish_and_register_files(task_id, normalized_question, files, client_message_id)
+    except FileIngestionError as exc:
+        task_store.update_status(task_id, "error", result=str(exc))
+        await _complete_live_step(task_id, "understand", str(exc), status="failed")
+        await event_bus.publish(task_id, "error", {"message": str(exc)})
+        await event_bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no arquivo"})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (VisionError, DeepSeekError) as exc:
+        task_store.update_status(task_id, "error", result=str(exc))
+        await _complete_live_step(task_id, "understand", str(exc), status="failed")
+        await event_bus.publish(task_id, "error", {"message": str(exc)})
+        await event_bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro na visão"})
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await _publish_preparing_environment(task_id, normalized_question)
+    await _create_live_plan(task_id, normalized_question, replan=True)
+    task_store.update_status(task_id, "queued")
+    runner_tasks[task_id] = asyncio.create_task(
+        run_agent_task(task_id, upload_result["agent_prompt"], task_store, event_bus)
+    )
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "files": upload_result["files"],
+        "images": upload_result["images"],
+        "analysis": upload_result["analysis"],
+        "image_analysis": upload_result["image_analysis"],
+    }
 
 
 @router.post("/images")

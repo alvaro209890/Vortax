@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileArchive,
   FileSpreadsheet,
   FileSearch,
   FileText,
@@ -140,6 +141,7 @@ function documentKind(document) {
   if (document?.kind === "presentation" || extension === ".pptx") return "presentation";
   if (document?.kind === "spreadsheet" || extension === ".xlsx") return "spreadsheet";
   if (document?.kind === "csv" || extension === ".csv") return "csv";
+  if (document?.kind === "archive" || extension === ".zip") return "archive";
   return "document";
 }
 
@@ -151,6 +153,7 @@ function documentLabel(document) {
   if (kind === "presentation") return "PowerPoint PPTX";
   if (kind === "spreadsheet") return "Excel XLSX";
   if (kind === "csv") return "CSV";
+  if (kind === "archive") return "ZIP";
   return "Documento";
 }
 
@@ -158,6 +161,7 @@ function DocumentIcon({ kind, size = 17 }) {
   if (kind === "markdown") return <BookOpen size={size} />;
   if (kind === "presentation") return <Presentation size={size} />;
   if (kind === "spreadsheet" || kind === "csv") return <FileSpreadsheet size={size} />;
+  if (kind === "archive") return <FileArchive size={size} />;
   return <FileText size={size} />;
 }
 
@@ -418,6 +422,46 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
   );
 }
 
+function MessageUploadedFiles({ files = [], taskId }) {
+  const items = files.filter((item) => item?.name || item?.path);
+  if (items.length === 0) return null;
+
+  return (
+    <div className="message-uploaded-files">
+      {items.map((file, index) => {
+        const name = file.name || file.path || "Arquivo";
+        const label = documentLabel(file);
+        const size = formatBytes(file.size_bytes || file.size);
+        const body = (
+          <>
+            <DocumentIcon kind={documentKind(file)} size={15} />
+            <span>{name}</span>
+            <small>{label}{size ? ` · ${size}` : ""}</small>
+          </>
+        );
+        if (taskId && file.path) {
+          return (
+            <a
+              className="message-uploaded-file"
+              download
+              href={fileDownloadUrl(taskId, file.path)}
+              key={file.path}
+              title={`Baixar ${name}`}
+            >
+              {body}
+            </a>
+          );
+        }
+        return (
+          <span className="message-uploaded-file pending" key={`${name}-${index}`}>
+            {body}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function MessageArticle({ message, onOpenDocument }) {
   const documentPaths = new Set((message.documents || []).map((item) => item?.path).filter(Boolean));
   return (
@@ -438,6 +482,7 @@ function MessageArticle({ message, onOpenDocument }) {
             </ReactMarkdown>
           </div>
         ) : null}
+        <MessageUploadedFiles files={message.files} taskId={message.taskId} />
         <MessageDocuments documents={message.documents} onOpenDocument={onOpenDocument} taskId={message.taskId} />
         <MessageDownloads downloads={message.downloads} excludedPaths={documentPaths} taskId={message.taskId} />
         {message.images?.length > 0 && (
