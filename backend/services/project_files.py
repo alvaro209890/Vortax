@@ -7,7 +7,7 @@ from database import database
 from services.stream_contract import utc_now
 
 
-IGNORED_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__"}
+IGNORED_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", "uploads"}
 LOCAL_ASSET_REF_RE = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 
 
@@ -22,7 +22,7 @@ def _file_type_for(path: str) -> str:
         return "source"
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico"}:
         return "asset"
-    if suffix in {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx"}:
+    if suffix in {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx", ".zip"}:
         return "document"
     return "file"
 
@@ -40,7 +40,7 @@ def _project_type(files: list[dict[str, Any]]) -> str:
         return "static_web"
     if ".py" in suffixes:
         return "python"
-    if suffixes and suffixes <= {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx"}:
+    if suffixes and suffixes <= {".md", ".txt", ".json", ".pdf", ".docx", ".csv", ".xlsx", ".pptx", ".zip"}:
         return "document"
     return "generic"
 

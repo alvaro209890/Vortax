@@ -12,11 +12,12 @@ from services.document_artifacts import (
     preferred_markdown_for_pdf,
     render_markdown_to_pdf,
     resolve_document_target,
+    shapefile_zip_valid,
     valid_document_files,
     valid_markdown_files,
     valid_pdf_files,
 )
-from services.document_intent import document_extensions_from_text, document_intent_from_text, report_artifact_profile
+from services.document_intent import document_extensions_from_text, document_intent_from_text, geospatial_delivery_from_text, report_artifact_profile
 from services.event_bus import EventBus
 from services.github_repos import is_github_repo_analysis_request, normalize_public_github_repo
 from services.project_validation import validate_project_after_code_agent
@@ -421,6 +422,12 @@ def _office_artifact_instructions(requested_extensions: list[str], preferred_fil
                 f"Para CSV, gere obrigatoriamente {filename} em UTF-8, com cabecalho, linhas consistentes e colunas separadas por virgula. "
                 "Nao use ponto e virgula a menos que o usuario peça explicitamente."
             )
+        elif extension == ".zip":
+            pieces.append(
+                f"Para ZIP geoespacial, gere obrigatoriamente {filename} contendo todos os componentes finais do shapefile "
+                "(.shp, .shx, .dbf e, se existir CRS, .prj; inclua .cpg quando houver encoding). "
+                "Nao entregue .shp isolado. Valide abrindo o shapefile final com geopandas antes de compactar e depois valide o ZIP com zipfile."
+            )
     if not pieces:
         return ""
     return (
@@ -428,6 +435,20 @@ def _office_artifact_instructions(requested_extensions: list[str], preferred_fil
         + " ".join(pieces)
         + " Depois de criar, valide localmente abrindo/lendo o arquivo com a biblioteca correspondente. "
         "Nao entregue arquivo vazio, corrompido, com extensao errada ou apenas texto renomeado."
+    )
+
+
+def _geospatial_artifact_instructions(prompt: str) -> str:
+    if not geospatial_delivery_from_text(prompt):
+        return ""
+    return (
+        "\n\nENTREGA_GEOESPACIAL_VORTAX: este pedido altera, converte ou devolve dados de shapefile. "
+        "Use geopandas/pyogrio/shapely/pyproj para ler os arquivos em uploads/ ou uploads/archives/. "
+        "Para alterar tabela de atributos, preserve geometrias, CRS, ordem/contagem de feicoes e encoding sempre que o usuario nao pedir mudanca estrutural. "
+        "Crie uma pasta em outputs/ com o shapefile final completo, incluindo .shp, .shx, .dbf, .prj quando houver CRS e .cpg quando houver encoding. "
+        "Depois compacte essa pasta em um .zip final baixavel. "
+        "Valide o shapefile final lendo-o novamente com geopandas e confirme contagem de feicoes, colunas, CRS, bounds e geometrias invalidas. "
+        "Se o usuario pedir relatorio Excel a partir do shape, gere tambem um .xlsx com abas de resumo, campos/atributos, estatisticas e amostra dos registros."
     )
 
 
@@ -512,6 +533,7 @@ def _augment_code_agent_command_for_quality(command: str, task_id: str | None = 
                 requested_extensions,
                 artifact.get("preferred_files") if isinstance(artifact.get("preferred_files"), dict) else {},
             )
+        instruction += _geospatial_artifact_instructions(prompt)
         if artifact.get("wants_pdf"):
             instruction += (
                 f" Para PDF, crie obrigatoriamente tambem o Markdown fonte {artifact.get('preferred_markdown')} "
@@ -606,9 +628,19 @@ def _requested_document_artifact_error(task_id: str, command: str) -> str | None
         ".pptx": "slides/PPTX",
         ".xlsx": "Excel/XLSX",
         ".csv": "CSV",
+        ".zip": "ZIP/shapefile",
     }
     for extension in requested_extensions:
         if extension in {".md", ".markdown", ".pdf"}:
+            continue
+        if extension == ".zip" and geospatial_delivery_from_text(command):
+            zip_files = [
+                project_dir / path
+                for path in valid_document_files(project_dir, ".zip")
+                if shapefile_zip_valid(project_dir / path)
+            ]
+            if not zip_files:
+                return "Pedido de shapefile exige um arquivo .zip final contendo ao menos .shp, .shx e .dbf validos antes da entrega."
             continue
         if not valid_document_files(project_dir, extension):
             return f"Pedido de {labels.get(extension, extension)} exige um arquivo {extension} real, valido e com conteudo suficiente antes da entrega."

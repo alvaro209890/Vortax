@@ -58,6 +58,16 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 /media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados/Vortax/projetos
 ```
 
+## Upload e Edição de Documentos
+
+O Vortax aceita anexos no chat por botão ou arrastar-e-soltar: imagens, `.xlsx`, `.csv`, `.docx`, `.pdf`, `.txt`, `.md`, `.json` e `.zip`.
+Uploads originais ficam preservados em `uploads/`; edições e conversões geram novos arquivos para download.
+
+ZIPs são extraídos com segurança em `uploads/archives/`, e shapefiles são tratados como camadas compostas (`.shp`, `.shx`, `.dbf`, `.prj`, `.cpg`).
+Ao editar tabela de atributos, converter shapefile ou criar relatório a partir de dados geoespaciais, o Vortax deve entregar saídas derivadas sem sobrescrever os uploads.
+
+Detalhes técnicos e o registro do incidente corrigido com `Especies.docx` estão em [`DOCUMENTACAO_UPLOAD_ARQUIVOS.md`](DOCUMENTACAO_UPLOAD_ARQUIVOS.md).
+
 ---
 
 ## Funcionalidades

@@ -3,22 +3,24 @@ from pathlib import Path
 from typing import Any
 
 
-DOCUMENT_EXTENSIONS = (".md", ".pdf", ".txt", ".docx", ".csv", ".xlsx", ".json", ".pptx")
+DOCUMENT_EXTENSIONS = (".md", ".pdf", ".txt", ".docx", ".csv", ".xlsx", ".json", ".pptx", ".zip")
 
 _EXTENSION_ALIASES = {
     "markdown": ".md",
     "md": ".md",
     "pdf": ".pdf",
     "txt": ".txt",
-    "texto": ".txt",
     "docx": ".docx",
     "word": ".docx",
+    "worl": ".docx",
+    "world": ".docx",
     "csv": ".csv",
     "xlsx": ".xlsx",
     "excel": ".xlsx",
     "exel": ".xlsx",
     "planilha": ".xlsx",
     "json": ".json",
+    "zip": ".zip",
     "pptx": ".pptx",
     "powerpoint": ".pptx",
     "slides": ".pptx",
@@ -28,12 +30,29 @@ _EXTENSION_ALIASES = {
 }
 
 _EXPLICIT_EXTENSION_RE = re.compile(
-    r"(?<![\w/-])\.(md|markdown|pdf|txt|docx|csv|xlsx|json|pptx)\b",
+    r"(?<![\w/-])\.(md|markdown|pdf|txt|docx|csv|xlsx|json|pptx|zip)\b",
     re.IGNORECASE,
 )
 _DOCUMENT_REQUEST_RE = re.compile(
     r"\b(arquivo|documento|documenta[cç][aã]o|relat[oó]rio|manual|guia|planilha|apresenta[cç][aã]o|"
     r"gere|gerar|crie|criar|fa[cç]a|exporte|baixar|download)\b",
+    re.IGNORECASE,
+)
+_TEXT_FILE_REQUEST_RE = re.compile(
+    r"\b(?:arquivo|documento|salve|salvar|gere|gerar|crie|criar|exporte|exportar|baixar|download|retorne|retornar|envie|enviar)\s+"
+    r"(?:como|em|de|no formato)?\s*(?:arquivo\s+)?(?:de\s+)?texto\b|\btexto\s+\.txt\b",
+    re.IGNORECASE,
+)
+_GEOSPATIAL_TARGET_RE = re.compile(
+    r"\b(shape|shapes|shapefile|shapefiles|\.shp|gis|geoespacial|camada|layer|"
+    r"tabela\s+de\s+atributos|atributos\s+do\s+shape)\b",
+    re.IGNORECASE,
+)
+_GEOSPATIAL_DELIVERY_RE = re.compile(
+    r"\b(edite|editar|altere|alterar|atualize|atualizar|corrija|corrigir|"
+    r"adicione|adicionar|remova|remover|mude|mudar|campo|campos|coluna|colunas|"
+    r"atributo|atributos|converter|converta|exportar|exporte|zip|compacte|retorne|"
+    r"retornar|devolva|entregue)\b",
     re.IGNORECASE,
 )
 _SOFTWARE_REPORT_RE = re.compile(
@@ -56,6 +75,21 @@ _CREATE_SOFTWARE_RE = re.compile(
 )
 
 
+def _user_visible_request_text(text: str) -> str:
+    value = str(text or "")
+    for marker in (
+        "ARQUIVOS_ENVIADOS_PELO_USUARIO_VORTAX:",
+        "INSTRUCOES_DE_ARQUIVO_VORTAX:",
+        "O texto corrigido é:",
+        "O texto corrigido e:",
+        "Texto corrigido:",
+        "CONTEUDO_EXTRAIDO_AMOSTRA:",
+    ):
+        if marker in value:
+            value = value.split(marker, 1)[0]
+    return value
+
+
 def _normalize_extension(value: str) -> str | None:
     lowered = value.lower().lstrip(".")
     extension = _EXTENSION_ALIASES.get(lowered)
@@ -64,9 +98,14 @@ def _normalize_extension(value: str) -> str | None:
     return extension if extension in DOCUMENT_EXTENSIONS else None
 
 
+def geospatial_delivery_from_text(text: str) -> bool:
+    value = _user_visible_request_text(str(text or ""))
+    return bool(_GEOSPATIAL_TARGET_RE.search(value) and _GEOSPATIAL_DELIVERY_RE.search(value))
+
+
 def document_extensions_from_text(text: str) -> list[str]:
     """Return requested final-file extensions mentioned by the user/code-agent prompt."""
-    value = str(text or "")
+    value = _user_visible_request_text(str(text or ""))
     found: list[str] = []
 
     for match in _EXPLICIT_EXTENSION_RE.finditer(value):
@@ -76,13 +115,18 @@ def document_extensions_from_text(text: str) -> list[str]:
 
     lowered = value.lower()
     has_document_request = bool(_DOCUMENT_REQUEST_RE.search(lowered))
+    if _TEXT_FILE_REQUEST_RE.search(value) and ".txt" not in found:
+        found.append(".txt")
     for alias, extension in _EXTENSION_ALIASES.items():
         if extension in found:
             continue
         if not re.search(rf"\b{re.escape(alias)}\b", lowered, re.IGNORECASE):
             continue
-        if extension in {".pdf", ".csv", ".xlsx", ".docx", ".pptx"} or has_document_request:
+        if extension in {".pdf", ".csv", ".xlsx", ".docx", ".pptx", ".zip"} or has_document_request:
             found.append(extension)
+
+    if geospatial_delivery_from_text(value) and ".zip" not in found:
+        found.append(".zip")
 
     return found
 

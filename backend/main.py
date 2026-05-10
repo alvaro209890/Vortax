@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from access import install_lan_guard
-from api import control, files, providers, tasks, ws
+from api import control, files, providers, tasks, user, ws
 from config import settings
 from database import database
 from services.ephemeral_cache import ephemeral_cache
@@ -64,6 +64,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(control.router, prefix="/api/control", tags=["control"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])
+app.include_router(user.router, prefix="/api/user", tags=["user"])
 app.include_router(ws.router, tags=["websocket"])
 
 

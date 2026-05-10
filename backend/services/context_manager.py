@@ -75,6 +75,16 @@ def chat_messages_from_events(events: list[dict[str, Any]]) -> list[dict[str, An
             continue
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         content = str(payload.get("content") or "").strip()
+        files = payload.get("files") if isinstance(payload.get("files"), list) else []
+        if files:
+            file_lines = []
+            for file in files[:8]:
+                path = str(file.get("path") or file.get("name") or "").strip()
+                summary = str(file.get("summary") or "").strip()
+                if path:
+                    file_lines.append(f"- {path}" + (f": {summary}" if summary else ""))
+            if file_lines:
+                content = (content + "\n\nArquivos enviados:\n" + "\n".join(file_lines)).strip()
         if not content:
             continue
         messages.append(

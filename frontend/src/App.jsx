@@ -15,6 +15,7 @@ import { SecureCredentialsDialog } from "./components/SecureCredentialsDialog.js
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
+import SettingsPanel from "./components/SettingsPanel.jsx";
 import { TaskDetailDrawer } from "./components/TaskDetailDrawer.jsx";
 import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
@@ -25,10 +26,12 @@ import { useTaskSources } from "./hooks/useTaskSources.js";
 import {
   appendTaskMessage,
   appendTaskImages,
+  appendTaskFiles,
   confirmTask,
   createTask,
   createAuthorizedTask,
   authorizeTask,
+  createFileTask,
   createImageTask,
   deleteTask,
   healthcheck,
@@ -60,6 +63,29 @@ function hasEventIndex(message) {
   return Number.isFinite(message?.eventIndex);
 }
 
+function attachmentIdentity(item = {}, fallbackNameKey = "name") {
+  const name = String(item.name || item.filename || item[fallbackNameKey] || item.path || "").trim().toLowerCase();
+  const size = Number(item.size_bytes || item.size || 0) || 0;
+  const extension = String(item.extension || name.match(/\.([a-z0-9]+)$/)?.[0] || "").trim().toLowerCase();
+  return [name, extension, size].join(":");
+}
+
+function messageAttachmentSignature(message = {}) {
+  const files = Array.isArray(message.files) ? message.files : [];
+  const images = Array.isArray(message.images) ? message.images : [];
+  return [
+    ...files.map((file) => `f:${attachmentIdentity(file)}`),
+    ...images.map((image) => `i:${attachmentIdentity(image, "filename")}`),
+  ].filter((value) => !value.endsWith("::0")).sort().join("|");
+}
+
+function messageAttachmentScore(message = {}) {
+  const files = Array.isArray(message.files) ? message.files : [];
+  const images = Array.isArray(message.images) ? message.images : [];
+  return files.reduce((total, file) => total + (file?.path ? 2 : 1), 0)
+    + images.reduce((total, image) => total + (image?.image_base64 ? 2 : 1), 0);
+}
+
 function isOptimisticMessage(message) {
   return String(message?.id || "").startsWith("optimistic-user-");
 }
@@ -75,11 +101,14 @@ function isDuplicateUserMessage(candidate, existing) {
   const candidateClientId = String(candidate.clientMessageId || "").trim();
   const existingClientId = String(existing.clientMessageId || "").trim();
   if (candidateClientId && existingClientId) return candidateClientId === existingClientId;
-  if (candidateClientId || existingClientId) return false;
 
   const candidateContent = normalizeMessageContent(candidate.content);
   const existingContent = normalizeMessageContent(existing.content);
   if (!candidateContent || candidateContent !== existingContent) return false;
+
+  const candidateAttachments = messageAttachmentSignature(candidate);
+  const existingAttachments = messageAttachmentSignature(existing);
+  if (candidateAttachments && existingAttachments && candidateAttachments !== existingAttachments) return false;
 
   const candidateTask = candidate.taskId;
   const existingTask = existing.taskId;
@@ -102,6 +131,7 @@ function isDuplicateUserMessage(candidate, existing) {
 function shouldPreferDuplicate(candidate, existing) {
   if (hasEventIndex(candidate) && !hasEventIndex(existing)) return true;
   if (isOptimisticMessage(existing) && !isOptimisticMessage(candidate)) return true;
+  if (messageAttachmentScore(candidate) > messageAttachmentScore(existing)) return true;
   if (isFallbackUserMessage(existing) && isOptimisticMessage(candidate)) return true;
   if (isFallbackUserMessage(candidate) && !isFallbackUserMessage(existing)) return false;
   return false;
@@ -171,6 +201,7 @@ function buildMessages(task, events, responseReady = true, options = {}) {
         primary: true,
         source: "documentation",
       }] : []),
+      files: event.payload.files || [],
       images: event.payload.images || [],
       taskId: event.task_id || task.id,
       clientMessageId: event.payload.client_message_id || "",
@@ -292,6 +323,12 @@ const emptyDisplayPlan = {
 function likelyTaskPrompt(prompt = "") {
   const value = String(prompt || "").trim().toLowerCase();
   return /(pesquis|busc|procure|not[ií]cia|crie|criar|construa|monte|gere|gerar|desenvolv|implemente|program|c[oó]digo|fa[cç]a|calcule|analise|compare|investigue|verifique|colete|acesse|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|melhore|otimize|publique|execute|rode|instale)/i.test(value);
+}
+
+function isImageFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  const extension = String(file?.name || "").toLowerCase().match(/\.([a-z0-9]+)$/)?.[0] || "";
+  return type.startsWith("image/") || [".png", ".jpg", ".jpeg", ".webp"].includes(extension);
 }
 
 function isProgressHandoffEvent(event) {
@@ -635,7 +672,17 @@ export default function App() {
     const now = new Date().toISOString();
     const optimisticId = `optimistic-user-${now}`;
     const optimisticTaskId = activeTaskId || "new";
-    const optimisticContent = description || (files.length > 0 ? "Analise esta imagem." : "");
+    const hasDocumentAttachment = files.some((file) => !isImageFile(file));
+    const hasImageAttachment = files.some(isImageFile);
+    const optimisticContent = description || (
+      files.length > 0
+        ? (hasDocumentAttachment && hasImageAttachment
+          ? "Analise estes arquivos e imagens."
+          : hasDocumentAttachment
+            ? "Analise estes arquivos."
+            : "Analise esta imagem.")
+        : ""
+    );
     const shouldPrepareEnvironment = Boolean(optimisticContent) && (files.length > 0 || likelyTaskPrompt(optimisticContent));
     if (optimisticContent) {
       setOptimisticMessages((current) => [
@@ -658,6 +705,83 @@ export default function App() {
       clientMessageId: optimisticId,
     } : null);
     if (files.length > 0) {
+      const imageFiles = files.filter(isImageFile);
+      const documentFiles = files.filter((file) => !isImageFile(file));
+
+      if (documentFiles.length > 0) {
+        const content = description || (imageFiles.length > 0 ? "Analise estes arquivos e imagens." : "Analise estes arquivos.");
+        const filesToUpload = imageFiles.length > 0 ? files : documentFiles;
+        const optimisticFiles = documentFiles.map((file) => ({
+          name: file.name,
+          path: "",
+          extension: file.name.includes(".") ? `.${file.name.split(".").pop().toLowerCase()}` : "",
+          size_bytes: file.size,
+          kind: "document",
+        }));
+        const optimisticImages = imageFiles.map((file) => ({
+          filename: file.name,
+          content_type: file.type,
+          image_base64: "",
+          size: file.size,
+        }));
+
+        if (activeTaskId) {
+          setTaskEvents((current) => [
+            ...current,
+            {
+              type: "user_message",
+              task_id: activeTaskId,
+              created_at: now,
+              payload: {
+                content,
+                files: optimisticFiles,
+                images: optimisticImages,
+                client_message_id: optimisticId,
+              },
+            },
+          ]);
+          const result = await appendTaskFiles(activeTaskId, content, filesToUpload, optimisticId);
+          setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
+          setTaskEvents((current) => [
+            ...current.filter((event) => !(event.type === "user_message" && event.created_at === now)),
+            {
+              type: "user_message",
+              task_id: activeTaskId,
+              created_at: now,
+              payload: {
+                content,
+                files: result.files || optimisticFiles,
+                images: result.images?.map((image) => ({
+                  filename: image.filename,
+                  content_type: image.content_type,
+                  image_base64: image.image_base64,
+                  size: image.size,
+                })) || optimisticImages,
+                client_message_id: optimisticId,
+              },
+            },
+          ]);
+          setAgentStatus("queued");
+          setPendingPreparation(null);
+          return;
+        }
+
+        const result = await createFileTask(content, filesToUpload, optimisticId);
+        setOptimisticMessages((current) => current.map((message) => (
+          message.id === optimisticId ? { ...message, taskId: result.task_id } : message
+        )));
+        setTasks((current) => [result.task, ...current]);
+        setActiveTask(result.task);
+        setTaskEvents([]);
+        setContextState(null);
+        setActiveTaskId(result.task_id);
+        setAgentStatus("queued");
+        setPendingPreparation((current) => (
+          current?.id === optimisticId ? { ...current, taskId: result.task_id } : current
+        ));
+        return;
+      }
+
       if (activeTaskId) {
         setTaskEvents((current) => [
           ...current,
@@ -667,7 +791,7 @@ export default function App() {
             created_at: now,
             payload: {
               content: description || "Analise esta imagem.",
-              images: files.map((file) => ({
+              images: imageFiles.map((file) => ({
                 filename: file.name,
                 content_type: file.type,
                 image_base64: "",
@@ -675,7 +799,7 @@ export default function App() {
             },
           },
         ]);
-        const result = await appendTaskImages(activeTaskId, description, files);
+        const result = await appendTaskImages(activeTaskId, description, imageFiles);
         setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
         setTaskEvents((current) => [
           ...current.filter((event) => !(event.type === "user_message" && event.created_at === now)),
@@ -704,7 +828,7 @@ export default function App() {
         return;
       }
 
-      const result = await createImageTask(description, files);
+      const result = await createImageTask(description, imageFiles);
       setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
       setTasks((current) => [result.task, ...current]);
       setActiveTask(result.task);
@@ -870,6 +994,7 @@ export default function App() {
                 ))
               )}
             </div>
+            <SettingsPanel />
           </>
         }
         main={

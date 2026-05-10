@@ -4,7 +4,9 @@ import html
 import csv
 import re
 import shutil
+import tempfile
 import unicodedata
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,8 @@ from services.document_intent import (
 )
 
 
-VALIDATED_DOWNLOAD_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".csv"}
+VALIDATED_DOWNLOAD_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".csv", ".zip"}
+IGNORED_DOCUMENT_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__", "versions", "uploads"}
 
 
 EDIT_REQUEST_RE = re.compile(
@@ -27,7 +30,8 @@ EDIT_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 DOCUMENT_TARGET_RE = re.compile(
-    r"\b(pdf|markdown|\.md|md|docx|word|pptx|powerpoint|xlsx|excel|csv|planilha|"
+    r"\b(pdf|markdown|\.md|md|docx|word|pptx|powerpoint|xlsx|excel|csv|planilha|zip|"
+    r"shape|shapefile|\.shp|camada|layer|tabela\s+de\s+atributos|"
     r"arquivo|documento|relat[oó]rio|manual|guia|texto|"
     r"esse|este|essa|esta|anterior|ultimo|último)\b",
     re.IGNORECASE,
@@ -70,10 +74,10 @@ def _subject_from_text(text: str) -> str:
         flags=re.IGNORECASE,
     )
     subject = match.group(1) if match else value
-    subject = re.sub(r"\.(?:md|pdf|markdown|docx|pptx|xlsx|csv)\b", " ", subject, flags=re.IGNORECASE)
+    subject = re.sub(r"\.(?:md|pdf|markdown|docx|pptx|xlsx|csv|zip|shp)\b", " ", subject, flags=re.IGNORECASE)
     subject = re.sub(
         r"\b(gere|gerar|crie|criar|fa[cç]a|um|uma|arquivo|documento|pdf|markdown|md|docx|word|pptx|"
-        r"powerpoint|xlsx|excel|csv|planilha|slides?|apresenta[cç][aã]o|com|em|para|sobre|hist[oó]ria)\b",
+        r"powerpoint|xlsx|excel|csv|zip|shape|shapefile|planilha|slides?|apresenta[cç][aã]o|com|em|para|sobre|hist[oó]ria)\b",
         " ",
         subject,
         flags=re.IGNORECASE,
@@ -126,6 +130,7 @@ def resolve_document_target(task_id: str, text: str, files: list[dict[str, Any]]
         for file in files
         if _normalize_extension(str(file.get("path") or "")) in DOCUMENT_EXTENSIONS
         and not str(file.get("path") or "").startswith("versions/")
+        and not str(file.get("path") or "").startswith("uploads/")
     ]
     if requested:
         candidates = [
@@ -270,6 +275,63 @@ def csv_file_valid(path: Path) -> bool:
     return max_columns >= 2 and populated >= 4
 
 
+def _zip_member_safe(name: str) -> bool:
+    normalized = str(name or "").replace("\\", "/").strip()
+    if not normalized or normalized.endswith("/"):
+        return False
+    path = Path(normalized)
+    return not path.is_absolute() and not any(part in {"", ".", ".."} for part in path.parts)
+
+
+def zip_file_valid(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 64:
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = [item for item in archive.infolist() if not item.is_dir()]
+            if not members:
+                return False
+            return all(_zip_member_safe(item.filename) and int(item.file_size or 0) > 0 for item in members)
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def shapefile_zip_valid(path: Path) -> bool:
+    if not zip_file_valid(path):
+        return False
+    try:
+        import geopandas as gpd
+
+        with zipfile.ZipFile(path) as archive:
+            groups: dict[str, dict[str, zipfile.ZipInfo]] = {}
+            for item in archive.infolist():
+                if item.is_dir() or not _zip_member_safe(item.filename) or int(item.file_size or 0) <= 0:
+                    continue
+                member_path = Path(str(item.filename).replace("\\", "/"))
+                suffix = member_path.suffix.lower()
+                if suffix not in {".shp", ".shx", ".dbf", ".prj", ".cpg"}:
+                    continue
+                key = str(member_path.with_suffix("")).lower()
+                groups.setdefault(key, {})[suffix] = item
+            for components in groups.values():
+                if not {".shp", ".shx", ".dbf"} <= set(components):
+                    continue
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    for suffix, item in components.items():
+                        target = root / f"layer{suffix}"
+                        target.write_bytes(archive.read(item))
+                    try:
+                        gdf = gpd.read_file(root / "layer.shp")
+                    except Exception:
+                        continue
+                    if len(gdf) > 0 and gdf.geometry.name in gdf:
+                        return True
+            return False
+    except (ImportError, OSError, zipfile.BadZipFile):
+        return False
+
+
 def document_file_valid(path: Path, extension: str | None = None) -> bool:
     suffix = (extension or path.suffix).lower()
     if suffix == ".markdown":
@@ -286,6 +348,8 @@ def document_file_valid(path: Path, extension: str | None = None) -> bool:
         return xlsx_file_valid(path)
     if suffix == ".csv":
         return csv_file_valid(path)
+    if suffix == ".zip":
+        return zip_file_valid(path)
     return path.is_file() and path.stat().st_size > 0
 
 
@@ -293,7 +357,7 @@ def valid_markdown_files(project_dir: Path) -> list[str]:
     matches: list[str] = []
     for suffix in ("*.md", "*.markdown"):
         for path in sorted(project_dir.rglob(suffix)):
-            if any(part in {"node_modules", ".git", "dist", "build", "__pycache__", "versions"} for part in path.parts):
+            if any(part in IGNORED_DOCUMENT_DIRS for part in path.parts):
                 continue
             if markdown_file_valid(path):
                 matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
@@ -303,7 +367,7 @@ def valid_markdown_files(project_dir: Path) -> list[str]:
 def valid_pdf_files(project_dir: Path) -> list[str]:
     matches: list[str] = []
     for path in sorted(project_dir.rglob("*.pdf")):
-        if any(part in {"node_modules", ".git", "dist", "build", "__pycache__", "versions"} for part in path.parts):
+        if any(part in IGNORED_DOCUMENT_DIRS for part in path.parts):
             continue
         if pdf_file_valid(path):
             matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
@@ -314,7 +378,7 @@ def valid_document_files(project_dir: Path, extension: str) -> list[str]:
     normalized = ".md" if extension.lower() == ".markdown" else extension.lower()
     matches: list[str] = []
     for path in sorted(project_dir.rglob(f"*{normalized}")):
-        if any(part in {"node_modules", ".git", "dist", "build", "__pycache__", "versions"} for part in path.parts):
+        if any(part in IGNORED_DOCUMENT_DIRS for part in path.parts):
             continue
         if document_file_valid(path, normalized):
             matches.append(str(path.relative_to(project_dir)).replace("\\", "/"))
@@ -480,6 +544,21 @@ def document_context_for_code_agent(task_id: str, prompt: str, files: list[dict[
         if _normalize_extension(str(file.get("path") or "")) in DOCUMENT_EXTENSIONS
         and not str(file.get("path") or "").startswith("versions/")
     ]
+    uploads_root = _workspace(task_id) / "uploads"
+    if uploads_root.is_dir():
+        for path in sorted(uploads_root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = str(path.relative_to(_workspace(task_id))).replace("\\", "/")
+            if _normalize_extension(rel) in DOCUMENT_EXTENSIONS:
+                docs.append(
+                    {
+                        "path": rel,
+                        "extension": path.suffix.lower(),
+                        "size_bytes": path.stat().st_size,
+                        "modified_at": path.stat().st_mtime,
+                    }
+                )
     if docs:
         lines = [f"- {file.get('path')} ({file.get('extension') or Path(str(file.get('path') or '')).suffix}, {int(file.get('size_bytes') or 0)} bytes)" for file in docs[:5]]
         target = resolve_document_target(task_id, prompt, docs) if is_document_edit_request(prompt) else None

@@ -131,9 +131,12 @@ export function appendTaskMessage(taskId, content, clientMessageId = "") {
   });
 }
 
-function imageFormData(question, files) {
+function imageFormData(question, files, clientMessageId = "") {
   const formData = new FormData();
   formData.append("question", question);
+  if (clientMessageId) {
+    formData.append("client_message_id", clientMessageId);
+  }
   for (const file of files) {
     formData.append("files", file);
   }
@@ -151,6 +154,20 @@ export function appendTaskImages(taskId, question, files) {
   return request(`/api/tasks/${taskId}/images`, {
     method: "POST",
     body: imageFormData(question, files),
+  });
+}
+
+export function createFileTask(question, files, clientMessageId = "") {
+  return request("/api/tasks/files", {
+    method: "POST",
+    body: imageFormData(question, files, clientMessageId),
+  });
+}
+
+export function appendTaskFiles(taskId, question, files, clientMessageId = "") {
+  return request(`/api/tasks/${taskId}/files`, {
+    method: "POST",
+    body: imageFormData(question, files, clientMessageId),
   });
 }
 
@@ -173,6 +190,17 @@ export function stopTask(taskId) {
 
 export function listProviders() {
   return request("/api/providers/");
+}
+
+export function getUserSettings() {
+  return request("/api/user/settings");
+}
+
+export function updateUserSetting(key, value, factType = "preference") {
+  return request("/api/user/settings", {
+    method: "PUT",
+    body: JSON.stringify({ key, value, fact_type: factType }),
+  });
 }
 
 export function getTaskPlan(description) {

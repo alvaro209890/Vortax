@@ -32,6 +32,8 @@ KNOWN_EVENT_TYPES = frozenset(
         "shell_stdout",
         "shell_stderr",
         "files_created",
+        "files_uploaded",
+        "file_analysis_done",
         "vertex_progress",
         "ai_exchange",
         "web_validation_started",
