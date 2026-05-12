@@ -13,6 +13,7 @@ from services.credential_store import credential_store
 from services.deepseek_client import (
     DeepSeekError,
     deepseek_configured,
+    generate_task_title,
     request_deepseek_action,
     request_direct_chat_response,
     request_task_plan,
@@ -1038,6 +1039,19 @@ def _history_with_research_context(task_id: str, history: list[dict[str, str]]) 
     return [{"role": "system", "content": source_context}, *history]
 
 
+async def _save_task_title(task_id: str, description: str, bus: EventBus) -> None:
+    try:
+        task = database.get_task(task_id)
+        if not task or task.get("title"):
+            return
+        title = await generate_task_title(description)
+        if title:
+            database.update_task_title(task_id, title)
+            await bus.publish(task_id, "task_title_updated", {"title": title})
+    except Exception:
+        pass
+
+
 async def _finish_text_response(
     task_id: str,
     description: str,
@@ -1073,6 +1087,7 @@ async def _finish_text_response(
     final_content = _sanitize_chat_content(str(payload.get("content") or result))
     payload["content"] = final_content
     store.update_status(task_id, "done", result=final_content)
+    asyncio.create_task(_save_task_title(task_id, description, bus))
     await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluido"})
     await bus.publish(task_id, "assistant_message_done", payload)
     if emit_activity:
@@ -1722,7 +1737,54 @@ def _history_with_task_plan(task_id: str, history: list[dict[str, str]]) -> list
     return [{"role": "system", "content": instruction}, *history]
 
 
-async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+def _build_user_profile_block(user_profile: dict | None) -> str:
+    if not user_profile:
+        return ""
+    lines = []
+    if user_profile.get("name"):
+        lines.append(f"- Nome: {user_profile['name']}")
+    if user_profile.get("profession"):
+        lines.append(f"- Profissão: {user_profile['profession']}")
+    if user_profile.get("about"):
+        lines.append(f"- Sobre o usuário: {user_profile['about']}")
+    if user_profile.get("response_style"):
+        lines.append(f"- Estilo de resposta preferido: {user_profile['response_style']}")
+    if not lines:
+        return ""
+    return (
+        "PERFIL DO USUÁRIO (use para personalizar respostas):\n"
+        + "\n".join(lines)
+        + "\nAdapte sua linguagem, exemplos e nível de detalhe ao perfil acima."
+    )
+
+
+def _history_with_user_profile(history: list[dict], user_profile: dict | None) -> list[dict]:
+    block = _build_user_profile_block(user_profile)
+    if not block:
+        return history
+    return [{"role": "system", "content": block}, *history]
+
+
+async def _run_agent_task_inner(
+    task_id: str,
+    description: str,
+    store: TaskStore,
+    bus: EventBus,
+    user_profile: dict | None = None,
+    research_mode: str = "fast",
+) -> None:
+    # Extrair user_id da task para injecao de memorias
+    task = store.get(task_id)
+    user_id = str(task.get("user_id") or "") if task else ""
+
+    # Processar comando /remember antes do loop ReAct
+    if description.strip().startswith("/remember"):
+        from services.user_memory import handle_remember_command
+        response = handle_remember_command(user_id, description)
+        if response:
+            await _finish_text_response(task_id, description, response, store, bus)
+            return
+
     await _ensure_plan(task_id, description, bus)
     if not deepseek_configured():
         await _start_plan_step(task_id, "understand", bus)
@@ -1767,6 +1829,7 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
         await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
         await bus.publish(task_id, "agent_progress", {"label": "Analisando pedido", "detail": description})
 
+        history = _history_with_user_profile(history, user_profile)
         latest_prompt = _latest_user_prompt(history) or description
         if is_exact_prompt(latest_prompt):
             await _complete_plan_step(task_id, "understand", bus)
@@ -1789,13 +1852,55 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
 
         # Pesquisa previa automatica antes do loop ReAct
         await _complete_plan_step(task_id, "understand", bus)
-        history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
 
-        # Pesquisa factual para documentos PDF/Markdown antes do loop ReAct
-        history = await _inject_document_research_if_needed(task_id, latest_prompt, history, bus)
+        is_deep = research_mode == "deep"
+        if is_deep:
+            # Modo pesquisa profunda: substitui as 3 pesquisas previas por pesquisa iterativa
+            await _start_plan_step(task_id, "research", bus)
+            depth = max(2, min(5, getattr(settings, "DEEP_RESEARCH_DEPTH", 3)))
+            try:
+                from services.deep_research import execute_deep_research, format_deep_research_for_agent
+                report = await execute_deep_research(
+                    task_id, latest_prompt, bus,
+                    depth=depth,
+                )
+                history.append({
+                    "role": "user",
+                    "content": format_deep_research_for_agent(report),
+                })
+                await _complete_plan_step(
+                    task_id,
+                    "research",
+                    bus,
+                    evidence={
+                        "status": "ok",
+                        "summary": f"Pesquisa profunda concluida: {report.get('total_sources', 0)} fontes em {depth} rodadas.",
+                    },
+                )
+            except Exception as exc:
+                await bus.publish(
+                    task_id,
+                    "agent_progress",
+                    {"label": "Pesquisa profunda indisponivel", "detail": f"Erro: {str(exc)[:200]}. Seguindo com pesquisa normal."},
+                )
+                # Fallback para pesquisa normal
+                history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
+                history = await _inject_document_research_if_needed(task_id, latest_prompt, history, bus)
+                history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
+        else:
+            history = await _inject_pre_research_if_needed(task_id, latest_prompt, history, bus)
+            # Pesquisa factual para documentos PDF/Markdown antes do loop ReAct
+            history = await _inject_document_research_if_needed(task_id, latest_prompt, history, bus)
+            # Pesquisa automatica de pessoas antes do loop ReAct
+            history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
 
-        # Pesquisa automatica de pessoas antes do loop ReAct
-        history = await _inject_people_research_if_needed(task_id, latest_prompt, history, bus)
+        # Auto-salvar preferencias detectadas na mensagem do usuario
+        if user_id and latest_prompt and not latest_prompt.startswith("/"):
+            from services.user_memory import auto_save_from_message
+            try:
+                auto_save_from_message(user_id, latest_prompt)
+            except Exception:
+                pass
 
         MAX_CODE_AGENT_CALLS = 3
         code_agent_call_count = 0
@@ -1818,7 +1923,7 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
             action_history = _history_with_task_plan(task_id, history)
             action_history = _history_with_research_context(task_id, action_history)
             action_history = _history_with_authorized_session(task_id, action_history)
-            action = await request_deepseek_action(action_history)
+            action = await request_deepseek_action(action_history, user_id=user_id if user_id else None)
             history.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
 
             action_name = str(action.get("action", "")).strip()
@@ -2157,8 +2262,15 @@ async def _run_agent_task_inner(task_id: str, description: str, store: TaskStore
         await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro"})
 
 
-async def run_agent_task(task_id: str, description: str, store: TaskStore, bus: EventBus) -> None:
+async def run_agent_task(
+    task_id: str,
+    description: str,
+    store: TaskStore,
+    bus: EventBus,
+    user_profile: dict | None = None,
+    research_mode: str = "fast",
+) -> None:
     try:
-        await _run_agent_task_inner(task_id, description, store, bus)
+        await _run_agent_task_inner(task_id, description, store, bus, user_profile=user_profile, research_mode=research_mode)
     finally:
         await browser_pool.release(task_id)

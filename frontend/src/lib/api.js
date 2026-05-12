@@ -91,10 +91,14 @@ async function request(path, options = {}, retryingAfterAuthRefresh = false) {
   return response.json();
 }
 
-export function createTask(description, clientMessageId = "") {
+export function createTask(description, clientMessageId = "", userProfile = null) {
   return request("/api/tasks/", {
     method: "POST",
-    body: JSON.stringify({ description, client_message_id: clientMessageId }),
+    body: JSON.stringify({
+      description,
+      client_message_id: clientMessageId,
+      user_profile: userProfile || undefined,
+    }),
   });
 }
 
@@ -124,10 +128,14 @@ export function deleteTask(taskId) {
   return request(`/api/tasks/${taskId}`, { method: "DELETE" });
 }
 
-export function appendTaskMessage(taskId, content, clientMessageId = "") {
+export function appendTaskMessage(taskId, content, clientMessageId = "", userProfile = null) {
   return request(`/api/tasks/${taskId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, client_message_id: clientMessageId }),
+    body: JSON.stringify({
+      content,
+      client_message_id: clientMessageId,
+      user_profile: userProfile || undefined,
+    }),
   });
 }
 
@@ -180,4 +188,32 @@ export function getTaskPlan(description) {
     method: "POST",
     body: JSON.stringify({ description }),
   });
+}
+
+export function listUserMemories(memoryType = null) {
+  const qs = memoryType ? `?memory_type=${encodeURIComponent(memoryType)}` : "";
+  return request(`/api/tasks/memories/${qs}`);
+}
+
+export function addUserMemory(memoryType, key, content, priority = 5) {
+  return request("/api/tasks/memories/", {
+    method: "POST",
+    body: JSON.stringify({
+      memory_type: memoryType,
+      key,
+      content,
+      priority,
+    }),
+  });
+}
+
+export function updateUserMemory(memoryId, content, priority = null) {
+  return request(`/api/tasks/memories/${memoryId}`, {
+    method: "PUT",
+    body: JSON.stringify({ content, ...(priority !== null ? { priority } : {}) }),
+  });
+}
+
+export function deleteUserMemory(memoryId) {
+  return request(`/api/tasks/memories/${memoryId}`, { method: "DELETE" });
 }

@@ -62,6 +62,9 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 
 ## Funcionalidades
 
+- **Memória entre conversas** — preferências e fatos do usuário são persistidos no SQLite e injetados no system prompt do DeepSeek, permitindo que o agente lembre de sessão para sessão. Use `/remember chave: valor` no chat ou detecte automaticamente frases como "eu prefiro", "eu gosto de", "sou desenvolvedor". Gerencie no painel de configurações.
+- **Modo pesquisa profunda** — ative `research_mode: "deep"` para executar N iterações de busca + leitura + síntese, com relatório estruturado ao final. Cada rodada refina a query com base nas descobertas anteriores. Profundidade configurável (2-5, padrão 3).
+- **Resumo automático com checkpoint** — ao compactar contexto, o resumo é salvo com metadados (URLs mencionadas, quantidade de mensagens) e enviado ao frontend via WebSocket para visualização.
 - **Chat contínuo** — múltiplas mensagens na mesma conversa, histórico persistido
 - **Resposta rápida sem planner** — perguntas simples são respondidas direto no chat, sem passar por ciclo ReAct
 - **Exatas com tools** — matemática, física, química, estatística e contas usam `exact_solve`; se o enunciado vier por imagem, o Vortax faz OCR/visão e resolve a partir da transcrição
@@ -85,7 +88,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Computador do Vortax** — painel lateral mostra workspace, arquivos, editor e status de validação sem exibir terminal bruto ou nomes internos
 - **Shell seguro** — comandos com whitelist, bloqueio de padrões perigosos e workspace isolada
 - **Download em ZIP** — todos os arquivos gerados na conversa em um único arquivo
-- **Segurança LAN-only** — middleware que bloqueia IPs públicos, sem exposição externa
+- **Segurança LAN-only com isolamento de usuários** — middleware que bloqueia IPs públicos; na LAN dispositivos diferentes são isolados por IP (cada um vê seus próprios dados). Modo desenvolvimento único (`ALLOW_NO_AUTH=true`) para ambiente local.
 
 ---
 
@@ -272,10 +275,12 @@ PUBLIC_HOSTS=vortax-api.cursar.space
 | IA (visão) | Groq + Llama 4 Scout |
 | Motor de software | Vertex CLI via `shell_run` |
 | Shell | Whitelist, bloqueio de padrões perigosos, timeout |
-| Banco | SQLite com WAL |
+| Banco | SQLite com WAL — tabelas: tasks, events, screenshots, chat_images, sources, conversation_contexts, generated_projects, generated_files, task_steps, code_snippets, user_memories |
 | Streaming | WebSocket com replay de eventos |
 | Validação | `py_compile`, `node --check`, `npm run build`, `npm test`, Chrome/visão |
-| Segurança | Middleware LAN-only, sanitização de segredos |
+| Memória persistente | `user_memories` SQLite — preferências e fatos injetados no system prompt cross-session |
+| Pesquisa profunda | Modo iterativo com N rodadas de busca + leitura + refinamento de query |
+| Segurança | Middleware LAN-only com isolamento por IP, sanitização de segredos |
 
 ## Agente de Programacao
 
@@ -326,6 +331,25 @@ O Vortax mantém contexto por conversa no SQLite, inspirado em uma lógica de se
 - quando a conversa passa de 70% do limite, o frontend mostra `Quase cheio`;
 - quando passa de 88%, os turnos antigos são compactados em um resumo e os turnos recentes continuam completos;
 - o limite padrão é `24000` tokens estimados, menor que janelas máximas de modelos grandes para deixar margem ao prompt do planner, schema de tools e resultados de ferramentas.
+
+### Checkpoint de Compactação
+
+Ao compactar, o sistema salva automaticamente um `checkpoint_json` com:
+- quantidade de mensagens compactadas
+- URLs mencionadas no trecho
+- timestamp da compactação
+
+O evento WebSocket `context_compacted` agora inclui o resumo (primeiros 500 caracteres) e o checkpoint, permitindo que o frontend exiba o que foi resumido.
+
+### Sumário Incremental Aprimorado
+
+O prompt de sumarização foi enriquecido para preservar:
+- decisões tomadas e acordos feitos
+- arquivos, projetos ou documentos criados/alterados (com nomes)
+- URLs de fontes consultadas
+- preferências ou feedback do usuário
+- pendências e tarefas não concluídas
+- peso maior aos turnos mais recentes
 
 Configuração via `.env`:
 

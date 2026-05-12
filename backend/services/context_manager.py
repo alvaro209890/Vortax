@@ -54,6 +54,16 @@ def _payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
     token_limit = int(context.get("token_limit") or settings.CONTEXT_TOKEN_LIMIT)
     estimated = int(context.get("estimated_tokens") or 0)
     ratio = min(1.0, estimated / token_limit) if token_limit else 0.0
+    summary = str(context.get("summary") or "")
+    # Trunca o sumario para nao sobrecarregar o WebSocket
+    summary_preview = summary[:500] if summary else ""
+    checkpoint = context.get("checkpoint_json")
+    if isinstance(checkpoint, str):
+        try:
+            import json
+            checkpoint = json.loads(checkpoint)
+        except Exception:
+            checkpoint = {}
     return {
         "estimated_tokens": estimated,
         "token_limit": token_limit,
@@ -65,6 +75,8 @@ def _payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
         "compaction_count": int(context.get("compaction_count") or 0),
         "last_compacted_event_id": context.get("last_compacted_event_id"),
         "updated_at": context.get("updated_at"),
+        "summary": summary_preview,
+        "checkpoint": checkpoint,
     }
 
 
@@ -113,6 +125,48 @@ async def _summarize(previous_summary: str, messages: list[dict[str, Any]]) -> s
         return _fallback_summary(previous_summary, messages)
 
 
+async def _summarize_enriched(previous_summary: str, messages: list[dict[str, Any]]) -> str:
+    """Sumariza com prompt enriquecido que preserva decisoes, URLs e pendencias."""
+    transcript = "\n".join(
+        f"{m.get('role', 'unknown')}: {str(m.get('content', ''))[:1200]}"
+        for m in messages
+        if str(m.get("content") or "").strip()
+    )
+    enriched_prompt = (
+        f"Historico acumulado anterior:\n{previous_summary or '(vazio)'}\n\n"
+        f"Novos turnos a compactar ({len(messages)} mensagens):\n{transcript}\n\n"
+        "Produza um resumo denso em portugues que PRESERVE:\n"
+        "- Decisoes tomadas e acordos feitos\n"
+        "- Arquivos, projetos ou documentos criados/alterados (com nomes)\n"
+        "- URLs de fontes consultadas\n"
+        "- Preferencias ou feedback do usuario\n"
+        "- Pendencias e tarefas nao concluidas\n"
+        "De peso maior aos turnos mais recentes. "
+        "Estruture em paragrafos densos, sem markdown estrutural."
+    )
+    from services.deepseek_client import request_context_summary
+    try:
+        return await request_context_summary(
+            enriched_prompt,
+            [],
+            max_chars=settings.CONTEXT_SUMMARY_MAX_CHARS,
+        )
+    except Exception:
+        return _fallback_summary(previous_summary, messages)
+
+
+def _extract_checkpoint_details(messages: list[dict[str, Any]], summary: str) -> dict[str, Any]:
+    """Extrai metadados estruturados do trecho compactado para o checkpoint."""
+    import re
+    urls = list(set(re.findall(r'https?://[^\s<>"\')]+', summary)))[:10]
+    return {
+        "message_count": len(messages),
+        "urls_mentioned": urls,
+        "compacted_timestamp": utc_now(),
+        "summary_length": len(summary),
+    }
+
+
 def save_context_snapshot(
     task_id: str,
     *,
@@ -121,6 +175,7 @@ def save_context_snapshot(
     compaction_count: int,
     last_compacted_event_id: int | None,
     forced_status: str | None = None,
+    checkpoint_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     limit, warning, compact = _thresholds()
     estimated = estimate_messages_tokens(active_messages, summary)
@@ -137,6 +192,7 @@ def save_context_snapshot(
             "compaction_count": compaction_count,
             "last_compacted_event_id": last_compacted_event_id,
             "updated_at": utc_now(),
+            "checkpoint_json": checkpoint_json or {},
         },
     )
 
@@ -175,12 +231,14 @@ async def prepare_context_history(task_id: str, events: list[dict[str, Any]], fa
             compacted = True
             compaction_count += 1
             last_compacted_event_id = max(int(message.get("event_id") or 0) for message in to_compact)
+            checkpoint = _extract_checkpoint_details(to_compact, summary)
             context = save_context_snapshot(
                 task_id,
                 summary=summary,
                 active_messages=kept,
                 compaction_count=compaction_count,
                 last_compacted_event_id=last_compacted_event_id,
+                checkpoint_json=checkpoint,
             )
             active_messages = kept
 

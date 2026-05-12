@@ -34,14 +34,25 @@ from tools.vision import VisionError, vision_tool
 router = APIRouter()
 
 
+class UserProfile(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    profession: str | None = Field(default=None, max_length=200)
+    about: str | None = Field(default=None, max_length=1000)
+    response_style: str | None = Field(default=None, max_length=500)
+
+
 class TaskCreate(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
     client_message_id: str | None = Field(default=None, max_length=120)
+    user_profile: UserProfile | None = Field(default=None)
+    research_mode: str = Field(default="fast", pattern="^(fast|deep)$")
 
 
 class TaskMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     client_message_id: str | None = Field(default=None, max_length=120)
+    user_profile: UserProfile | None = Field(default=None)
+    research_mode: str = Field(default="fast", pattern="^(fast|deep)$")
 
 
 class AuthorizedTaskCreate(BaseModel):
@@ -387,8 +398,9 @@ async def create_task(payload: TaskCreate, current_user: AuthUser = Depends(requ
     await event_bus.publish(task["id"], "task_created", {"task": task})
     await event_bus.publish(task["id"], "user_message", _message_payload(task["description"], payload.client_message_id))
     await _publish_preparing_environment(task["id"], task["description"])
+    profile = payload.user_profile.model_dump() if payload.user_profile else None
     runner_tasks[task["id"]] = asyncio.create_task(
-        run_agent_task(task["id"], task["description"], task_store, event_bus)
+        run_agent_task(task["id"], task["description"], task_store, event_bus, user_profile=profile, research_mode=payload.research_mode)
     )
     return {"task_id": task["id"], "task": task, "plan": {"steps": []}}
 
@@ -469,7 +481,10 @@ async def create_task_message(
     await _publish_preparing_environment(task_id, content)
     await _create_live_plan(task_id, content, replan=True)
     task_store.update_status(task_id, "queued")
-    runner_tasks[task_id] = asyncio.create_task(run_agent_task(task_id, content, task_store, event_bus))
+    profile = payload.user_profile.model_dump() if payload.user_profile else None
+    runner_tasks[task_id] = asyncio.create_task(
+        run_agent_task(task_id, content, task_store, event_bus, user_profile=profile, research_mode=payload.research_mode)
+    )
     return {"ok": True, "task_id": task_id}
 
 
@@ -603,3 +618,71 @@ async def delete_task(task_id: str, current_user: AuthUser = Depends(require_aut
     await event_bus.close_task_connections(task_id)
     deleted = task_store.delete(task_id)
     return {"ok": deleted}
+
+
+# ── Memorias do usuario ────────────────────────────────────────────
+
+_memory_router = APIRouter()
+
+
+class UserMemoryCreate(BaseModel):
+    memory_type: str = Field(default="context", pattern="^(preference|fact|context|feedback)$")
+    key: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=2000)
+    priority: int = Field(default=5, ge=1, le=10)
+
+
+class UserMemoryUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+    priority: int | None = Field(default=None, ge=1, le=10)
+
+
+@_memory_router.get("/")
+async def list_user_memories(
+    memory_type: str | None = None,
+    current_user: AuthUser = Depends(require_auth),
+):
+    from services.user_memory import list_memories
+    memories = list_memories(current_user.uid, memory_type=memory_type, limit=50)
+    return {"memories": memories}
+
+
+@_memory_router.post("/")
+async def create_user_memory(
+    body: UserMemoryCreate,
+    current_user: AuthUser = Depends(require_auth),
+):
+    from services.user_memory import add_memory
+    memory_id = add_memory(
+        current_user.uid,
+        body.memory_type,
+        body.key,
+        body.content,
+        body.priority,
+    )
+    return {"id": memory_id, "ok": True}
+
+
+@_memory_router.put("/{memory_id}")
+async def update_user_memory(
+    memory_id: int,
+    body: UserMemoryUpdate,
+    current_user: AuthUser = Depends(require_auth),
+):
+    from services.user_memory import update_memory
+    ok = update_memory(memory_id, current_user.uid, body.content, body.priority)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memoria nao encontrada")
+    return {"ok": True}
+
+
+@_memory_router.delete("/{memory_id}")
+async def delete_user_memory(
+    memory_id: int,
+    current_user: AuthUser = Depends(require_auth),
+):
+    from services.user_memory import delete_memory
+    ok = delete_memory(memory_id, current_user.uid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memoria nao encontrada")
+    return {"ok": True}

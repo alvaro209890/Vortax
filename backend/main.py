@@ -61,6 +61,7 @@ app.add_middleware(
 install_lan_guard(app)
 
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(tasks._memory_router, prefix="/api/tasks/memories", tags=["memories"])
 app.include_router(control.router, prefix="/api/control", tags=["control"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(providers.router, prefix="/api/providers", tags=["providers"])

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { LogOut, MessageSquarePlus, PanelRightOpen, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { LogOut, MessageSquarePlus, PanelRightOpen, Settings, Trash2 } from "lucide-react";
 
 import { useAuth } from "./auth/AuthProvider.jsx";
 import { AiExchangePanel } from "./components/AgentActivity.jsx";
 import { AuthScreen } from "./components/AuthScreen.jsx";
 import { ChatShell } from "./components/ChatShell.jsx";
 import { Composer } from "./components/Composer.jsx";
+import { AlertDialog } from "./components/AlertDialog.jsx";
 import { ConfirmDialog } from "./components/ConfirmDialog.jsx";
 import { ContextIndicator } from "./components/ContextIndicator.jsx";
 import { DocumentationPanel } from "./components/DocumentationPanel.jsx";
@@ -17,6 +18,8 @@ import { StatusBadge } from "./components/StatusBadge.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
 import { TaskDetailDrawer } from "./components/TaskDetailDrawer.jsx";
 import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
+import { OnboardingScreen } from "./components/OnboardingScreen.jsx";
+import { SettingsPanel, loadUserProfile } from "./components/SettingsPanel.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
 import { useTaskEvents } from "./hooks/useTaskEvents.js";
 import { useTaskFiles } from "./hooks/useTaskFiles.js";
@@ -385,6 +388,7 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const [agentStatus, setAgentStatus] = useState("idle");
   const [tasks, setTasks] = useState([]);
+  const [sidebarTab, setSidebarTab] = useState("chats");
   const [backendStatus, setBackendStatus] = useState("checking");
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState(null);
@@ -394,6 +398,10 @@ export default function App() {
   const [computerFocusRequest, setComputerFocusRequest] = useState(null);
   const [optimisticMessages, setOptimisticMessages] = useState([]);
   const [pendingPreparation, setPendingPreparation] = useState(null);
+  const [taskToDelete, setTaskToDelete] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const prevAgentStatusRef = useRef(null);
   const {
     activeTask,
     contextState,
@@ -443,6 +451,12 @@ export default function App() {
     },
     [lastUserIndex, planSegments],
   );
+
+  const filteredTasks = useMemo(() => {
+    if (!searchQuery.trim()) return tasks;
+    const q = searchQuery.toLowerCase();
+    return tasks.filter((task) => (task.title || task.description || "").toLowerCase().includes(q));
+  }, [tasks, searchQuery]);
 
   const messages = useMemo(() => {
     const pendingMessages = optimisticMessages.filter(
@@ -620,6 +634,13 @@ export default function App() {
       setContextState(lastContext.payload);
     }
 
+    const titleEvent = [...currentEvents].reverse().find((e) => e.type === "task_title_updated");
+    if (titleEvent?.payload?.title) {
+      setTasks((current) => current.map((task) => (
+        task.id === activeTaskId ? { ...task, title: titleEvent.payload.title } : task
+      )));
+    }
+
   }, [activeTaskId, currentEvents]);
 
   useEffect(() => {
@@ -630,7 +651,25 @@ export default function App() {
     }));
   }, [activeTaskId, currentEvents, optimisticMessages.length]);
 
+  useEffect(() => {
+    if (prevAgentStatusRef.current !== "done" && agentStatus === "done" && activeTaskId) {
+      if (document.hidden && "Notification" in window) {
+        Notification.requestPermission().then((permission) => {
+          if (permission === "granted") {
+            const task = tasks.find((t) => t.id === activeTaskId);
+            new Notification("Vortax — Tarefa concluída", {
+              body: task?.title || task?.description || "A tarefa foi concluída.",
+              icon: "/vortax-logo.png",
+            });
+          }
+        });
+      }
+    }
+    prevAgentStatusRef.current = agentStatus;
+  }, [agentStatus, activeTaskId, tasks]);
+
   async function handleSubmit(description, files = []) {
+    setSubmitError(null);
     setAgentStatus("queued");
     const now = new Date().toISOString();
     const optimisticId = `optimistic-user-${now}`;
@@ -716,29 +755,31 @@ export default function App() {
       return;
     }
 
-    if (activeTaskId) {
-      try {
-        await appendTaskMessage(activeTaskId, description, optimisticId);
-      } catch (error) {
-        setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
-        setPendingPreparation((current) => (current?.id === optimisticId ? null : current));
-        throw error;
+    try {
+      if (activeTaskId) {
+        await appendTaskMessage(activeTaskId, description, optimisticId, loadUserProfile());
+        return;
       }
-      return;
-    }
 
-    const result = await createTask(description, optimisticId);
-    setOptimisticMessages((current) => current.map((message) => (
-      message.id === optimisticId ? { ...message, taskId: result.task_id } : message
-    )));
-    setPendingPreparation((current) => (
-      current?.id === optimisticId ? { ...current, taskId: result.task_id } : current
-    ));
-    setTasks((current) => [result.task, ...current]);
-    setActiveTask(result.task);
-    setTaskEvents([]);
-    setContextState(null);
-    setActiveTaskId(result.task_id);
+      const result = await createTask(description, optimisticId, loadUserProfile());
+      setOptimisticMessages((current) => current.map((message) => (
+        message.id === optimisticId ? { ...message, taskId: result.task_id } : message
+      )));
+      setPendingPreparation((current) => (
+        current?.id === optimisticId ? { ...current, taskId: result.task_id } : current
+      ));
+      setTasks((current) => [result.task, ...current]);
+      setActiveTask(result.task);
+      setTaskEvents([]);
+      setContextState(null);
+      setActiveTaskId(result.task_id);
+    } catch {
+      setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticId));
+      setPendingPreparation((current) => (current?.id === optimisticId ? null : current));
+      setAgentStatus("idle");
+      setSubmitError("Falha ao enviar. Verifique a conexão e tente novamente.");
+      setTimeout(() => setSubmitError(null), 5000);
+    }
   }
 
   async function handleSecureLogin(payload) {
@@ -783,11 +824,14 @@ export default function App() {
     }
   }
 
-  async function handleDeleteTask(taskId) {
-    if (!window.confirm("Excluir este chat e apagar o historico salvo no banco de dados?")) return;
+  function handleDeleteTask(taskId) {
+    setTaskToDelete(taskId);
+  }
 
+  async function confirmDeleteTask() {
+    const taskId = taskToDelete;
+    setTaskToDelete(null);
     await deleteTask(taskId);
-
     setTasks((current) => {
       const remaining = current.filter((task) => task.id !== taskId);
       if (activeTaskId === taskId) {
@@ -831,45 +875,79 @@ export default function App() {
             </div>
             <StatusBadge status={backendStatus} label={`Backend ${backendStatus}`} />
 
-            <div className="task-list">
-              <div className="task-list-header">
-                <span className="panel-label">Conversas</span>
-                <button onClick={handleNewChat} title="Novo chat" type="button">
-                  <MessageSquarePlus size={15} />
-                </button>
-              </div>
-              {tasksLoading ? (
-                <p className="panel-state">Carregando conversas...</p>
-              ) : tasksError ? (
-                <p className="panel-state error">Nao foi possivel carregar conversas.</p>
-              ) : tasks.length === 0 ? (
-                <p className="panel-state">Nenhuma conversa criada.</p>
-              ) : (
-                tasks.map((task) => (
-                  <div
-                    className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
-                    key={task.id}
-                    onClick={() => setActiveTaskId(task.id)}
-                  >
-                    <div className="task-content">
-                      <span>{task.description}</span>
-                      <small>{task.status}</small>
-                    </div>
-                    <button
-                      className="task-delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteTask(task.id);
-                      }}
-                      title="Excluir chat"
-                      type="button"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                ))
-              )}
+            <div className="sidebar-tabs">
+              <button
+                className={`sidebar-tab ${sidebarTab === "chats" ? "active" : ""}`}
+                onClick={() => setSidebarTab("chats")}
+                type="button"
+              >
+                <MessageSquarePlus size={14} />
+                Conversas
+              </button>
+              <button
+                className={`sidebar-tab ${sidebarTab === "settings" ? "active" : ""}`}
+                onClick={() => setSidebarTab("settings")}
+                type="button"
+              >
+                <Settings size={14} />
+                Configurações
+              </button>
             </div>
+
+            {sidebarTab === "chats" ? (
+              <div className="task-list">
+                <div className="task-list-header">
+                  <span className="panel-label">Conversas</span>
+                  <button onClick={handleNewChat} title="Novo chat" type="button">
+                    <MessageSquarePlus size={15} />
+                  </button>
+                </div>
+                {!tasksLoading && !tasksError && tasks.length > 0 && (
+                  <input
+                    className="task-search"
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar conversas..."
+                    type="search"
+                    value={searchQuery}
+                  />
+                )}
+                {tasksLoading ? (
+                  <p className="panel-state">Carregando conversas...</p>
+                ) : tasksError ? (
+                  <p className="panel-state error">Nao foi possivel carregar conversas.</p>
+                ) : tasks.length === 0 ? (
+                  <p className="panel-state">Nenhuma conversa criada.</p>
+                ) : filteredTasks.length === 0 ? (
+                  <p className="panel-state">Nenhuma conversa encontrada.</p>
+                ) : (
+                  filteredTasks.map((task) => (
+                    <div
+                      className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                      key={task.id}
+                      onClick={() => setActiveTaskId(task.id)}
+                    >
+                      <div className="task-content">
+                        <span>{task.title || task.description}</span>
+                        <small>{task.status}</small>
+                      </div>
+                      <button
+                        className="task-delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTask(task.id);
+                        }}
+                        title="Excluir chat"
+                        type="button"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <SettingsPanel />
+            )}
           </>
         }
         main={
@@ -907,19 +985,23 @@ export default function App() {
                 </button>
               </div>
             </header>
-            <MessageList
-              activeSearch={activeSearch}
-              agentBusy={agentBusy || Boolean(pendingPreparation)}
-              events={currentEvents}
-              isTyping={showTyping}
-              livePlan={displayPlan}
-              messages={messages}
-              onComputerFocus={(request) => setComputerFocusRequest({
-                ...request,
-                requestId: `${Date.now()}-${request?.eventIndex ?? "synthetic"}`,
-              })}
-              pendingPreparation={pendingPreparation}
-            />
+            {!activeTaskId && !taskLoading ? (
+              <OnboardingScreen onSubmit={handleSubmit} />
+            ) : (
+              <MessageList
+                activeSearch={activeSearch}
+                agentBusy={agentBusy || Boolean(pendingPreparation)}
+                events={currentEvents}
+                isTyping={showTyping}
+                livePlan={displayPlan}
+                messages={messages}
+                onComputerFocus={(request) => setComputerFocusRequest({
+                  ...request,
+                  requestId: `${Date.now()}-${request?.eventIndex ?? "synthetic"}`,
+                })}
+                pendingPreparation={pendingPreparation}
+              />
+            )}
             <VortaxComputerDock
               activeTask={activeTask}
               agentStatus={agentStatus}
@@ -929,6 +1011,9 @@ export default function App() {
               livePlan={displayPlan}
               onOpenDetails={() => setDetailsOpen(true)}
             />
+            {submitError && (
+              <div className="submit-error">{submitError}</div>
+            )}
             <Composer
               disabled={backendStatus !== "online"}
               isBusy={agentBusy}
@@ -955,6 +1040,16 @@ export default function App() {
         open={secureLoginOpen}
       />
       <ConfirmDialog confirmation={pendingConfirmation} onAnswer={handleConfirm} />
+      <AlertDialog
+        cancelLabel="Cancelar"
+        confirmLabel="Excluir"
+        danger
+        message="O histórico salvo no banco de dados será apagado permanentemente."
+        onCancel={() => setTaskToDelete(null)}
+        onConfirm={confirmDeleteTask}
+        open={Boolean(taskToDelete)}
+        title="Excluir conversa?"
+      />
     </>
   );
 }

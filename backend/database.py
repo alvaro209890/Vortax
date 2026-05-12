@@ -179,6 +179,8 @@ class Database:
             }
             if "user_id" not in columns:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN user_id TEXT")
+            if "title" not in columns:
+                self._connection.execute("ALTER TABLE tasks ADD COLUMN title TEXT")
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_user_id_created_at ON tasks(user_id, created_at DESC)"
             )
@@ -199,6 +201,37 @@ class Database:
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_code_snippets_language ON code_snippets(language)"
             )
+
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    memory_type TEXT NOT NULL DEFAULT 'context',
+                    key TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 5,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_memories_user_type ON user_memories(user_id, memory_type)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_memories_user_priority ON user_memories(user_id, priority DESC)"
+            )
+
+            # Adicionar checkpoint_json ao conversation_contexts se nao existir
+            cc_cols = {
+                str(row["name"])
+                for row in self._connection.execute("PRAGMA table_info(conversation_contexts)").fetchall()
+            }
+            if "checkpoint_json" not in cc_cols:
+                self._connection.execute(
+                    "ALTER TABLE conversation_contexts ADD COLUMN checkpoint_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def add_snippet(self, tags: list[str], language: str, description: str, content: str) -> int:
         import hashlib
@@ -253,6 +286,87 @@ class Database:
                 "UPDATE code_snippets SET use_count = use_count + 1 WHERE id = ?", (snippet_id,)
             )
 
+    def add_user_memory(self, user_id: str, memory_type: str, key: str, content: str, priority: int = 5) -> int:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO user_memories (user_id, memory_type, key, content, priority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, memory_type, key[:200], content, priority, now, now),
+            )
+            return int(cursor.lastrowid)
+
+    def update_user_memory(self, memory_id: int, user_id: str, content: str, priority: int | None = None) -> bool:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._connection:
+            if priority is not None:
+                cursor = self._connection.execute(
+                    "UPDATE user_memories SET content = ?, priority = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (content, priority, now, memory_id, user_id),
+                )
+            else:
+                cursor = self._connection.execute(
+                    "UPDATE user_memories SET content = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (content, now, memory_id, user_id),
+                )
+            return cursor.rowcount > 0
+
+    def delete_user_memory(self, memory_id: int, user_id: str) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "DELETE FROM user_memories WHERE id = ? AND user_id = ?", (memory_id, user_id)
+            )
+            return cursor.rowcount > 0
+
+    def list_user_memories(self, user_id: str, memory_type: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            if memory_type:
+                rows = self._connection.execute(
+                    """
+                    SELECT id, user_id, memory_type, key, content, priority, created_at, updated_at
+                    FROM user_memories
+                    WHERE user_id = ?
+                    ORDER BY priority DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    """
+                    SELECT id, user_id, memory_type, key, content, priority, created_at, updated_at
+                    FROM user_memories
+                    WHERE user_id = ?
+                    ORDER BY priority DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_user_memories(self, user_id: str, terms: list[str], limit: int = 5) -> list[dict[str, Any]]:
+        terms = [t.lower() for t in terms if len(t) >= 2]
+        if not terms:
+            return self.list_user_memories(user_id, limit=limit)
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, user_id, memory_type, key, content, priority, created_at, updated_at FROM user_memories WHERE user_id = ? ORDER BY priority DESC, updated_at DESC LIMIT 500",
+                (user_id,),
+            ).fetchall()
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for row in rows:
+            row_dict = dict(row)
+            haystack = (str(row_dict.get("key") or "") + " " + str(row_dict.get("content") or "")).lower()
+            score = sum(1 for t in terms if t in haystack)
+            if score > 0:
+                scored.append((score, row_dict))
+        scored.sort(key=lambda x: (-x[0], -x[1].get("priority", 0)))
+        return [r for _, r in scored[:limit]]
+
     def list_running_tasks(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._connection.execute(
@@ -281,7 +395,7 @@ class Database:
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT id, user_id, description, status, created_at, updated_at, result FROM tasks WHERE id = ?",
+                "SELECT id, user_id, description, title, status, created_at, updated_at, result FROM tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
         return dict(row) if row else None
@@ -292,7 +406,7 @@ class Database:
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT id, user_id, description, status, created_at, updated_at, result
+                SELECT id, user_id, description, title, status, created_at, updated_at, result
                 FROM tasks
                 WHERE user_id = ?
                 ORDER BY created_at DESC
@@ -300,6 +414,13 @@ class Database:
                 (user_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def update_task_title(self, task_id: str, title: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE tasks SET title = ? WHERE id = ? AND (title IS NULL OR title = '')",
+                (title[:120], task_id),
+            )
 
     def update_task(self, task_id: str, status: str, result: str | None, updated_at: str) -> dict[str, Any] | None:
         with self._lock, self._connection:
@@ -482,13 +603,21 @@ class Database:
                 """
                 SELECT task_id, summary, estimated_tokens, token_limit,
                        warning_threshold, compact_threshold, status,
-                       compaction_count, last_compacted_event_id, updated_at
+                       compaction_count, last_compacted_event_id, updated_at,
+                       checkpoint_json
                 FROM conversation_contexts
                 WHERE task_id = ?
                 """,
                 (task_id,),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        try:
+            result["checkpoint_json"] = json.loads(str(result.get("checkpoint_json") or "{}"))
+        except (json.JSONDecodeError, TypeError):
+            result["checkpoint_json"] = {}
+        return result
 
     def upsert_context(self, task_id: str, context: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self._connection:
@@ -497,9 +626,10 @@ class Database:
                 INSERT INTO conversation_contexts (
                     task_id, summary, estimated_tokens, token_limit,
                     warning_threshold, compact_threshold, status,
-                    compaction_count, last_compacted_event_id, updated_at
+                    compaction_count, last_compacted_event_id, updated_at,
+                    checkpoint_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     summary = excluded.summary,
                     estimated_tokens = excluded.estimated_tokens,
@@ -509,7 +639,8 @@ class Database:
                     status = excluded.status,
                     compaction_count = excluded.compaction_count,
                     last_compacted_event_id = excluded.last_compacted_event_id,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    checkpoint_json = excluded.checkpoint_json
                 """,
                 (
                     task_id,
@@ -522,6 +653,7 @@ class Database:
                     int(context.get("compaction_count", 0)),
                     context.get("last_compacted_event_id"),
                     context["updated_at"],
+                    json.dumps(context.get("checkpoint_json") or {}, ensure_ascii=False),
                 ),
             )
         saved = self.get_context(task_id)

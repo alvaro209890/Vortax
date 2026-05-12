@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     BACKEND_PORT: int = 8010
     FRONTEND_PORT: int = 5173
     LAN_ONLY: bool = True
-    ALLOW_NO_AUTH: bool = True
+    ALLOW_NO_AUTH: bool = False
     ALLOW_LAN_NO_AUTH: bool = True
     ALLOWED_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://192.168.0.104:5173,https://notazap-2520f.web.app,https://notazap-2520f.firebaseapp.com"
     PUBLIC_HOSTS: str = "vortax-api.cursar.space"
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     GROQ_VISION_TIMEOUT_SECONDS: float = 60.0
 
     MAX_ITERATIONS: int = 30
+    DEEP_RESEARCH_DEPTH: int = 3
     CONTEXT_TOKEN_LIMIT: int = 24000
     CONTEXT_WARNING_RATIO: float = 0.70
     CONTEXT_COMPACT_RATIO: float = 0.88

@@ -385,11 +385,9 @@ async def request_direct_chat_response(
     }
 
 
-async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, Any]:
-    if not deepseek_configured():
-        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
-
-    system_prompt = (
+def _build_agent_system_prompt(user_id: str | None = None) -> str:
+    """Constroi o system prompt do agente com memorias do usuario opcionalmente injetadas."""
+    prompt = (
         "Voce e o planner JSON do Vortax, um agente autonomo que pesquisa, cria software, gera arquivos e coordena o Vertex. "
         "Responda sempre com um unico objeto JSON valido, sem markdown e sem texto fora do JSON. "
         "Escolha exatamente uma action por resposta. "
@@ -500,6 +498,21 @@ async def request_deepseek_action(history: list[dict[str, str]]) -> dict[str, An
         "{\"action\":\"browser_navigate\",\"description\":\"Abrindo site\",\"params\":{\"url\":\"https://example.com\"},\"requires_confirmation\":false}. "
         "Para finalizar: {\"action\":\"finish\",\"result\":\"resposta final\"}."
     )
+
+    if user_id:
+        from services.user_memory import format_for_system_prompt
+        memory_block = format_for_system_prompt(user_id)
+        if memory_block:
+            prompt = prompt + "\n\n" + memory_block
+
+    return prompt
+
+
+async def request_deepseek_action(history: list[dict[str, str]], user_id: str | None = None) -> dict[str, Any]:
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    system_prompt = _build_agent_system_prompt(user_id)
     payload = {
         "model": settings.DEEPSEEK_MODEL,
         "temperature": 0.0,
@@ -729,3 +742,31 @@ async def request_task_plan(description: str) -> dict[str, Any]:
     if groq_error:
         raise DeepSeekError(groq_error)
     raise DeepSeekError("Nenhum planner configurado. Defina GROQ_API_KEY para gerar tasks com Groq.")
+
+
+async def generate_task_title(description: str) -> str:
+    """Gera um título curto (3-6 palavras) para exibição na lista de conversas."""
+    if not deepseek_configured():
+        return ""
+    payload = {
+        "model": settings.DEEPSEEK_MODEL,
+        "temperature": 0.3,
+        "stream": False,
+        "max_tokens": 24,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Gere um título de 3 a 6 palavras para esta conversa. "
+                    "Responda APENAS com o título, sem aspas, sem ponto final, sem explicação."
+                ),
+            },
+            {"role": "user", "content": description[:300]},
+        ],
+    }
+    try:
+        data = await _post_deepseek(payload)
+        raw = str(data["choices"][0]["message"]["content"]).strip()
+        return raw.strip("\"'").strip()[:100]
+    except Exception:
+        return ""

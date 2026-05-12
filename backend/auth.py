@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -7,6 +8,8 @@ from starlette.websockets import WebSocket
 
 from access import is_private_client
 from config import settings
+
+logger = logging.getLogger("vortax.auth")
 
 
 @dataclass(frozen=True)
@@ -72,12 +75,31 @@ def _verify_token(token: str) -> AuthUser:
 
 
 def dev_user() -> AuthUser:
+    """Usuário de desenvolvimento único (ALLOW_NO_AUTH=true). Todos compartilham o mesmo uid."""
     return AuthUser(uid=settings.DEV_USER_ID, email="dev@local", name="Desenvolvimento", is_dev=True)
 
 
-def _allow_lan_dev_user(request_or_websocket: Request | WebSocket) -> bool:
+def _lan_user(client_host: str | None) -> AuthUser:
+    """Usuário LAN sem Firebase token.
+
+    Usa o IP como uid para isolar dados entre diferentes dispositivos na rede.
+    Quando ALLOW_NO_AUTH=True (modo single-user), usa o uid compartilhado.
+    """
+    if settings.ALLOW_NO_AUTH:
+        return dev_user()
+    host = str(client_host or "localhost")
+    safe = host.replace(":", "_").replace(".", "_")
+    uid = f"lan_{safe}"
+    return AuthUser(uid=uid, email=f"{safe}@local.lan", name=f"LAN ({host})", is_dev=True)
+
+
+def _allow_lan_no_auth(request_or_websocket: Request | WebSocket) -> bool:
     client_host = request_or_websocket.client.host if request_or_websocket.client else None
     return settings.ALLOW_LAN_NO_AUTH and is_private_client(client_host)
+
+
+def _client_host(request_or_websocket: Request | WebSocket) -> str | None:
+    return request_or_websocket.client.host if request_or_websocket.client else None
 
 
 async def require_auth(
@@ -89,14 +111,18 @@ async def require_auth(
         try:
             return _verify_token(token)
         except HTTPException:
-            if _allow_lan_dev_user(request):
-                return dev_user()
+            if _allow_lan_no_auth(request):
+                logger.debug("Token invalido na LAN — usando usuario LAN isolado por IP.")
+                return _lan_user(_client_host(request))
             raise
     if settings.ALLOW_NO_AUTH:
         return dev_user()
-    if _allow_lan_dev_user(request):
-        return dev_user()
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Autenticacao obrigatoria.")
+    if _allow_lan_no_auth(request):
+        return _lan_user(_client_host(request))
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Autenticacao obrigatoria. Configure ALLOW_NO_AUTH=true apenas para desenvolvimento local.",
+    )
 
 
 async def authenticate_websocket(websocket: WebSocket) -> AuthUser | None:
@@ -107,14 +133,14 @@ async def authenticate_websocket(websocket: WebSocket) -> AuthUser | None:
         try:
             return _verify_token(token)
         except HTTPException:
-            if _allow_lan_dev_user(websocket):
-                return dev_user()
+            if _allow_lan_no_auth(websocket):
+                return _lan_user(_client_host(websocket))
             await websocket.close(code=1008)
             return None
     if settings.ALLOW_NO_AUTH:
         return dev_user()
-    if _allow_lan_dev_user(websocket):
-        return dev_user()
+    if _allow_lan_no_auth(websocket):
+        return _lan_user(_client_host(websocket))
     await websocket.close(code=1008)
     return None
 

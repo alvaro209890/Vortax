@@ -35,7 +35,20 @@ def is_allowed_public_host(host: str | None, headers) -> bool:
 
 def install_lan_guard(app: FastAPI) -> None:
     if settings.ALLOW_NO_AUTH:
-        logger.warning("Vortax sem autenticacao; restrinja o acesso ao backend.")
+        logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════╗\n"
+            "║  AVISO DE SEGURANÇA: ALLOW_NO_AUTH=true                  ║\n"
+            "║  Qualquer pessoa com acesso ao backend pode usar         ║\n"
+            "║  o Vortax sem autenticação. Use apenas em               ║\n"
+            "║  desenvolvimento local ou ambiente isolado.              ║\n"
+            "╚══════════════════════════════════════════════════════════╝"
+        )
+    elif settings.ALLOW_LAN_NO_AUTH:
+        logger.info(
+            "Auth: ALLOW_LAN_NO_AUTH=true — dispositivos na LAN acessam sem token Firebase, "
+            "isolados por IP. Acesso externo exige Firebase."
+        )
 
     @app.middleware("http")
     async def lan_only_middleware(request: Request, call_next):
