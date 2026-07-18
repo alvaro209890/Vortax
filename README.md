@@ -375,6 +375,16 @@ Chat otimizado para telefone (drawer de conversas, safe-area iOS, botões ≥44p
 
 Sessões de shell (`shell_exec`/`view`/`write`/`kill`), `web_fetch`, `file_*` com edit após read, `validate_project`, `document_render`. Catálogo: [`docs/TOOLS_MANUS_CLAUDE.md`](docs/TOOLS_MANUS_CLAUDE.md).
 
+## Testes live (DeepSeek)
+
+Usa a chave do ambiente ou de `~/.hermes/.env` (**nunca commitada**). Guia: [`docs/TESTS_LIVE.md`](docs/TESTS_LIVE.md).
+
+```bash
+cd backend
+set -a; source ~/.hermes/.env; set +a
+VORTAX_LIVE=1 PYTHONPATH=. ./venv/bin/python -m unittest tests.test_deepseek_live tests.test_web_fetch_live -v
+```
+
 ## Agente (v0.2 / plano-melhoria-ia Fase 1)
 
 - Cérebro padrão: **DeepSeek V4 Pro** (`DEEPSEEK_MODEL_BRAIN`); Flash para título/tarefas leves.

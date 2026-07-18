@@ -323,5 +323,11 @@ async def shell_kill(session_id: str) -> dict[str, Any]:
         unregister_pid(proc.pid)
         session.returncode = proc.returncode
     finally:
+        for stream in (getattr(proc, "stdin", None), getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            try:
+                if stream is not None:
+                    stream.close()
+            except Exception:
+                pass
         _drop(session_id)
     return {"success": True, "killed": True, "session_id": session_id, "returncode": session.returncode}

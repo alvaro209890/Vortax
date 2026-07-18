@@ -1,5 +1,20 @@
 # CHANGELOG — execução do plano de melhoria da IA
 
+## 2026-07-18 — Testes live DeepSeek + fixes
+
+### Feito
+- Suite live: `test_deepseek_live`, `test_web_fetch_live`, `test_shell_sessions_live`, `test_native_loop_integration`
+- `live_helpers.py` carrega chave do Hermes/env **sem logar**
+- Doc: `docs/TESTS_LIVE.md`
+- **Bugfix título vazio** (`generate_task_title` max_tokens + fallback)
+- **Bugfix agent turn** (folga de tokens + reasoning_effort + retry length)
+- **shell_kill** fecha pipes (ResourceWarning)
+
+### Como rodar
+`set -a; source ~/.hermes/.env; set +a; VORTAX_LIVE=1 PYTHONPATH=. ./venv/bin/python -m unittest tests.test_deepseek_live -v`
+
+---
+
 ## 2026-07-18 — Tools Manus + Claude CLI
 
 ### Feito

@@ -1,6 +1,6 @@
 # Plano Técnico — Vortax
 
-> **Versão:** 3.9 — Tools estilo Manus + Claude CLI (shell sessions, web_fetch, validate/document)
+> **Versão:** 3.10 — Testes live DeepSeek (Hermes key) + fixes título/tokens
 > **Data:** 18/07/2026
 > **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software pelo Computador do Vortax, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
 
@@ -445,6 +445,7 @@ Status em **18/07/2026** (v3.6) — backlog original fechado ou elevado:
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 3.10 | 18/07/2026 | Suite live DeepSeek (chave via Hermes/env, skip sem chave); fixes `generate_task_title` e `request_agent_turn` (max_tokens/reasoning); doc `docs/TESTS_LIVE.md`. |
 | 3.9 | 18/07/2026 | Tools alinhadas ao leak Manus + Claude CLI: shell_exec/view/write/kill, web_fetch, web_search, validate_project, document_render, file_edit exige read, grep via rg; doc `docs/TOOLS_MANUS_CLAUDE.md`. |
 | 3.8 | 18/07/2026 | Frontend mobile: ChatShell drawer, safe-area, touch targets, composer sticky, detail full-screen; doc `docs/MOBILE_E_STATUS.md` com feito/falta. |
 | 3.7 | 18/07/2026 | Fase 1 do plano-melhoria-ia: `backend/agent/` (loop nativo function calling, registry, gates), streaming, `USE_NATIVE_TOOLS` default on com fallback legado, tokens/custo em GET task, message_*/todo_write. |

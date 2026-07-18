@@ -837,13 +837,21 @@ async def request_agent_turn(
 
     use_stream = bool(settings.DEEPSEEK_STREAMING if stream is None else stream)
     model = pick_model(purpose)
+    max_tokens = int(getattr(settings, "DEEPSEEK_MAX_OUTPUT_TOKENS", 8192) or 8192)
+    # V4 Pro conta reasoning dentro de max_tokens — dar folga no brain
+    if "pro" in model and max_tokens < 2048:
+        max_tokens = 2048
     payload: dict[str, Any] = {
         "model": model,
         "temperature": float(getattr(settings, "DEEPSEEK_TEMPERATURE", 0.0) or 0.0),
         "stream": use_stream,
         "messages": messages,
-        "max_tokens": int(getattr(settings, "DEEPSEEK_MAX_OUTPUT_TOKENS", 8192) or 8192),
+        "max_tokens": max_tokens,
     }
+    # reasoning_effort só em modelos pro (flash ignora / pode errar)
+    if "pro" in model.lower():
+        effort = "high" if purpose in {"brain", "action", "agent", "code", "final", "chat"} else "low"
+        payload["reasoning_effort"] = effort
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
@@ -875,6 +883,34 @@ async def request_agent_turn(
             }
         )
 
+    content = message.get("content")
+    # Se o raciocínio comeu o teto e content ficou vazio sem tools, retry 1x com mais tokens
+    if not content and not parsed_calls and finish_reason == "length":
+        payload["max_tokens"] = min(max_tokens * 2, 16000)
+        data = await _post_deepseek(payload)
+        try:
+            message = data["choices"][0]["message"]
+            finish_reason = str(data["choices"][0].get("finish_reason") or "")
+            content = message.get("content")
+            tool_calls_raw = message.get("tool_calls") or []
+            parsed_calls = []
+            for item in tool_calls_raw:
+                fn = item.get("function") or {}
+                args_raw = fn.get("arguments") or "{}"
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+                except json.JSONDecodeError:
+                    args = {"_raw": args_raw}
+                parsed_calls.append(
+                    {
+                        "id": str(item.get("id") or ""),
+                        "name": str(fn.get("name") or ""),
+                        "arguments": args if isinstance(args, dict) else {"value": args},
+                    }
+                )
+        except (KeyError, IndexError, TypeError):
+            pass
+
     usage = data.get("usage") or {}
     try:
         from database import database as _db
@@ -890,12 +926,13 @@ async def request_agent_turn(
         pass
 
     return {
-        "content": (message.get("content") or None),
+        "content": (content or None),
         "tool_calls": parsed_calls,
         "finish_reason": finish_reason,
         "usage": usage,
         "model": data.get("model", model),
         "raw_message": message,
+        "reasoning_content": message.get("reasoning_content"),
     }
 
 
@@ -1014,15 +1051,22 @@ async def _stream_agent_turn(
     }
 
 
+def _fallback_title(description: str) -> str:
+    words = [w for w in str(description or "").strip().split() if w][:6]
+    title = " ".join(words).strip(" .,;:!?")
+    return (title or "Nova conversa")[:80]
+
+
 async def generate_task_title(description: str) -> str:
     """Gera um título curto (3-6 palavras) para exibição na lista de conversas."""
     if not deepseek_configured():
-        return ""
+        return _fallback_title(description)
     payload = {
         "model": pick_model("title"),
         "temperature": 0.3,
         "stream": False,
-        "max_tokens": 24,
+        # flash/pro podem gastar tokens em reasoning — 24 era pouco e devolvia content vazio
+        "max_tokens": 128,
         "messages": [
             {
                 "role": "system",
@@ -1036,7 +1080,15 @@ async def generate_task_title(description: str) -> str:
     }
     try:
         data = await _post_deepseek(payload)
-        raw = str(data["choices"][0]["message"]["content"]).strip()
-        return raw.strip("\"'").strip()[:100]
+        msg = (data.get("choices") or [{}])[0].get("message") or {}
+        raw = (msg.get("content") or "").strip()
+        # se ainda vazio (finish length/reasoning), retry uma vez com mais tokens
+        if not raw:
+            payload["max_tokens"] = 256
+            data = await _post_deepseek(payload)
+            msg = (data.get("choices") or [{}])[0].get("message") or {}
+            raw = (msg.get("content") or "").strip()
+        title = raw.strip("\"'").strip()[:100]
+        return title if len(title) >= 2 else _fallback_title(description)
     except Exception:
-        return ""
+        return _fallback_title(description)
