@@ -367,6 +367,10 @@ CONTEXT_SUMMARY_MAX_CHARS=5000
 
 MIT
 
+## Mobile
+
+Chat otimizado para telefone (drawer de conversas, safe-area iOS, botões ≥44px, composer fixo no fundo). Detalhes e checklist: [`docs/MOBILE_E_STATUS.md`](docs/MOBILE_E_STATUS.md).
+
 ## Agente (v0.2 / plano-melhoria-ia Fase 1)
 
 - Cérebro padrão: **DeepSeek V4 Pro** (`DEEPSEEK_MODEL_BRAIN`); Flash para título/tarefas leves.

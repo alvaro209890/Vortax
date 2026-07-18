@@ -1,5 +1,17 @@
 # CHANGELOG — execução do plano de melhoria da IA
 
+## 2026-07-18 — Mobile front + status consolidado
+
+### Feito
+- Front **mobile-first polish**: ChatShell drawer (Esc, body lock, fecha ao escolher chat), viewport-fit/safe-area, touch ≥44px, composer sticky, detail full-screen, onboarding 1 col, landscape compacto.
+- Docs: `docs/MOBILE_E_STATUS.md` (feito + falta + checklist QA).
+- Arquivos: `frontend/index.html`, `ChatShell.jsx`, `App.jsx`, `index.css`.
+
+### Ainda falta (ver doc)
+- Deploy hosting + QA real iOS/Android; PWA; focus trap no drawer; resto Fases 2–4 do plano IA.
+
+---
+
 ## 2026-07-18 — Fase 1 (núcleo) + docs + push main
 
 ### Feito

@@ -971,16 +971,23 @@ export default function App() {
                   onClick={() => setDetailsOpen(true)}
                   title="Abrir detalhes"
                   type="button"
+                  aria-label="Abrir detalhes da tarefa"
                 >
                   <PanelRightOpen size={16} />
                   <span>Detalhes</span>
                 </button>
-                <div className="chat-health-group">
+                <div className="chat-health-group" aria-label="Status">
                   <ContextIndicator context={contextState} />
                   <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
                 </div>
-                <button className="user-menu-btn" onClick={signOut} title="Sair" type="button">
-                  <span>{user.displayName || user.email || "Usuario"}</span>
+                <button
+                  className="user-menu-btn"
+                  onClick={signOut}
+                  title={user.displayName || user.email || "Sair"}
+                  type="button"
+                  aria-label="Sair da conta"
+                >
+                  <span className="user-menu-label">{user.displayName || user.email || "Usuario"}</span>
                   <LogOut size={15} />
                 </button>
               </div>

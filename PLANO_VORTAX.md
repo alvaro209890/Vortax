@@ -1,6 +1,6 @@
 # Plano Técnico — Vortax
 
-> **Versão:** 3.7 — Loop nativo DeepSeek V4 Pro (function calling) + streaming + usage na API
+> **Versão:** 3.8 — Mobile polish (drawer/safe-area/composer) + status em docs/MOBILE_E_STATUS.md
 > **Data:** 18/07/2026
 > **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software pelo Computador do Vortax, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
 
@@ -445,6 +445,7 @@ Status em **18/07/2026** (v3.6) — backlog original fechado ou elevado:
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 3.8 | 18/07/2026 | Frontend mobile: ChatShell drawer, safe-area, touch targets, composer sticky, detail full-screen; doc `docs/MOBILE_E_STATUS.md` com feito/falta. |
 | 3.7 | 18/07/2026 | Fase 1 do plano-melhoria-ia: `backend/agent/` (loop nativo function calling, registry, gates), streaming, `USE_NATIVE_TOOLS` default on com fallback legado, tokens/custo em GET task, message_*/todo_write. |
 | 3.6 | 18/07/2026 | Fecha backlog §12: replan mid-run, export auditável de sessão, artefatos com hash/step/validação, permissões por ação, métricas, subtasks paralelas na pesquisa profunda; UI de export no FileList. |
 | 3.5 | 07/05/2026 | Frontend passou a apresentar o desenvolvimento como Vortax/Computador do Vortax, ocultando o nome do wrapper interno e removendo o terminal bruto do painel principal. |
