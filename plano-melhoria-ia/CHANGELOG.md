@@ -1,5 +1,21 @@
 # CHANGELOG — execução do plano de melhoria da IA
 
+## 2026-07-18 — Tools Manus + Claude CLI
+
+### Feito
+- **Shell sessions:** `shell_exec` / `shell_view` / `shell_write` / `shell_kill` (`tools/shell_sessions.py`)
+- **web_fetch** HTTP sem Chrome + SSRF guard; **web_search** alias
+- **validate_project** + **document_render** como tools explícitas
+- **file_edit** exige `file_read` prévio na task (Claude Code)
+- **grep** prefere ripgrep; whitelist shell ampliada; prompts interativos mais estritos (bug 10)
+- Registry + permissions + loop prompt atualizados
+- Doc: `docs/TOOLS_MANUS_CLAUDE.md` · testes `test_manus_claude_tools.py`
+
+### Ainda falta
+- task_spawn subagentes; preview_expose; unificar registry único no path legado JSON
+
+---
+
 ## 2026-07-18 — Mobile front + status consolidado
 
 ### Feito

@@ -126,9 +126,28 @@ TOOLS: dict[str, ToolCallable] = {
 
 FILE_TOOLS = frozenset({"file_read", "file_write", "file_edit", "file_append", "glob", "grep"})
 
+# Manus / Claude Code extended tools
+EXTENDED_TOOLS = frozenset(
+    {
+        "shell_exec",
+        "shell_view",
+        "shell_write",
+        "shell_kill",
+        "web_fetch",
+        "web_search",  # alias de browser_google_search
+        "validate_project",
+        "document_render",
+    }
+)
+
 
 def _is_known_tool(tool_name: str) -> bool:
-    return tool_name in _BROWSER_METHOD_MAP or tool_name in TOOLS or tool_name in FILE_TOOLS
+    return (
+        tool_name in _BROWSER_METHOD_MAP
+        or tool_name in TOOLS
+        or tool_name in FILE_TOOLS
+        or tool_name in EXTENDED_TOOLS
+    )
 
 
 async def _resolve_tool(tool_name: str, task_id: str) -> ToolCallable:
@@ -746,6 +765,104 @@ async def execute_tool(
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
             await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
             if tool_name in {"file_write", "file_edit", "file_append"} and result.get("success"):
+                project_dir = _project_dir(task_id)
+                project_index = sync_task_workspace_files(task_id, project_dir)
+                await bus.publish(
+                    task_id,
+                    "files_created",
+                    {
+                        "files": project_index["files"],
+                        "projects": project_index["projects"],
+                        "directory": str(project_dir),
+                    },
+                )
+            return {"success": bool(result.get("success")), "data": result}
+
+        # ── Extended Manus / Claude tools ────────────────────────────────
+        if tool_name == "web_search":
+            tool_name = "browser_google_search"
+            # fall through to browser path below
+
+        if tool_name in {"shell_exec", "shell_view", "shell_write", "shell_kill"}:
+            from tools import shell_sessions
+
+            p = params or {}
+            if tool_name == "shell_exec":
+                result = await shell_sessions.shell_exec(
+                    str(p.get("command") or ""),
+                    task_id,
+                    session_id=p.get("session_id"),
+                    background=bool(p.get("background")),
+                    timeout=p.get("timeout"),
+                    bus=bus,
+                )
+            elif tool_name == "shell_view":
+                result = await shell_sessions.shell_view(str(p.get("session_id") or ""))
+            elif tool_name == "shell_write":
+                result = await shell_sessions.shell_write(
+                    str(p.get("session_id") or ""),
+                    str(p.get("input") or p.get("text") or ""),
+                    press_enter=bool(p.get("press_enter", True)),
+                )
+            else:
+                result = await shell_sessions.shell_kill(str(p.get("session_id") or ""))
+            compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            if tool_name == "shell_exec" and result.get("success"):
+                project_dir = _project_dir(task_id)
+                project_index = sync_task_workspace_files(task_id, project_dir)
+                if project_index.get("files"):
+                    await bus.publish(
+                        task_id,
+                        "files_created",
+                        {
+                            "files": project_index["files"],
+                            "projects": project_index["projects"],
+                            "directory": str(project_dir),
+                        },
+                    )
+            return {"success": bool(result.get("success")), "data": result}
+
+        if tool_name == "web_fetch":
+            from tools.web_fetch import web_fetch
+
+            p = params or {}
+            result = await web_fetch(
+                str(p.get("url") or ""),
+                task_id=task_id,
+                max_chars=int(p.get("max_chars") or 12000),
+                save_source=bool(p.get("save_source", True)),
+            )
+            compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            if result.get("source_saved"):
+                await bus.publish(
+                    task_id,
+                    "source_saved",
+                    {"url": result.get("url"), "title": result.get("title"), "via": "web_fetch"},
+                )
+            return {"success": bool(result.get("success")), "data": result}
+
+        if tool_name == "validate_project":
+            from tools.agent_tools import validate_project
+
+            result = await validate_project(task_id, bus=bus)
+            compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            return {"success": bool(result.get("success")), "data": result}
+
+        if tool_name == "document_render":
+            from tools.agent_tools import document_render
+
+            p = params or {}
+            result = await document_render(
+                task_id,
+                str(p.get("markdown_path") or p.get("path") or ""),
+                p.get("pdf_path"),
+            )
+            compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            if result.get("success"):
                 project_dir = _project_dir(task_id)
                 project_index = sync_task_workspace_files(task_id, project_dir)
                 await bus.publish(

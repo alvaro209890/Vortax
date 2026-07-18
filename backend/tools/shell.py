@@ -38,11 +38,14 @@ DEV_SERVER_PROCESS_RE = re.compile(
 
 SHELL_WHITELIST = {
     "python3", "python", "pip3", "pip",
-    "node", "npm", "npx",
+    "node", "npm", "npx", "pnpm", "yarn",
     "echo", "pwd", "ls", "cat", "mkdir", "cp", "mv", "touch",
     "curl", "wget", "git", "pandoc", "ffmpeg", "libreoffice", "convert",
-    "grep", "find", "wc", "head", "tail", "sort", "uniq", "awk", "sed", "cut", "tr",
-    "df", "free", "uname",
+    "grep", "rg", "find", "wc", "head", "tail", "sort", "uniq", "awk", "sed", "cut", "tr",
+    "df", "free", "uname", "stat", "diff", "jq",
+    "zip", "unzip", "tar", "gzip", "gunzip",
+    "pytest", "ruff", "black", "mypy", "tsc", "eslint",
+    "sqlite3",
     # Code agent
     CODE_AGENT_COMMAND,
     Path(CODE_AGENT_COMMAND).name,
@@ -51,7 +54,7 @@ SHELL_WHITELIST = {
     # Gerenciamento de arquivos na workspace
     "rm", "rmdir",
     # Utilitarios adicionais
-    "clear", "date", "tee", "xargs", "true", "false",
+    "clear", "date", "tee", "xargs", "true", "false", "sleep", "printf",
 }
 
 BLOCKED_PATTERNS = [
@@ -120,17 +123,16 @@ CODE_AGENT_SIMULATED_PROGRESS = [
 # Detecta quando um comando faz uma pergunta que precisa de resposta.
 # Exemplos: "Qual framework quer usar?", "Continue? [y/N]", "Digite o nome:"
 
+# Bug 10: padrões frouxos removidos (ex. qualquer linha com "?"). Só prompts claros de CLI.
 INTERACTIVE_PROMPT_PATTERNS = [
-    # Perguntas explícitas
-    re.compile(r"(?:qual|quais|qual\s+e|que)\s+\w+.*\?(?:\s|$)", re.IGNORECASE),
-    re.compile(r"\w+.*\?\s*$", re.IGNORECASE),
-    # Prompts de confirmação
-    re.compile(r"(?:continue|continuar|confirmar|confirm)\s*\?\s*(?:\[.*?\])?\s*$", re.IGNORECASE),
-    re.compile(r"\[(?:y|n|s|yes|no|sim|n[aã]o)\/(?:y|n|s|yes|no|sim|n[aã]o)\]\s*$", re.IGNORECASE),
-    re.compile(r"\[(?:y|n|s|yes|no|sim|n[aã]o)\]\s*$", re.IGNORECASE),
-    # Input requests
-    re.compile(r"(?:digite|insira|informe|escreva|escolha|selecione|pressione|aperte)\s+\w+", re.IGNORECASE),
-    re.compile(r"(?:enter|type)\s+\w+.*(?:to\s+continue|to\s+proceed)", re.IGNORECASE),
+    # Prompts de confirmação explícitos
+    re.compile(r"(?:continue|continuar|confirmar|confirm|proceed)\s*\?\s*(?:\[.*?\])?\s*$", re.IGNORECASE),
+    re.compile(r"\[(?:y|n|s|yes|no|sim|n[aã]o)\s*/\s*(?:y|n|s|yes|no|sim|n[aã]o)\]\s*$", re.IGNORECASE),
+    re.compile(r"\(y/n\)\s*:?\s*$", re.IGNORECASE),
+    re.compile(r"(?:yes|no|sim|n[aã]o)\s*\[(?:y|n)\]\s*:?\s*$", re.IGNORECASE),
+    # Input requests claros
+    re.compile(r"(?:digite|insira|informe|password|senha|enter\s+a\s+value)\s*:\s*$", re.IGNORECASE),
+    re.compile(r"(?:enter|type)\s+.+\s+to\s+(?:continue|proceed)\s*:?\s*$", re.IGNORECASE),
     # Authorization / permission requests
     re.compile(r"(?:preciso\s+de\s+autoriza[cç][aã]o|voc[eê]\s+pode\s+aprovar|autoriza[cç][aã]o\s+para)", re.IGNORECASE),
     re.compile(r"(?:permiss[aã]o\s+negada|permission\s+denied|n[aã]o\s+tem\s+permiss[aã]o)", re.IGNORECASE),

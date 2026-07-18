@@ -41,6 +41,9 @@ def _native_system_prompt(user_id: str | None = None) -> str:
         "Não exponha localhost na resposta final para usuários remotos. "
         "Use message_notify_user para progresso útil; message_ask_user para confirmações. "
         "Use todo_write para manter o plano vivo (1 item in_progress por vez). "
+        "Tools estilo Claude Code/Manus: file_read→file_edit (sempre leia antes de editar); "
+        "web_fetch para páginas estáticas (sem Chrome); shell_exec background=true + shell_view para builds longos; "
+        "validate_project antes de finalizar código; document_render para MD→PDF. "
         "Responda em português do Brasil salvo pedido contrário."
     )
     if user_id:

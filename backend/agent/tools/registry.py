@@ -156,11 +156,95 @@ def build_tool_specs() -> list[ToolSpec]:
         ToolSpec(
             "shell_run",
             (
-                f"Executar comando seguro no terminal Linux (whitelist). Workspace da conversa. "
-                f"Para software grande use {CODE_AGENT_COMMAND} \"descrição\" ({CODE_AGENT_LABEL}). "
-                f"Para correções pequenas prefira file_read/file_edit."
+                f"One-shot shell (alias shell_exec). Whitelist. Workspace da conversa. "
+                f"Software grande: {CODE_AGENT_COMMAND} \"descrição\" ({CODE_AGENT_LABEL}). "
+                f"Ajustes: file_read/file_edit. Builds longos: shell_exec background=true."
             ),
             _obj({"command": _str("Comando shell")}, ["command"]),
+        ),
+        ToolSpec(
+            "shell_exec",
+            (
+                "Shell com sessoes (Manus / Claude Bash). background=true retorna session_id; "
+                "use shell_view / shell_write / shell_kill. Sem background = one-shot."
+            ),
+            _obj(
+                {
+                    "command": _str("Comando"),
+                    "session_id": _str("Sessao existente opcional"),
+                    "background": _bool("Rodar em background"),
+                    "timeout": _int("Timeout segundos (foreground)", default=30),
+                },
+                ["command"],
+            ),
+        ),
+        ToolSpec(
+            "shell_view",
+            "Ler stdout/stderr novos de sessao shell_exec em background.",
+            _obj({"session_id": _str("ID da sessao")}, ["session_id"]),
+            read_only=True,
+        ),
+        ToolSpec(
+            "shell_write",
+            "Enviar input a processo interativo da sessao.",
+            _obj(
+                {
+                    "session_id": _str("ID da sessao"),
+                    "input": _str("Texto a enviar"),
+                    "press_enter": _bool("Enviar Enter no final"),
+                },
+                ["session_id", "input"],
+            ),
+        ),
+        ToolSpec(
+            "shell_kill",
+            "Encerrar sessao/processo shell em background.",
+            _obj({"session_id": _str("ID da sessao")}, ["session_id"]),
+        ),
+        ToolSpec(
+            "web_fetch",
+            (
+                "Buscar URL via HTTP sem Chrome (Manus/Claude WebFetch). "
+                "Docs/JSON/HTML estatico. JS/login: browser_*."
+            ),
+            _obj(
+                {
+                    "url": _str("URL https://"),
+                    "max_chars": _int("Max caracteres do texto", default=12000),
+                    "save_source": _bool("Salvar fonte na conversa"),
+                },
+                ["url"],
+            ),
+            read_only=True,
+        ),
+        ToolSpec(
+            "web_search",
+            "Alias de browser_google_search — pesquisa web estruturada.",
+            _obj(
+                {
+                    "query": _str("Consulta"),
+                    "hl": _str("Idioma, ex pt-BR"),
+                },
+                ["query"],
+            ),
+            read_only=True,
+        ),
+        ToolSpec(
+            "validate_project",
+            "Validar workspace (py_compile, node check, assets) antes de finalizar.",
+            _obj({}),
+            read_only=True,
+        ),
+        ToolSpec(
+            "document_render",
+            "Converter Markdown do workspace em PDF (entrega explicita).",
+            _obj(
+                {
+                    "markdown_path": _str("Caminho .md relativo"),
+                    "pdf_path": _str("Caminho .pdf de saida (opcional)"),
+                },
+                ["markdown_path"],
+            ),
         ),
         ToolSpec(
             "vision_analyze",
@@ -322,6 +406,8 @@ def openai_tools_payload(specs: list[ToolSpec] | None = None) -> list[dict[str, 
 
 
 def tool_is_read_only(name: str) -> bool:
+    if name in {"web_search", "browser_google_search"}:
+        return True
     for spec in build_tool_specs():
         if spec.name == name:
             return spec.read_only

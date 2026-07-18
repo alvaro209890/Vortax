@@ -371,6 +371,10 @@ MIT
 
 Chat otimizado para telefone (drawer de conversas, safe-area iOS, botões ≥44px, composer fixo no fundo). Detalhes e checklist: [`docs/MOBILE_E_STATUS.md`](docs/MOBILE_E_STATUS.md).
 
+## Tools (Manus + Claude CLI)
+
+Sessões de shell (`shell_exec`/`view`/`write`/`kill`), `web_fetch`, `file_*` com edit após read, `validate_project`, `document_render`. Catálogo: [`docs/TOOLS_MANUS_CLAUDE.md`](docs/TOOLS_MANUS_CLAUDE.md).
+
 ## Agente (v0.2 / plano-melhoria-ia Fase 1)
 
 - Cérebro padrão: **DeepSeek V4 Pro** (`DEEPSEEK_MODEL_BRAIN`); Flash para título/tarefas leves.

@@ -34,13 +34,15 @@ Sem mudança de arquitetura; pode ser feita hoje.
 
 ## Fase 2 — Mãos para código (docs 03 §1-2 + 06) (3-5 dias)
 
-1. Tools de arquivo: `file_read`, `file_write`, `file_edit`, `glob`, `grep` (+ testes de confinamento).
-2. `shell_exec/view/write/kill` com sessões e background.
-3. Módulo de prompt `coding.md` com a matriz de decisão cérebro × vertex.
-4. Parser de traceback → leitura dirigida.
-5. `validate_project` como tool chamável.
-6. Análise de GitHub migrada para navegação direta do cérebro.
-7. Início do desmonte das heurísticas do `tool_executor` (doc 06 §6).
+1. [x] Tools de arquivo: `file_read`, `file_write`, `file_edit` (exige read), `glob`, `grep` (+ rg + testes).
+2. [x] `shell_exec/view/write/kill` com sessões e background.
+3. [ ] Módulo de prompt `coding.md` com a matriz de decisão cérebro × vertex.
+4. [ ] Parser de traceback → leitura dirigida.
+5. [x] `validate_project` como tool chamável (+ `document_render`, `web_fetch`).
+6. [ ] Análise de GitHub migrada para navegação direta do cérebro.
+7. [ ] Início do desmonte das heurísticas do `tool_executor` (doc 06 §6).
+
+**Parcial 2026-07-18:** tools Manus/Claude no registry+executor; ver `docs/TOOLS_MANUS_CLAUDE.md`.
 
 **Gate de saída:** os 3 primeiros critérios de aceite do doc 06 (correção sem vertex; ajuste pequeno < 5 tool calls; análise de repo sem vertex).
 
