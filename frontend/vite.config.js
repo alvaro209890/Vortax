@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    allowedHosts: ["vortax.cursar.space", "vortax-api.cursar.space"],
     proxy: {
       "/api": "http://127.0.0.1:8010",
       "/health": "http://127.0.0.1:8010",

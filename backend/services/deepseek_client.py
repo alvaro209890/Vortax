@@ -850,7 +850,7 @@ async def request_agent_turn(
     }
     # reasoning_effort só em modelos pro (flash ignora / pode errar)
     if "pro" in model.lower():
-        effort = "high" if purpose in {"brain", "action", "agent", "code", "final", "chat"} else "low"
+        effort = "medium" if purpose in {"brain", "action", "agent", "code", "final", "chat"} else "low"
         payload["reasoning_effort"] = effort
     if tools:
         payload["tools"] = tools

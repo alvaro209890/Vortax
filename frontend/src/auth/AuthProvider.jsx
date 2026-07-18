@@ -1,53 +1,38 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-import {
-  auth,
-  createUserWithEmailAndPassword,
-  googleProvider,
-  onIdTokenChanged,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  signOut as firebaseSignOut,
-  updateProfile,
-} from "../lib/firebase.js";
 import { setAuthTokenProvider, setCachedAuthToken } from "../lib/api.js";
 
 const AuthContext = createContext(null);
 
+// Usuário local fixo — sem Firebase
+const LOCAL_USER = {
+  uid: "local-dev-user",
+  email: "vortax@local.host",
+  displayName: "Vortax",
+};
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(LOCAL_USER);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setAuthTokenProvider(async (forceRefresh = false) => auth.currentUser?.getIdToken(forceRefresh) || "");
-    const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
-      setUser(nextUser);
-      setCachedAuthToken(nextUser ? await nextUser.getIdToken() : "");
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    // Token sempre vazio — backend aceita sem auth (ALLOW_NO_AUTH=true)
+    setAuthTokenProvider(async () => "");
+    setCachedAuthToken("");
+    setUser(LOCAL_USER);
   }, []);
 
   const value = useMemo(() => ({
     user,
     loading,
     async getIdToken() {
-      return auth.currentUser?.getIdToken() || "";
+      return "";
     },
-    async loginWithEmail(email, password) {
-      await signInWithEmailAndPassword(auth, email, password);
-    },
-    async registerWithEmail({ email, password, name }) {
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
-      if (name?.trim()) {
-        await updateProfile(credential.user, { displayName: name.trim() });
-      }
-    },
-    async loginWithGoogle() {
-      await signInWithPopup(auth, googleProvider);
-    },
+    async loginWithEmail() {},
+    async registerWithEmail() {},
+    async loginWithGoogle() {},
     async signOut() {
-      await firebaseSignOut(auth);
+      // Não desconecta — mantém o usuário local
       setCachedAuthToken("");
     },
   }), [loading, user]);
