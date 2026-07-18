@@ -4,7 +4,14 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DATABASE_BASE_PATH = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados")
+
+# Prefer disco de produção quando montado; senão fallback local no home (dev desktop).
+_MEDIA_DATABASE_BASE = Path("/media/server/HD Backup/Servidores_NAO_MEXA/Banco_de_dados")
+_LOCAL_DATABASE_BASE = Path.home() / "Documentos" / "Bando_de_dados"
+if _MEDIA_DATABASE_BASE.exists() or _MEDIA_DATABASE_BASE.parent.exists():
+    DEFAULT_DATABASE_BASE_PATH = _MEDIA_DATABASE_BASE
+else:
+    DEFAULT_DATABASE_BASE_PATH = _LOCAL_DATABASE_BASE
 DEFAULT_VORTAX_DATA_PATH = DEFAULT_DATABASE_BASE_PATH / "Vortax"
 
 
@@ -63,6 +70,9 @@ class Settings(BaseSettings):
     CODE_AGENT_STATIC_INCOMPLETE_SECONDS: float = 45.0
     VERTEX_STATIC_INCOMPLETE_SECONDS: float = 45.0  # legacy env fallback
     PROJECT_VALIDATION_TIMEOUT_SECONDS: int = 60
+    # CSV de capabilities negadas: read,write_files,shell,browser,desktop,destructive,export,admin
+    VORTAX_DENIED_CAPABILITIES: str = ""
+    PARALLEL_SUBTASK_MAX: int = 4
 
     CHROME_BINARY: str = "/usr/bin/google-chrome"
     CHROME_DEBUG_PORT: int = 9222
@@ -88,12 +98,22 @@ class Settings(BaseSettings):
         return [host.strip().lower() for host in self.PUBLIC_HOSTS.split(",") if host.strip()]
 
 
+def _safe_mkdir(path: Path) -> Path:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError:
+        fallback = Path.home() / ".vortax-data" / path.name
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings(_env_file=PROJECT_ROOT / ".env")
-    settings.WORKSPACE_PATH.mkdir(parents=True, exist_ok=True)
-    settings.RUNTIME_PATH.mkdir(parents=True, exist_ok=True)
-    settings.CHROME_PROFILE_PATH.mkdir(parents=True, exist_ok=True)
+    settings.WORKSPACE_PATH = _safe_mkdir(settings.WORKSPACE_PATH)
+    settings.RUNTIME_PATH = _safe_mkdir(settings.RUNTIME_PATH)
+    settings.CHROME_PROFILE_PATH = _safe_mkdir(settings.CHROME_PROFILE_PATH)
     return settings
 
 

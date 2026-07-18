@@ -1,10 +1,11 @@
-import { Download, FileArchive, FileText, Folder, Package } from "lucide-react";
+import { Download, FileArchive, FileText, Folder, Package, ScrollText } from "lucide-react";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
-import { fileDownloadUrl, taskDownloadZipUrl } from "../lib/api.js";
+import { fileDownloadUrl, taskDownloadZipUrl, taskExportSessionUrl } from "../lib/api.js";
 
 export function FileList({ error, files, loading, taskId }) {
-  const downloadZipUrl = taskId ? taskDownloadZipUrl(taskId) : null;
+  const downloadZipUrl = taskId && files.length > 0 ? taskDownloadZipUrl(taskId) : null;
+  const exportSessionUrl = taskId ? taskExportSessionUrl(taskId) : null;
   const projects = files.reduce((groups, file) => {
     const id = file.project_id || "root";
     if (!groups.has(id)) {
@@ -27,42 +28,63 @@ export function FileList({ error, files, loading, taskId }) {
         <p className="panel-state">Carregando arquivos...</p>
       ) : error ? (
         <p className="panel-state error">Nao foi possivel carregar os arquivos.</p>
-      ) : files.length === 0 ? (
-        <p className="panel-state">Nenhum arquivo gerado.</p>
       ) : (
         <>
-          {downloadZipUrl && (
-            <a
-              className="zip-download-btn"
-              href={downloadZipUrl}
-              download
-              title="Baixar todos os arquivos em ZIP"
-            >
-              <FileArchive size={16} />
-              <span>Baixar projeto (.zip)</span>
-              <Download size={14} />
-            </a>
-          )}
-
-          <div className="project-file-groups">
-            {groupedProjects.map((project) => (
-              <section className="project-file-group" key={project.id}>
-                <div className="project-file-group-header">
-                  <Package size={15} />
-                  <div>
-                    <strong>{project.name}</strong>
-                    <span>{project.type.replace("_", " ")} · {project.files.length} arquivo(s){project.root ? ` · ${project.root}` : ""}</span>
-                  </div>
-                </div>
-                {project.files.map((file) => (
-                  <a className="file-item" href={fileDownloadUrl(taskId, file.path)} key={file.path}>
-                    {file.file_type === "asset" ? <Folder size={15} /> : <FileText size={15} />}
-                    <span>{file.path}</span>
-                  </a>
-                ))}
-              </section>
-            ))}
+          <div className="file-actions-row" style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+            {exportSessionUrl && (
+              <a
+                className="zip-download-btn"
+                href={exportSessionUrl}
+                download
+                title="Exportar sessão completa (eventos, plano, fontes, prints, arquivos)"
+              >
+                <ScrollText size={16} />
+                <span>Exportar sessão (auditável)</span>
+                <Download size={14} />
+              </a>
+            )}
+            {downloadZipUrl && (
+              <a
+                className="zip-download-btn"
+                href={downloadZipUrl}
+                download
+                title="Baixar todos os arquivos em ZIP"
+              >
+                <FileArchive size={16} />
+                <span>Baixar projeto (.zip)</span>
+                <Download size={14} />
+              </a>
+            )}
           </div>
+
+          {files.length === 0 ? (
+            <p className="panel-state">Nenhum arquivo gerado.</p>
+          ) : (
+            <div className="project-file-groups">
+              {groupedProjects.map((project) => (
+                <section className="project-file-group" key={project.id}>
+                  <div className="project-file-group-header">
+                    <Package size={15} />
+                    <div>
+                      <strong>{project.name}</strong>
+                      <span>{project.type.replace("_", " ")} · {project.files.length} arquivo(s){project.root ? ` · ${project.root}` : ""}</span>
+                    </div>
+                  </div>
+                  {project.files.map((file) => (
+                    <a className="file-item" href={fileDownloadUrl(taskId, file.path)} key={file.path}>
+                      {file.file_type === "asset" ? <Folder size={15} /> : <FileText size={15} />}
+                      <span>{file.path}</span>
+                      {file.content_hash ? (
+                        <small style={{ opacity: 0.55, marginLeft: 6 }} title={file.content_hash}>
+                          {String(file.content_hash).slice(0, 8)}
+                        </small>
+                      ) : null}
+                    </a>
+                  ))}
+                </section>
+              ))}
+            </div>
+          )}
         </>
       )}
     </CollapsiblePanel>

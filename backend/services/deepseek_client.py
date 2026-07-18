@@ -206,7 +206,22 @@ def _groq_url() -> str:
 
 
 async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
-    return await with_retry(_post_deepseek_inner, payload, provider_name="DeepSeek")
+    import time
+
+    from services.metrics import metrics
+
+    t0 = time.perf_counter()
+    try:
+        data = await with_retry(_post_deepseek_inner, payload, provider_name="DeepSeek")
+        metrics.observe_ms("deepseek_request", (time.perf_counter() - t0) * 1000)
+        metrics.record_usage("deepseek", data.get("usage") if isinstance(data, dict) else None)
+        metrics.incr("deepseek_ok")
+        return data
+    except Exception:
+        metrics.observe_ms("deepseek_request", (time.perf_counter() - t0) * 1000)
+        metrics.record_provider_error("deepseek")
+        metrics.incr("deepseek_error")
+        raise
 
 
 async def _post_deepseek_inner(payload: dict[str, Any]) -> dict[str, Any]:

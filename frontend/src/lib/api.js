@@ -41,6 +41,11 @@ export function taskDownloadZipUrl(taskId) {
   return `${API_BASE_URL}/api/tasks/${encodeURIComponent(taskId || "")}/download${token}`;
 }
 
+export function taskExportSessionUrl(taskId) {
+  const token = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
+  return `${API_BASE_URL}/api/tasks/${encodeURIComponent(taskId || "")}/export${token}`;
+}
+
 export function taskPreviewUrl(taskId, path = "") {
   const encodedPath = String(path || "")
     .split("/")

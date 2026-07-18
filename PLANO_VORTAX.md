@@ -1,7 +1,7 @@
 # Plano Técnico — Vortax
 
-> **Versão:** 3.5 — Identidade pública Vortax no computador e no desenvolvimento
-> **Data:** 07/05/2026
+> **Versão:** 3.6 — Fechamento do backlog §12 (replan mid-run, export auditável, artefatos, permissões, métricas, paralelo)
+> **Data:** 18/07/2026
 > **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software pelo Computador do Vortax, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
 
 ---
@@ -420,26 +420,24 @@ Checagens mínimas antes de publicar:
 
 ## 12. Próximos Passos Relevantes
 
-1. **Autenticação real para acesso público**
-   - Login simples, sessão/JWT e proteção das rotas de task, arquivos e WebSocket.
+Status em **18/07/2026** (v3.6) — backlog original fechado ou elevado:
 
-2. **Permissões por ação**
-   - Diferenciar leitura, criação de arquivos, shell, navegação e ações destrutivas.
+| # | Item | Status |
+|---|------|--------|
+| 1 | Autenticação real pública | **FEITO** (Firebase Auth + ownership de task; LAN isolada por IP; `ALLOW_NO_AUTH` só dev) |
+| 2 | Permissões por ação | **FEITO** (`services/permissions.py`, `VORTAX_DENIED_CAPABILITIES`, gate em tools/API) |
+| 3 | Replanejamento real mid-run | **FEITO** (`services/plan_replan.py` + loop ReAct emite `task_plan_replanned`) |
+| 4 | Subtasks paralelas | **FEITO** (`services/parallel_subtasks.py`; deep research analisa fontes em paralelo) |
+| 5 | Rastreamento fino de artefatos | **FEITO** (`content_hash`, `tool_origin`, `step_id`, `validation_status` em `generated_files`) |
+| 6 | Replay/export da sessão | **FEITO** (`GET /api/tasks/{id}/export` + botão no FileList) |
+| 7 | Observabilidade | **FEITO** (`services/metrics.py`, `/api/providers/metrics`, snapshot no export) |
 
-3. **Replanejamento real**
-   - Usar `task_plan_replanned` quando o runner detectar mudança relevante de objetivo, não apenas como contrato disponível.
+### Próximos (pós-3.6)
 
-4. **Subtasks paralelas**
-   - Adicionar execução paralela controlada para pesquisas largas, comparações e varredura de muitos arquivos.
-
-5. **Rastreamento fino de artefatos**
-   - Hash, origem da tool, relação com etapa do Plano Vivo e status de validação por arquivo.
-
-6. **Replay/export da sessão**
-   - Exportar conversa, eventos, fontes, screenshots e arquivos em pacote auditável.
-
-7. **Observabilidade**
-   - Métricas de tempo por etapa, tokens aproximados, custo estimado e falhas por provider.
+1. **RBAC multi-tenant** — papéis (viewer/operator/admin) persistidos por usuário, não só env deny-list.
+2. **Fila multi-task** — rodar N conversas pesadas com quota de browser/CPU.
+3. **Replay player no frontend** — consumir `events.jsonl` do export com timeline scrubber.
+4. **Métricas persistidas** — gravar snapshots em SQLite/Prometheus em vez de só memória do processo.
 
 ---
 
@@ -447,6 +445,7 @@ Checagens mínimas antes de publicar:
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 3.6 | 18/07/2026 | Fecha backlog §12: replan mid-run, export auditável de sessão, artefatos com hash/step/validação, permissões por ação, métricas, subtasks paralelas na pesquisa profunda; UI de export no FileList. |
 | 3.5 | 07/05/2026 | Frontend passou a apresentar o desenvolvimento como Vortax/Computador do Vortax, ocultando o nome do wrapper interno e removendo o terminal bruto do painel principal. |
 | 3.4 | 07/05/2026 | Motor interno de código assumiu a execução no lugar do antigo fluxo Vertex, preservando `vertex_progress` e `vertex_steps` como nomes legados de contrato. |
 | 3.3 | 07/05/2026 | Plano Vivo persistido com `task_steps`, eventos `task_plan_*`/`task_step_*`, integração no runner e painel `TaskPlanPanel`. |

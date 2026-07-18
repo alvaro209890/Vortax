@@ -1904,11 +1904,42 @@ async def _run_agent_task_inner(
 
         MAX_CODE_AGENT_CALLS = 3
         code_agent_call_count = 0
+        original_objective = latest_prompt
+        already_replanned = False
+        last_tool_name: str | None = None
+        last_tool_ok = True
+        run_started = __import__("time").time()
+        from services.metrics import metrics as _metrics
+
+        _metrics.task_mark(task_id, status="running", objective=latest_prompt[:200])
+        _metrics.incr("agent_runs")
 
         for iteration in range(settings.MAX_ITERATIONS):
             if not await _wait_if_paused_or_stopped(task_id, store, bus):
                 await _cleanup_project_runtime(task_id, bus, "Tarefa parada; preview interno fechado.")
                 return
+
+            # Replanejamento real mid-run (PLANO §12.3)
+            try:
+                from services.plan_replan import replan_task, should_replan
+
+                current_user_prompt = _latest_user_prompt(history) or latest_prompt
+                do_replan, replan_reason = should_replan(
+                    original_objective=original_objective,
+                    latest_user_prompt=current_user_prompt,
+                    last_tool=last_tool_name,
+                    last_tool_ok=last_tool_ok,
+                    iteration=iteration,
+                    already_replanned=already_replanned,
+                )
+                if do_replan and (not already_replanned or replan_reason == "force"):
+                    await replan_task(task_id, current_user_prompt, bus, reason=replan_reason)
+                    original_objective = current_user_prompt
+                    already_replanned = True
+                    latest_prompt = current_user_prompt
+                    _metrics.incr("task_replans")
+            except Exception:
+                pass
 
             await bus.publish(task_id, "agent_progress", {"label": "Planejando proximo passo", "step": iteration + 1})
             await publish_agent_activity(
@@ -2205,6 +2236,12 @@ async def _run_agent_task_inner(
 
             result_for_model = compact_tool_result(tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result})
             evidence_source = tool_result.get("data", tool_result) if isinstance(tool_result, dict) else {"result": tool_result}
+            last_tool_name = action_name
+            last_tool_ok = _result_succeeded(evidence_source) if isinstance(evidence_source, dict) else True
+            _metrics.incr("tool_calls")
+            _metrics.task_mark(task_id, tools=1)
+            if not last_tool_ok:
+                _metrics.task_mark(task_id, errors=1)
             if isinstance(evidence_source, dict):
                 await _publish_action_activity(
                     task_id,
@@ -2225,6 +2262,21 @@ async def _run_agent_task_inner(
                 if action_name == "shell_run" and evidence_source.get("success"):
                     await _complete_plan_step(task_id, "execute", bus, evidence=_tool_evidence(action_name, evidence_source))
                     await _sync_validation_plan(task_id, bus, evidence_source)
+                    # Rastreamento fino: vincula artefatos à etapa atual e origem da tool
+                    try:
+                        from services.project_files import annotate_workspace_files, sync_task_workspace_files
+                        from config import settings as _settings
+
+                        sync_task_workspace_files(task_id, _settings.WORKSPACE_PATH / task_id)
+                        current = task_plan_store.current_step(task_id)
+                        annotate_workspace_files(
+                            task_id,
+                            tool_origin=action_name,
+                            step_id=(current or {}).get("id"),
+                            validation_status="pending",
+                        )
+                    except Exception:
+                        pass
             history.append(
                 {
                     "role": "user",

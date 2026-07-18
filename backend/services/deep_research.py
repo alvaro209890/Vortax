@@ -12,6 +12,7 @@ from typing import Any
 from config import settings
 from services.activity_events import publish_agent_activity
 from services.event_bus import EventBus
+from services.parallel_subtasks import publish_subtask_fanout, run_parallel
 from services.research_policy import query_complexity
 from tools.browser_pool import browser_pool
 from tools.browser import BrowserTool
@@ -216,11 +217,19 @@ async def execute_deep_research(
 
             queries_used.append(current_query)
 
-            # Seleciona top resultados
-            selected = _select_top_results(results, max_results=2, already_visited=visited_urls)
+            # Seleciona top resultados (leitura serial no browser CDP; análise paralela depois)
+            selected = _select_top_results(results, max_results=3, already_visited=visited_urls)
             if not selected:
                 continue
 
+            await publish_subtask_fanout(
+                bus,
+                task_id,
+                title=f"Subtasks de leitura {iteration}/{depth}",
+                subtasks=[str(r.get("title") or r.get("url") or "")[:80] for r in selected],
+            )
+
+            extracted_batch: list[dict[str, Any]] = []
             for result in selected:
                 url = str(result.get("url") or result.get("href") or "")
                 title = str(result.get("title") or result.get("snippet") or "")[:200]
@@ -231,7 +240,6 @@ async def execute_deep_research(
                     {"label": f"Lendo fonte {iteration}/{depth}", "detail": title[:120]},
                 )
 
-                # Navega e extrai
                 try:
                     await browser.navigate(url)
                 except Exception:
@@ -242,11 +250,28 @@ async def execute_deep_research(
                     continue
 
                 visited_urls.add(url)
+                extracted_batch.append({"url": url, "title": title, "text": text})
 
-                # Analisa conteudo
-                analysis = await _analyze_page_content(text, current_query, iteration)
+            # Análise local em paralelo (CPU) — PLANO §12.4
+            async def _analyze_item(item: dict[str, Any]) -> dict[str, Any]:
+                analysis = await _analyze_page_content(item["text"], current_query, iteration)
+                return {**item, "analysis": analysis}
 
-                # Salva fonte
+            analyzed = await run_parallel(
+                extracted_batch,
+                _analyze_item,
+                max_concurrency=min(4, getattr(settings, "PARALLEL_SUBTASK_MAX", 4)),
+                return_exceptions=True,
+            )
+
+            for item in analyzed:
+                if isinstance(item, Exception) or not isinstance(item, dict):
+                    continue
+                url = item["url"]
+                title = item["title"]
+                text = item["text"]
+                analysis = item.get("analysis") or {}
+
                 source_entry = {
                     "url": url,
                     "title": title,
@@ -265,12 +290,10 @@ async def execute_deep_research(
                 }
                 all_findings.append(finding_entry)
 
-                # Refina query para proxima iteracao
                 refined = analysis.get("refined_query", current_query)
                 if refined != current_query:
                     current_query = refined
 
-                # Atualiza fontes no BD (reusa logica de salvar fonte)
                 try:
                     from database import database as db
                     from services.stream_contract import utc_now

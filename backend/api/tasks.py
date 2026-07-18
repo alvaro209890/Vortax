@@ -560,6 +560,9 @@ async def download_task_zip(
     current_user: AuthUser = Depends(require_auth),
 ) -> StreamingResponse:
     """Gera e retorna um ZIP com todos os arquivos criados na conversa."""
+    from services.permissions import CAP_READ, require_capability
+
+    require_capability(current_user, CAP_READ)
     task = ensure_task_owner(task_store.get(task_id), current_user)
 
     project_dir = settings.WORKSPACE_PATH / task_id
@@ -594,8 +597,41 @@ async def download_task_zip(
     )
 
 
+@router.get("/{task_id}/export")
+async def export_task_session(
+    task_id: str,
+    current_user: AuthUser = Depends(require_auth),
+    include_images: bool = True,
+) -> StreamingResponse:
+    """Export auditável: conversa + eventos + plano + fontes + screenshots + arquivos + métricas."""
+    from services.permissions import CAP_EXPORT, require_capability
+    from services.session_export import build_session_export_zip
+
+    require_capability(current_user, CAP_EXPORT)
+    ensure_task_owner(task_store.get(task_id), current_user)
+    try:
+        payload = build_session_export_zip(
+            task_id,
+            include_screenshot_images=bool(include_images),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Task nao encontrada") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao exportar sessao: {exc}") from exc
+
+    filename = f"vortax-session-{task_id[:8]}.zip"
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.delete("/{task_id}")
 async def delete_task(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
+    from services.permissions import CAP_DESTRUCTIVE, require_capability
+
+    require_capability(current_user, CAP_DESTRUCTIVE)
     ensure_task_owner(task_store.get(task_id), current_user)
 
     task_store.stop(task_id)

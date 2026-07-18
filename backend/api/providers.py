@@ -2,13 +2,15 @@ from fastapi import APIRouter, Depends
 
 from auth import AuthUser, require_auth
 from config import settings
+from services.metrics import metrics
+from services.permissions import capabilities_for
 
 router = APIRouter()
 
 
 @router.get("/")
 async def provider_status(current_user: AuthUser = Depends(require_auth)) -> dict:
-    _ = current_user
+    caps = capabilities_for(current_user)
     return {
         "providers": [
             {
@@ -27,5 +29,13 @@ async def provider_status(current_user: AuthUser = Depends(require_auth)) -> dic
                 "configured": settings.ENABLE_VISION_TESTS and bool(settings.GROQ_API_KEY.strip()),
                 "role": "vision_tests",
             },
-        ]
+        ],
+        "capabilities": sorted(caps.granted),
+        "metrics": metrics.snapshot(),
     }
+
+
+@router.get("/metrics")
+async def provider_metrics(current_user: AuthUser = Depends(require_auth)) -> dict:
+    _ = current_user
+    return metrics.snapshot()

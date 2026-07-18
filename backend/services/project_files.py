@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -75,6 +76,25 @@ def _root_for_file(path: str, roots: list[str]) -> str:
     return sorted(matches, key=len, reverse=True)[0]
 
 
+def _content_hash_for(path: Path, size: int) -> str:
+    """SHA-256 do arquivo; para arquivos grandes (>2MB) usa amostra size+mtime+prefixo."""
+    try:
+        if size <= 2 * 1024 * 1024:
+            h = hashlib.sha256()
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+        stat = path.stat()
+        h = hashlib.sha256()
+        h.update(f"{size}:{stat.st_mtime_ns}".encode())
+        with path.open("rb") as fh:
+            h.update(fh.read(65536))
+        return h.hexdigest()
+    except OSError:
+        return ""
+
+
 def scan_task_workspace(project_dir: Path) -> list[dict[str, Any]]:
     if not project_dir.exists() or not project_dir.is_dir():
         return []
@@ -95,9 +115,40 @@ def scan_task_workspace(project_dir: Path) -> list[dict[str, Any]]:
                 "extension": path.suffix.lower(),
                 "modified_at": stat.st_mtime,
                 "file_type": _file_type_for(rel),
+                "content_hash": _content_hash_for(path, stat.st_size),
+                "tool_origin": "",
+                "step_id": None,
+                "validation_status": "unknown",
             }
         )
     return files
+
+
+def annotate_workspace_files(
+    task_id: str,
+    *,
+    tool_origin: str | None = None,
+    step_id: str | None = None,
+    validation_status: str | None = None,
+    paths: list[str] | None = None,
+) -> int:
+    """Atualiza metadados finos de artefatos já indexados."""
+    files = database.list_generated_files(task_id)
+    updated = 0
+    wanted = set(paths) if paths else None
+    for file in files:
+        path = str(file.get("path") or "")
+        if wanted is not None and path not in wanted:
+            continue
+        if database.update_generated_file_meta(
+            task_id,
+            path,
+            tool_origin=tool_origin,
+            step_id=step_id,
+            validation_status=validation_status,
+        ):
+            updated += 1
+    return updated
 
 
 def _is_local_asset_ref(ref: str) -> bool:

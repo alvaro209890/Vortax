@@ -678,6 +678,30 @@ async def execute_tool(
         await bus.publish(task_id, "error", {"message": error["error"]})
         return error
 
+    # Permissões por ação (PLANO §12.2) — baseadas no dono da task
+    try:
+        from auth import AuthUser
+        from services.permissions import tool_allowed
+
+        task_row = database.get_task(task_id) or {}
+        owner = AuthUser(
+            uid=str(task_row.get("user_id") or "unknown"),
+            email="",
+            name="",
+            is_dev=str(task_row.get("user_id") or "").startswith("lan_")
+            or str(task_row.get("user_id") or "") == getattr(settings, "DEV_USER_ID", "local-dev-user"),
+        )
+        if not tool_allowed(owner, tool_name):
+            error = {
+                "success": False,
+                "error": f"Permissao negada para a ferramenta '{tool_name}'.",
+            }
+            await bus.publish(task_id, "error", {"message": error["error"]})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": error})
+            return error
+    except Exception:
+        pass
+
     try:
         if tool_name == "browser_google_search":
             query = str((params or {}).get("query") or "").strip()

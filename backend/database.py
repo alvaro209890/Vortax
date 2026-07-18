@@ -233,6 +233,34 @@ class Database:
                     "ALTER TABLE conversation_contexts ADD COLUMN checkpoint_json TEXT NOT NULL DEFAULT '{}'"
                 )
 
+            # Rastreamento fino de artefatos (PLANO §12.5)
+            gf_cols = {
+                str(row["name"])
+                for row in self._connection.execute("PRAGMA table_info(generated_files)").fetchall()
+            }
+            if "content_hash" not in gf_cols:
+                self._connection.execute(
+                    "ALTER TABLE generated_files ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"
+                )
+            if "tool_origin" not in gf_cols:
+                self._connection.execute(
+                    "ALTER TABLE generated_files ADD COLUMN tool_origin TEXT NOT NULL DEFAULT ''"
+                )
+            if "step_id" not in gf_cols:
+                self._connection.execute(
+                    "ALTER TABLE generated_files ADD COLUMN step_id TEXT"
+                )
+            if "validation_status" not in gf_cols:
+                self._connection.execute(
+                    "ALTER TABLE generated_files ADD COLUMN validation_status TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generated_files_step_id ON generated_files(step_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generated_files_content_hash ON generated_files(content_hash)"
+            )
+
     def add_snippet(self, tags: list[str], language: str, description: str, content: str) -> int:
         import hashlib
         from datetime import datetime, timezone
@@ -806,15 +834,30 @@ class Database:
                     """
                     INSERT INTO generated_files (
                         task_id, project_id, path, size_bytes, extension,
-                        modified_at, created_at, updated_at
+                        modified_at, created_at, updated_at,
+                        content_hash, tool_origin, step_id, validation_status
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(task_id, path) DO UPDATE SET
                         project_id = excluded.project_id,
                         size_bytes = excluded.size_bytes,
                         extension = excluded.extension,
                         modified_at = excluded.modified_at,
-                        updated_at = excluded.updated_at
+                        updated_at = excluded.updated_at,
+                        content_hash = CASE
+                            WHEN excluded.content_hash != '' THEN excluded.content_hash
+                            ELSE generated_files.content_hash
+                        END,
+                        tool_origin = CASE
+                            WHEN excluded.tool_origin != '' THEN excluded.tool_origin
+                            ELSE generated_files.tool_origin
+                        END,
+                        step_id = COALESCE(excluded.step_id, generated_files.step_id),
+                        validation_status = CASE
+                            WHEN excluded.validation_status != '' AND excluded.validation_status != 'unknown'
+                                THEN excluded.validation_status
+                            ELSE generated_files.validation_status
+                        END
                     """,
                     (
                         task_id,
@@ -825,6 +868,10 @@ class Database:
                         float(file.get("modified_at", 0)),
                         file["created_at"],
                         file["updated_at"],
+                        str(file.get("content_hash") or ""),
+                        str(file.get("tool_origin") or ""),
+                        file.get("step_id"),
+                        str(file.get("validation_status") or "unknown"),
                     ),
                 )
 
@@ -848,6 +895,7 @@ class Database:
                 """
                 SELECT f.id, f.task_id, f.project_id, f.path, f.size_bytes,
                        f.extension, f.modified_at, f.created_at, f.updated_at,
+                       f.content_hash, f.tool_origin, f.step_id, f.validation_status,
                        p.name AS project_name, p.root_path AS project_root,
                        p.project_type AS project_type
                 FROM generated_files f
@@ -858,6 +906,59 @@ class Database:
                 (task_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def update_generated_file_meta(
+        self,
+        task_id: str,
+        path: str,
+        *,
+        tool_origin: str | None = None,
+        step_id: str | None = None,
+        validation_status: str | None = None,
+        content_hash: str | None = None,
+    ) -> bool:
+        sets: list[str] = []
+        params: list[Any] = []
+        if tool_origin is not None:
+            sets.append("tool_origin = ?")
+            params.append(tool_origin)
+        if step_id is not None:
+            sets.append("step_id = ?")
+            params.append(step_id)
+        if validation_status is not None:
+            sets.append("validation_status = ?")
+            params.append(validation_status)
+        if content_hash is not None:
+            sets.append("content_hash = ?")
+            params.append(content_hash)
+        if not sets:
+            return False
+        from services.stream_contract import utc_now
+
+        sets.append("updated_at = ?")
+        params.append(utc_now())
+        params.extend([task_id, path])
+        with self._lock, self._connection:
+            cur = self._connection.execute(
+                f"UPDATE generated_files SET {', '.join(sets)} WHERE task_id = ? AND path = ?",
+                params,
+            )
+            return cur.rowcount > 0
+
+    def list_screenshots(self, task_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, task_id, event_id, created_at, caption, title, url, image_base64
+                FROM screenshots
+                WHERE task_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (task_id, int(limit)),
+            ).fetchall()
+        # ordem cronológica
+        return [dict(row) for row in reversed(rows)]
 
     def replace_task_steps(self, task_id: str, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         with self._lock, self._connection:
