@@ -1,6 +1,6 @@
 # Plano Técnico — Vortax
 
-> **Versão:** 3.6 — Fechamento do backlog §12 (replan mid-run, export auditável, artefatos, permissões, métricas, paralelo)
+> **Versão:** 3.7 — Loop nativo DeepSeek V4 Pro (function calling) + streaming + usage na API
 > **Data:** 18/07/2026
 > **Objetivo atual:** manter o Vortax como agente web estilo Manus para operar este PC, pesquisar, criar software pelo Computador do Vortax, validar entregas e mostrar o trabalho em tempo real com chat, Plano Vivo, arquivos, fontes e screenshots.
 
@@ -445,6 +445,7 @@ Status em **18/07/2026** (v3.6) — backlog original fechado ou elevado:
 
 | Versão | Data | Alterações |
 |--------|------|-----------|
+| 3.7 | 18/07/2026 | Fase 1 do plano-melhoria-ia: `backend/agent/` (loop nativo function calling, registry, gates), streaming, `USE_NATIVE_TOOLS` default on com fallback legado, tokens/custo em GET task, message_*/todo_write. |
 | 3.6 | 18/07/2026 | Fecha backlog §12: replan mid-run, export auditável de sessão, artefatos com hash/step/validação, permissões por ação, métricas, subtasks paralelas na pesquisa profunda; UI de export no FileList. |
 | 3.5 | 07/05/2026 | Frontend passou a apresentar o desenvolvimento como Vortax/Computador do Vortax, ocultando o nome do wrapper interno e removendo o terminal bruto do painel principal. |
 | 3.4 | 07/05/2026 | Motor interno de código assumiu a execução no lugar do antigo fluxo Vertex, preservando `vertex_progress` e `vertex_steps` como nomes legados de contrato. |

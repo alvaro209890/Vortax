@@ -81,7 +81,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Indicador de digitação** — enquanto a IA prepara a resposta, o chat mostra os três pontos animados no balão do Vortax
-- **Agente ReAct** — DeepSeek V4 Flash decide ferramenta → executa → avalia resultado → repete, com pesquisa automática prévia para criação de software e pessoas
+- **Agente ReAct / function calling** — DeepSeek **V4 Pro** (loop nativo) decide tools → executa → avalia → repete; Flash para título; fallback JSON legado se `USE_NATIVE_TOOLS=false`
 - **Desenvolvimento de software** — usa o motor interno do Vortax para criar projetos completos
 - **Validação pós-desenvolvimento** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
 - **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, corrige os bugs e repete a validação
@@ -271,7 +271,7 @@ PUBLIC_HOSTS=vortax-api.cursar.space
 | Backend | Python, FastAPI, Uvicorn, httpx |
 | Frontend | React 18, Vite, Lucide React |
 | Navegador | Playwright + Google Chrome CDP |
-| IA (planejamento) | DeepSeek V4 Flash |
+| IA (planejamento) | DeepSeek V4 Pro (brain) + V4 Flash (título/leve) |
 | IA (visão) | Groq + Llama 4 Scout |
 | Motor de software | Vertex CLI via `shell_run` |
 | Shell | Whitelist, bloqueio de padrões perigosos, timeout |
@@ -366,3 +366,20 @@ CONTEXT_SUMMARY_MAX_CHARS=5000
 ## Licença
 
 MIT
+
+## Agente (v0.2 / plano-melhoria-ia Fase 1)
+
+- Cérebro padrão: **DeepSeek V4 Pro** (`DEEPSEEK_MODEL_BRAIN`); Flash para título/tarefas leves.
+- Loop nativo com **function calling** (`USE_NATIVE_TOOLS=true`) em `backend/agent/loop.py`.
+- Fallback automático para o loop JSON legado se o nativo falhar.
+- Streaming de resposta: `DEEPSEEK_STREAMING=true` → eventos `assistant_message_delta`.
+- Usage por conversa: `GET /api/tasks/{id}` campos `tokens_used`, `estimated_cost`, `usage`.
+- Plano vivo do modelo: tool `todo_write`; confirmação: `message_ask_user` + `POST /api/control/{id}/confirm`.
+- Documentação de execução: `plano-melhoria-ia/CHANGELOG.md` e `08-roadmap.md`.
+
+Rollback:
+```bash
+# .env
+USE_NATIVE_TOOLS=false
+DEEPSEEK_STREAMING=false
+```

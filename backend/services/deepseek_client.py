@@ -812,12 +812,214 @@ async def request_task_plan(description: str) -> dict[str, Any]:
     raise DeepSeekError("Nenhum planner configurado. Defina GROQ_API_KEY para gerar tasks com Groq.")
 
 
+async def request_agent_turn(
+    messages: list[dict[str, Any]],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    stream: bool | None = None,
+    bus: Any = None,
+    task_id: str | None = None,
+    purpose: str = "brain",
+) -> dict[str, Any]:
+    """Uma rodada do agente com function calling nativo (OpenAI tools).
+
+    Retorna:
+      {
+        "content": str|None,
+        "tool_calls": [{"id","name","arguments": dict}, ...],
+        "finish_reason": str,
+        "usage": dict,
+        "model": str,
+      }
+    """
+    if not deepseek_configured():
+        raise DeepSeekError("DEEPSEEK_API_KEY nao configurada")
+
+    use_stream = bool(settings.DEEPSEEK_STREAMING if stream is None else stream)
+    model = pick_model(purpose)
+    payload: dict[str, Any] = {
+        "model": model,
+        "temperature": float(getattr(settings, "DEEPSEEK_TEMPERATURE", 0.0) or 0.0),
+        "stream": use_stream,
+        "messages": messages,
+        "max_tokens": int(getattr(settings, "DEEPSEEK_MAX_OUTPUT_TOKENS", 8192) or 8192),
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    if use_stream and bus is not None and task_id:
+        return await _stream_agent_turn(payload, bus=bus, task_id=task_id, model=model)
+
+    data = await _post_deepseek(payload)
+    try:
+        message = data["choices"][0]["message"]
+        finish_reason = str(data["choices"][0].get("finish_reason") or "")
+    except (KeyError, IndexError, TypeError) as exc:
+        raise DeepSeekError("Resposta DeepSeek sem choices[0].message") from exc
+
+    tool_calls_raw = message.get("tool_calls") or []
+    parsed_calls: list[dict[str, Any]] = []
+    for item in tool_calls_raw:
+        fn = item.get("function") or {}
+        args_raw = fn.get("arguments") or "{}"
+        try:
+            args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+        except json.JSONDecodeError:
+            args = {"_raw": args_raw}
+        parsed_calls.append(
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(fn.get("name") or ""),
+                "arguments": args if isinstance(args, dict) else {"value": args},
+            }
+        )
+
+    usage = data.get("usage") or {}
+    try:
+        from database import database as _db
+
+        _db.record_llm_usage(
+            task_id=task_id,
+            provider="deepseek",
+            model=str(data.get("model") or model),
+            purpose=purpose,
+            usage=usage,
+        )
+    except Exception:
+        pass
+
+    return {
+        "content": (message.get("content") or None),
+        "tool_calls": parsed_calls,
+        "finish_reason": finish_reason,
+        "usage": usage,
+        "model": data.get("model", model),
+        "raw_message": message,
+    }
+
+
+async def _stream_agent_turn(
+    payload: dict[str, Any],
+    *,
+    bus: Any,
+    task_id: str,
+    model: str,
+) -> dict[str, Any]:
+    """Consome SSE e publica assistant_message_delta para content."""
+    import httpx
+
+    content_parts: list[str] = []
+    tool_acc: dict[int, dict[str, Any]] = {}
+    finish_reason = ""
+    usage: dict[str, Any] = {}
+
+    timeout = httpx.Timeout(settings.DEEPSEEK_TIMEOUT_SECONDS, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST",
+            _deepseek_url(),
+            headers=_headers(),
+            json=payload,
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data_str = line[5:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = str(fr)
+                if delta.get("content"):
+                    piece = str(delta["content"])
+                    content_parts.append(piece)
+                    await bus.publish(task_id, "assistant_message_delta", {"delta": piece, "content": piece})
+                for tc in delta.get("tool_calls") or []:
+                    idx = int(tc.get("index") or 0)
+                    slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.get("id"):
+                        slot["id"] = str(tc["id"])
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] = str(fn["name"])
+                    if fn.get("arguments"):
+                        slot["arguments"] = str(slot.get("arguments") or "") + str(fn["arguments"])
+
+    parsed_calls: list[dict[str, Any]] = []
+    for idx in sorted(tool_acc.keys()):
+        slot = tool_acc[idx]
+        args_raw = slot.get("arguments") or "{}"
+        try:
+            args = json.loads(args_raw)
+        except json.JSONDecodeError:
+            args = {"_raw": args_raw}
+        parsed_calls.append(
+            {
+                "id": slot.get("id") or f"call_{idx}",
+                "name": slot.get("name") or "",
+                "arguments": args if isinstance(args, dict) else {"value": args},
+            }
+        )
+
+    content = "".join(content_parts) or None
+    try:
+        from database import database as _db
+        from services.metrics import metrics
+
+        metrics.record_usage("deepseek", usage)
+        _db.record_llm_usage(
+            task_id=task_id,
+            provider="deepseek",
+            model=model,
+            purpose="brain_stream",
+            usage=usage,
+        )
+    except Exception:
+        pass
+
+    return {
+        "content": content,
+        "tool_calls": parsed_calls,
+        "finish_reason": finish_reason or ("tool_calls" if parsed_calls else "stop"),
+        "usage": usage,
+        "model": model,
+        "raw_message": {
+            "role": "assistant",
+            "content": content,
+            "tool_calls": [
+                {
+                    "id": c["id"],
+                    "type": "function",
+                    "function": {
+                        "name": c["name"],
+                        "arguments": json.dumps(c["arguments"], ensure_ascii=False),
+                    },
+                }
+                for c in parsed_calls
+            ]
+            or None,
+        },
+    }
+
+
 async def generate_task_title(description: str) -> str:
     """Gera um título curto (3-6 palavras) para exibição na lista de conversas."""
     if not deepseek_configured():
         return ""
     payload = {
-        "model": settings.DEEPSEEK_MODEL,
+        "model": pick_model("title"),
         "temperature": 0.3,
         "stream": False,
         "max_tokens": 24,

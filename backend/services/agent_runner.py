@@ -2352,7 +2352,39 @@ async def run_agent_task(
     user_profile: dict | None = None,
     research_mode: str = "fast",
 ) -> None:
+    """Entrypoint: loop nativo (Fase 1) quando USE_NATIVE_TOOLS=true; senão legado JSON."""
     try:
-        await _run_agent_task_inner(task_id, description, store, bus, user_profile=user_profile, research_mode=research_mode)
+        use_native = bool(getattr(settings, "USE_NATIVE_TOOLS", False)) and deepseek_configured()
+        if use_native:
+            try:
+                from agent.loop import run_native_agent_loop
+
+                await run_native_agent_loop(
+                    task_id,
+                    description,
+                    store,
+                    bus,
+                    user_profile=user_profile,
+                    research_mode=research_mode,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                # fallback seguro ao loop legado
+                await bus.publish(
+                    task_id,
+                    "agent_progress",
+                    {
+                        "label": "Fallback legado",
+                        "detail": f"Loop nativo falhou ({type(exc).__name__}: {str(exc)[:160]}); usando JSON legado.",
+                    },
+                )
+        await _run_agent_task_inner(
+            task_id,
+            description,
+            store,
+            bus,
+            user_profile=user_profile,
+            research_mode=research_mode,
+        )
     finally:
         await browser_pool.release(task_id)

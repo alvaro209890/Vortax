@@ -542,6 +542,7 @@ async def list_tasks(current_user: AuthUser = Depends(require_auth)) -> dict:
 @router.get("/{task_id}")
 async def get_task(task_id: str, current_user: AuthUser = Depends(require_auth)) -> dict:
     task = ensure_task_owner(task_store.get(task_id), current_user)
+    usage = database.sum_llm_usage(task_id)
     return {
         "task": task,
         "events": event_bus.history(task_id),
@@ -551,6 +552,9 @@ async def get_task(task_id: str, current_user: AuthUser = Depends(require_auth))
         "projects": list_task_workspace_projects(task_id),
         "plan": {"steps": task_plan_store.list_steps(task_id)},
         "context": get_context_payload(task_id, event_bus.history(task_id)),
+        "tokens_used": usage.get("total_tokens", 0),
+        "estimated_cost": usage.get("estimated_cost_usd", 0.0),
+        "usage": usage,
     }
 
 

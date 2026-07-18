@@ -1124,6 +1124,34 @@ class Database:
                 ),
             )
 
+    def sum_llm_usage(self, task_id: str) -> dict[str, Any]:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT
+                    COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                    COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COUNT(*) AS calls
+                FROM llm_usage
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        if not row:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0, "estimated_cost_usd": 0.0}
+        prompt = int(row["prompt_tokens"] or 0)
+        completion = int(row["completion_tokens"] or 0)
+        # ordem de grandeza DeepSeek V4 (doc/métricas)
+        cost = (prompt / 1_000_000.0) * 0.14 + (completion / 1_000_000.0) * 0.28
+        return {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": int(row["total_tokens"] or 0),
+            "calls": int(row["calls"] or 0),
+            "estimated_cost_usd": round(cost, 6),
+        }
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()

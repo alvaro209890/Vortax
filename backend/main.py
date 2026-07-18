@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
         kill_all_best_effort()
 
 
-app = FastAPI(title="Vortax", version="0.1.6-local", lifespan=lifespan)
+app = FastAPI(title="Vortax", version="0.2.0-local", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -20,11 +20,15 @@ Sem mudança de arquitetura; pode ser feita hoje.
 
 ## Fase 1 — Cérebro novo (docs 01 + 02 núcleo) (3-5 dias)
 
-1. `backend/agent/loop.py` com function calling nativo no **V4 Pro**, streaming da resposta final, roles corretos (`assistant.tool_calls` / `role:"tool"`).
-2. Registro central de tools (doc 03 §6) englobando as tools **existentes** (browser/shell/vision/exact) — nenhuma tool nova ainda.
-3. Gates movidos para `gates.py` com o padrão `[GATE:*]`.
-4. Camadas de modelo (`pick_model`) — Flash para título/sumário.
-5. `agent_runner.py` vira casca de compatibilidade.
+1. [x] `backend/agent/loop.py` com function calling nativo no **V4 Pro**, streaming opcional, roles `assistant.tool_calls` / `role:"tool"`.
+2. [x] Registro central `backend/agent/tools/registry.py` (browser/shell/vision/exact/files + message_* + todo_write).
+3. [x] Gates em `backend/agent/gates.py` com padrão `[GATE:*]`.
+4. [x] Camadas `pick_model` (título/sumário no Flash).
+5. [x] `agent_runner.run_agent_task` escolhe nativo (`USE_NATIVE_TOOLS`) com **fallback legado** se falhar.
+
+**Entregue 2026-07-18:** defaults `USE_NATIVE_TOOLS=true`, `DEEPSEEK_STREAMING=true`; `GET /api/tasks/{id}` com `tokens_used`/`estimated_cost`; tools `message_notify_user` / `message_ask_user` / `todo_write` no loop nativo.
+
+**Ainda afinar (paridade total):** pré-pesquisas automáticas legadas no path nativo; agent_runner ainda grande (não <100 linhas); validação project/web gates no path nativo.
 
 **Gate de saída:** paridade funcional com o fluxo atual (site, pesquisa, PDF, pessoa, exatas — os 5 cenários canônicos), custo/latência comparados ao baseline, streaming visível no chat.
 

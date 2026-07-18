@@ -1,5 +1,37 @@
 # CHANGELOG — execução do plano de melhoria da IA
 
+## 2026-07-18 — Fase 1 (núcleo) + docs + push main
+
+### Feito
+
+- **`backend/agent/`** novo:
+  - `tools/registry.py` — 31 tools em JSON Schema OpenAI
+  - `gates.py` — `ResearchSourcesGate`, `CycleGuardGate`, prefixo `[GATE:*]`
+  - `state.py` — contadores/stagnação/fingerprint de tool
+  - `loop.py` — loop nativo function calling + paralelo read-only + `todo_write` / `message_*`
+- **`request_agent_turn`** + streaming SSE (`assistant_message_delta`) em `deepseek_client.py`
+- **`run_agent_task`**: `USE_NATIVE_TOOLS` (default true) com fallback JSON legado
+- **Usage na API**: `GET /api/tasks/{id}` → `tokens_used`, `estimated_cost`, `usage`
+- **Defaults**: `DEEPSEEK_STREAMING=true`, brain=V4 Pro, flash para título
+- **Testes**: `test_agent_registry_and_gates`, `test_native_agent_turn` (+ suíte fase 0)
+- App version **0.2.0-local**
+
+### Como desligar o nativo (rollback)
+
+```env
+USE_NATIVE_TOOLS=false
+DEEPSEEK_STREAMING=false
+```
+
+### Próximo (Fase 1 residual + Fase 2/3)
+
+- Portar pré-pesquisas e gates project/web validation para o loop nativo
+- Encolher `agent_runner.py` para casca fina
+- Prompts modulares `agent/prompts/`
+- `shell_exec` sessions
+
+---
+
 ## 2026-07-18 — Fase 0 (parcial) + tools de arquivo + backlog PLANO §12
 
 ### Feito

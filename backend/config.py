@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     DEEPSEEK_TEMPERATURE: float = 0.0
     DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
     DEEPSEEK_MAX_OUTPUT_TOKENS: int = 8192
-    DEEPSEEK_STREAMING: bool = False  # liga streaming nativo (fase 1)
-    USE_NATIVE_TOOLS: bool = False  # function calling nativo (fase 1)
+    DEEPSEEK_STREAMING: bool = True  # streaming da resposta final (fase 1)
+    USE_NATIVE_TOOLS: bool = True  # function calling nativo (fase 1); fallback legado se falhar
     PARALLEL_TOOL_CALLS: bool = True
     LOG_API_ERROR_DETAILS: bool = False
 
