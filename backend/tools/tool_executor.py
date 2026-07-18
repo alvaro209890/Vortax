@@ -85,15 +85,50 @@ _BROWSER_METHOD_MAP: dict[str, str] = {
     "browser_auth_logout": "auth_logout",
 }
 
+async def _file_tool_dispatch(tool_name: str, params: dict[str, Any] | None, *, task_id: str) -> dict[str, Any]:
+    from tools import files as file_tools
+
+    p = params or {}
+    if tool_name == "file_read":
+        return file_tools.file_read(task_id, str(p.get("path") or ""), int(p.get("offset") or 1), p.get("limit"))
+    if tool_name == "file_write":
+        return file_tools.file_write(task_id, str(p.get("path") or ""), str(p.get("content") or ""))
+    if tool_name == "file_edit":
+        return file_tools.file_edit(
+            task_id,
+            str(p.get("path") or ""),
+            str(p.get("old_string") or ""),
+            str(p.get("new_string") or ""),
+            bool(p.get("replace_all") or False),
+        )
+    if tool_name == "file_append":
+        return file_tools.file_append(task_id, str(p.get("path") or ""), str(p.get("content") or ""))
+    if tool_name == "glob":
+        return file_tools.glob_files(task_id, str(p.get("pattern") or "*"), str(p.get("path") or ""))
+    if tool_name == "grep":
+        return file_tools.grep_files(
+            task_id,
+            str(p.get("pattern") or ""),
+            str(p.get("path") or ""),
+            str(p.get("glob") or ""),
+            str(p.get("output_mode") or "files_with_matches"),
+            bool(p.get("case_insensitive") or p.get("-i") or False),
+            int(p.get("context") or 0),
+        )
+    return {"success": False, "error": f"Tool de arquivo desconhecida: {tool_name}"}
+
+
 TOOLS: dict[str, ToolCallable] = {
     "shell_run": run_shell,
     "vision_analyze": vision_tool.analyze,
     "exact_solve": exact_tool.solve,
 }
 
+FILE_TOOLS = frozenset({"file_read", "file_write", "file_edit", "file_append", "glob", "grep"})
+
 
 def _is_known_tool(tool_name: str) -> bool:
-    return tool_name in _BROWSER_METHOD_MAP or tool_name in TOOLS
+    return tool_name in _BROWSER_METHOD_MAP or tool_name in TOOLS or tool_name in FILE_TOOLS
 
 
 async def _resolve_tool(tool_name: str, task_id: str) -> ToolCallable:
@@ -703,6 +738,27 @@ async def execute_tool(
         pass
 
     try:
+        if tool_name in FILE_TOOLS:
+            try:
+                result = await _file_tool_dispatch(tool_name, params, task_id=task_id)
+            except ValueError as exc:
+                result = {"success": False, "error": str(exc)}
+            compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            if tool_name in {"file_write", "file_edit", "file_append"} and result.get("success"):
+                project_dir = _project_dir(task_id)
+                project_index = sync_task_workspace_files(task_id, project_dir)
+                await bus.publish(
+                    task_id,
+                    "files_created",
+                    {
+                        "files": project_index["files"],
+                        "projects": project_index["projects"],
+                        "directory": str(project_dir),
+                    },
+                )
+            return {"success": bool(result.get("success")), "data": result}
+
         if tool_name == "browser_google_search":
             query = str((params or {}).get("query") or "").strip()
             cached = cached_search_result(query, database.list_sources(task_id)) if query else None

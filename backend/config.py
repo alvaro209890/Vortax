@@ -32,9 +32,16 @@ class Settings(BaseSettings):
 
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-v4-flash"
-    DEEPSEEK_TEMPERATURE: float = 0.1
-    DEEPSEEK_TIMEOUT_SECONDS: float = 60.0
+    # Camadas de modelo (plano-melhoria-ia §01). DEEPSEEK_MODEL legado = alias de BRAIN se setado.
+    DEEPSEEK_MODEL: str = "deepseek-v4-pro"
+    DEEPSEEK_MODEL_BRAIN: str = "deepseek-v4-pro"
+    DEEPSEEK_MODEL_FAST: str = "deepseek-v4-flash"
+    DEEPSEEK_TEMPERATURE: float = 0.0
+    DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
+    DEEPSEEK_MAX_OUTPUT_TOKENS: int = 8192
+    DEEPSEEK_STREAMING: bool = False  # liga streaming nativo (fase 1)
+    USE_NATIVE_TOOLS: bool = False  # function calling nativo (fase 1)
+    PARALLEL_TOOL_CALLS: bool = True
     LOG_API_ERROR_DETAILS: bool = False
 
     ENABLE_VISION_TESTS: bool = False

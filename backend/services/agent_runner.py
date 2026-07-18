@@ -1209,7 +1209,7 @@ async def _inject_pre_research_if_needed(
     if existing_sources:
         relevant = relevant_sources_for_query(description, existing_sources, limit=3)
         if len(relevant) >= 2:
-            return _history_with_research_context(task_id, history)
+            return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
     # Consulta cache efêmero cross-task antes de abrir o navegador
     primary_query = research_queries[0]
@@ -1226,7 +1226,7 @@ async def _inject_pre_research_if_needed(
                 ),
             }
         ]
-        return _history_with_research_context(task_id, history)
+        return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
     import logging
     from datetime import datetime, timezone
@@ -1318,8 +1318,12 @@ async def _inject_pre_research_if_needed(
                         "title": article.get("title") or best.get("title"),
                         "snippet": (article.get("description") or article.get("text", ""))[:280],
                         "extracted_text": article.get("text", "")[:10000],
-                        "source_type": "web",
-                        "quality_score": 80,
+                        "source_type": source_type_for_url(str(article.get("url") or "")),
+                        "quality_score": source_quality_score(
+                            str(article.get("url") or ""),
+                            str(article.get("title") or ""),
+                            str(article.get("text") or "")[:300],
+                        ),
                         "used": True,
                         "created_at": _now(),
                     },
@@ -1349,7 +1353,7 @@ async def _inject_pre_research_if_needed(
         if fresh_sources and primary_query:
             complexity = str(query_complexity(description).get("complexity", "MODERATE"))
             await ephemeral_cache.set(primary_query, fresh_sources, complexity)
-    return _history_with_research_context(task_id, history)
+    return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
 
 async def _save_extracted_source(task_id: str, bus: EventBus, article: dict[str, Any], fallback_title: str = "") -> bool:
@@ -1409,7 +1413,7 @@ async def _inject_document_research_if_needed(
     subject = str(profile.get("subject") or description)
     existing = relevant_sources_for_query(subject, database.list_sources(task_id), limit=required, min_quality=50)
     if len(existing) >= required:
-        return _history_with_research_context(task_id, history)
+        return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
     await bus.publish(
         task_id,
@@ -1477,9 +1481,8 @@ async def _inject_document_research_if_needed(
             try:
                 navigate_result = await bt.navigate(href, task_id=task_id)
                 if isinstance(navigate_result, dict) and navigate_result.get("blocked"):
-                    article = await bt.extract_article(task_id=task_id)
-                else:
-                    article = await bt.extract_article(task_id=task_id)
+                    continue  # Bug 4: nao tratar CAPTCHA/anti-bot como fonte valida
+                article = await bt.extract_article(task_id=task_id)
             except Exception:
                 continue
             await _save_extracted_source(task_id, bus, article, str(result.get("title") or ""))
@@ -1502,7 +1505,7 @@ async def _inject_document_research_if_needed(
         status="done",
         metadata={"found_sources": found},
     )
-    return _history_with_research_context(task_id, history)
+    return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
 
 async def _inject_people_research_if_needed(
@@ -1530,7 +1533,7 @@ async def _inject_people_research_if_needed(
     if existing_sources:
         relevant = relevant_sources_for_query(person_name, existing_sources, limit=3, min_quality=50)
         if len(relevant) >= profile.get("required_sources", 3):
-            return _history_with_research_context(task_id, history)
+            return history  # fontes injetadas so no loop (bug 2: evita duplicar bloco)
 
     import logging
     from datetime import datetime, timezone
@@ -1610,8 +1613,12 @@ async def _inject_people_research_if_needed(
                             "title": article.get("title") or result.get("title"),
                             "snippet": (article.get("description") or article.get("text", ""))[:280],
                             "extracted_text": article.get("text", "")[:10000],
-                            "source_type": "web",
-                            "quality_score": 80,
+                            "source_type": source_type_for_url(str(article.get("url") or "")),
+                            "quality_score": source_quality_score(
+                                str(article.get("url") or ""),
+                                str(article.get("title") or ""),
+                                str(article.get("text") or "")[:300],
+                            ),
                             "used": True,
                             "created_at": _now(),
                         },
@@ -1640,8 +1647,12 @@ async def _inject_people_research_if_needed(
                                 "title": article.get("title") or results[0].get("title"),
                                 "snippet": (article.get("description") or article.get("text", ""))[:280],
                                 "extracted_text": article.get("text", "")[:10000],
-                                "source_type": "web",
-                                "quality_score": 80,
+                                "source_type": source_type_for_url(str(article.get("url") or "")),
+                                "quality_score": source_quality_score(
+                                    str(article.get("url") or ""),
+                                    str(article.get("title") or ""),
+                                    str(article.get("text") or "")[:300],
+                                ),
                                 "used": True,
                                 "created_at": _now(),
                             },
@@ -2184,7 +2195,26 @@ async def _run_agent_task_inner(
                     "confirmation_request",
                     {"message": message, "action": action_name, "params": action.get("params", {})},
                 )
-                raise DeepSeekError("Planner pediu confirmacao; fluxo de confirmacao sera ligado no proximo bloco.")
+                # Bug 1 fix: pausa e aguarda POST /api/control/{id}/confirm em vez de matar a task
+                store.request_confirmation(task_id)
+                await bus.publish(task_id, "agent_status", {"status": "paused", "label": "Aguardando confirmacao"})
+                if not await _wait_if_paused_or_stopped(task_id, store, bus):
+                    await _fail_running_plan_step(task_id, bus, "Tarefa interrompida durante confirmacao.")
+                    return
+                approved = store.pop_confirmation(task_id)
+                if approved is False:
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "[GATE:confirmation_denied] O usuario negou a acao "
+                                f"'{action_name}'. Proponha uma alternativa segura ou finalize."
+                            ),
+                        }
+                    )
+                    continue
+                if approved is None and store.is_stopped(task_id):
+                    return
 
             progress_label = _progress_label(action_name, str(action.get("description") or ""))
             action_params = action.get("params") if isinstance(action.get("params"), dict) else {}

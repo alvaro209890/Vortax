@@ -24,6 +24,8 @@ class TaskStore:
     def __init__(self) -> None:
         self._paused: set[str] = set()
         self._stopped: set[str] = set()
+        # task_id -> bool | None (None = aguardando, True/False = resposta)
+        self._confirmations: dict[str, bool | None] = {}
 
     def create(self, description: str, user_id: str) -> dict:
         task_id = str(uuid4())
@@ -81,3 +83,23 @@ class TaskStore:
 
     def is_stopped(self, task_id: str) -> bool:
         return task_id in self._stopped
+
+    def request_confirmation(self, task_id: str) -> None:
+        self._confirmations[task_id] = None
+        self.pause(task_id)
+
+    def set_confirmation(self, task_id: str, approved: bool) -> None:
+        self._confirmations[task_id] = bool(approved)
+        self.resume(task_id)
+
+    def pop_confirmation(self, task_id: str) -> bool | None:
+        if task_id not in self._confirmations:
+            return None
+        value = self._confirmations[task_id]
+        if value is None:
+            return None
+        self._confirmations.pop(task_id, None)
+        return value
+
+    def clear_confirmation(self, task_id: str) -> None:
+        self._confirmations.pop(task_id, None)

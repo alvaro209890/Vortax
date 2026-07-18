@@ -43,6 +43,12 @@ ALL_CAPS = frozenset(
 # Mapa tool → capability mínima
 TOOL_CAPABILITIES: dict[str, str] = {
     "shell_run": CAP_SHELL,
+    "file_read": CAP_READ,
+    "file_write": CAP_WRITE_FILES,
+    "file_edit": CAP_WRITE_FILES,
+    "file_append": CAP_WRITE_FILES,
+    "glob": CAP_READ,
+    "grep": CAP_READ,
     "browser_google_search": CAP_BROWSER,
     "browser_navigate": CAP_BROWSER,
     "browser_click": CAP_BROWSER,

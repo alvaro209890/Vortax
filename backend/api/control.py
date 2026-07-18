@@ -87,7 +87,13 @@ async def confirm_task(
     current_user: AuthUser = Depends(require_auth),
 ) -> dict:
     ensure_task_owner(task_store.get(task_id), current_user)
+    task_store.set_confirmation(task_id, approved)
     await event_bus.publish(task_id, "confirmation_result", {"approved": approved})
+    await event_bus.publish(
+        task_id,
+        "agent_status",
+        {"status": "running" if approved else "running", "label": "Confirmado" if approved else "Negado"},
+    )
     return {"ok": True, "approved": approved}
 
 

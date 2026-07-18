@@ -164,12 +164,49 @@ TOOLS_SCHEMA = [
         "use": "Ferramenta deterministica para matematica e exatas. Use para contas, porcentagem, equacoes simples, fisica/quimica com numeros e problemas extraidos de imagem antes de finalizar.",
     },
     {
+        "action": "file_read",
+        "params": {"path": "index.html", "offset": 1, "limit": 200},
+        "use": "Ler arquivo do workspace da conversa com numeros de linha. Prefira para inspecionar codigo antes de editar.",
+    },
+    {
+        "action": "file_write",
+        "params": {"path": "index.html", "content": "<!doctype html>"},
+        "use": "Criar/sobrescrever arquivo no workspace da conversa.",
+    },
+    {
+        "action": "file_edit",
+        "params": {"path": "index.html", "old_string": "a", "new_string": "b", "replace_all": False},
+        "use": "Substituicao exata de trecho em arquivo. Use file_read antes. replace_all se houver multiplas ocorrencias.",
+    },
+    {
+        "action": "glob",
+        "params": {"pattern": "**/*.py"},
+        "use": "Listar arquivos do workspace por glob.",
+    },
+    {
+        "action": "grep",
+        "params": {"pattern": "def ", "glob": "*.py", "output_mode": "files_with_matches"},
+        "use": "Buscar regex no workspace.",
+    },
+    {
         "action": "finish",
         "params": {},
         "use": "Finalizar com o campo result.",
     },
 ]
 
+
+
+def pick_model(purpose: str = "brain") -> str:
+    """Roteia modelo por uso (plano-melhoria-ia §01)."""
+    purpose = (purpose or "brain").lower()
+    brain = (getattr(settings, "DEEPSEEK_MODEL_BRAIN", None) or settings.DEEPSEEK_MODEL or "deepseek-v4-pro").strip()
+    fast = (getattr(settings, "DEEPSEEK_MODEL_FAST", None) or "deepseek-v4-flash").strip()
+    if purpose in {"brain", "action", "agent", "code", "final", "chat"}:
+        return brain
+    if purpose in {"fast", "title", "summary", "classify", "intent"}:
+        return fast
+    return brain
 
 def deepseek_configured() -> bool:
     return bool(settings.DEEPSEEK_API_KEY.strip())
@@ -214,7 +251,19 @@ async def _post_deepseek(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         data = await with_retry(_post_deepseek_inner, payload, provider_name="DeepSeek")
         metrics.observe_ms("deepseek_request", (time.perf_counter() - t0) * 1000)
-        metrics.record_usage("deepseek", data.get("usage") if isinstance(data, dict) else None)
+        usage = data.get("usage") if isinstance(data, dict) else None
+        metrics.record_usage("deepseek", usage)
+        try:
+            from database import database as _db
+            _db.record_llm_usage(
+                task_id=None,
+                provider="deepseek",
+                model=str((data or {}).get("model") or pick_model("brain")),
+                purpose="api",
+                usage=usage,
+            )
+        except Exception:
+            pass
         metrics.incr("deepseek_ok")
         return data
     except Exception:
@@ -508,11 +557,15 @@ def _build_agent_system_prompt(user_id: str | None = None) -> str:
         "Se o vision_analyze retornar confidence baixo ou medium, refine a question e tente de novo. "
         "Se confidence for high, use a descricao para decidir a proxima acao. "
         "Acoes disponiveis: "
-        f"{json.dumps(TOOLS_SCHEMA, ensure_ascii=False)}. "
+        f"{json.dumps([{**tool, 'use': str(tool.get('use','')).replace('vertex', CODE_AGENT_COMMAND).replace('Vertex', CODE_AGENT_LABEL)} for tool in TOOLS_SCHEMA], ensure_ascii=False)}. "
         "Formato obrigatorio: "
         "{\"action\":\"browser_navigate\",\"description\":\"Abrindo site\",\"params\":{\"url\":\"https://example.com\"},\"requires_confirmation\":false}. "
         "Para finalizar: {\"action\":\"finish\",\"result\":\"resposta final\"}."
     )
+
+    # Bug 3: nunca hardcodar "vertex" — usar CODE_AGENT_COMMAND/LABEL
+    from services.code_agent import CODE_AGENT_COMMAND, CODE_AGENT_LABEL
+    prompt = prompt.replace("vertex", CODE_AGENT_COMMAND).replace("Vertex", CODE_AGENT_LABEL)
 
     if user_id:
         from services.user_memory import format_for_system_prompt
@@ -529,8 +582,8 @@ async def request_deepseek_action(history: list[dict[str, str]], user_id: str | 
 
     system_prompt = _build_agent_system_prompt(user_id)
     payload = {
-        "model": settings.DEEPSEEK_MODEL,
-        "temperature": 0.0,
+        "model": pick_model("brain"),
+        "temperature": float(getattr(settings, "DEEPSEEK_TEMPERATURE", 0.0) or 0.0),
         "stream": False,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": system_prompt}, *history],

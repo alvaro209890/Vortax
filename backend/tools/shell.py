@@ -1,19 +1,24 @@
 import asyncio
 import errno
-import fcntl
 import os
-import pty
 import re
 import signal
 import shlex
 import shutil
 import subprocess
-import termios
 from pathlib import Path
 from typing import Any
 
 from config import settings
 from services.project_files import missing_local_asset_refs
+
+def _import_tty_modules():
+    """Import tardio Linux-only (bug 9 — Windows nao tem fcntl/pty/termios)."""
+    import fcntl as _fcntl
+    import pty as _pty
+    import termios as _termios
+    return _fcntl, _pty, _termios
+
 
 
 CODE_AGENT_COMMAND = str(getattr(settings, "CODE_AGENT_COMMAND", "vertex") or "vertex").strip()
@@ -568,6 +573,7 @@ async def _publish_code_agent_terminal_frame(
 
 
 def _set_pty_size(fd: int, rows: int = 32, cols: int = 120) -> None:
+    fcntl, _pty, termios = _import_tty_modules()
     try:
         import struct
 
@@ -577,6 +583,8 @@ def _set_pty_size(fd: int, rows: int = 32, cols: int = 120) -> None:
 
 
 def _make_code_agent_preexec(slave_fd: int):
+    fcntl, _pty, termios = _import_tty_modules()
+
     def _preexec() -> None:
         os.setsid()
         try:
@@ -786,6 +794,7 @@ async def _run_code_agent_pty(
     bus: Any,
     max_interactive_rounds: int,
 ) -> dict[str, Any]:
+    fcntl, pty, _termios = _import_tty_modules()
     master_fd, slave_fd = pty.openpty()
     _set_pty_size(slave_fd)
     env = dict(env)

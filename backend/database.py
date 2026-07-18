@@ -261,6 +261,26 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_generated_files_content_hash ON generated_files(content_hash)"
             )
 
+            # Contabilidade de tokens/custo (plano-melhoria-ia §01)
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT,
+                    provider TEXT NOT NULL DEFAULT 'deepseek',
+                    model TEXT NOT NULL DEFAULT '',
+                    purpose TEXT NOT NULL DEFAULT '',
+                    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_llm_usage_task_id ON llm_usage(task_id, created_at)"
+            )
+
     def add_snippet(self, tags: list[str], language: str, description: str, content: str) -> int:
         import hashlib
         from datetime import datetime, timezone
@@ -1068,6 +1088,41 @@ class Database:
                 (*values, step_id),
             )
         return self.get_task_step(step_id)
+
+
+    def record_llm_usage(
+        self,
+        *,
+        task_id: str | None,
+        provider: str,
+        model: str,
+        purpose: str,
+        usage: dict | None,
+    ) -> None:
+        usage = usage or {}
+        prompt = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        total = int(usage.get("total_tokens") or (prompt + completion))
+        from services.stream_contract import utc_now
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO llm_usage (
+                    task_id, provider, model, purpose,
+                    prompt_tokens, completion_tokens, total_tokens, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    provider or "deepseek",
+                    model or "",
+                    purpose or "",
+                    prompt,
+                    completion,
+                    total,
+                    utc_now(),
+                ),
+            )
 
     def close(self) -> None:
         with self._lock:

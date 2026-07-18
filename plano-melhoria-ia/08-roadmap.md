@@ -8,13 +8,15 @@
 
 Sem mudança de arquitetura; pode ser feita hoje.
 
-1. **Validar o DeepSeek V4 Pro**: 1 chamada real com `tools` + `stream` para confirmar nome do modelo, function calling, janela, limites e preços; documentar em `.env.example`.
-2. **Bugs P0 rápidos** (doc 07): Bug 3 (vertex hardcoded), Bug 4 (branch morto), Bug 5 (score fixo 80), Bug 6 (detecção triplicada → `code_agent.py`), Bug 7 (prompt legado), Bug 9 (imports Windows), M1-M8.
-3. **Bug 1 (hotfix)**: confirmação pausa em vez de matar a task.
-4. **Bug 2 (hotfix)**: deduplicar bloco de fontes por iteração.
-5. Tabela `llm_usage` + `record_usage()` (doc 01 §3.4) — começar a medir ANTES de mudar, para ter baseline de custo/latência.
+1. [x] **Validar o DeepSeek V4 Pro**: chamada real com `tools` OK (`deepseek-v4-pro` / `deepseek-v4-flash`); defaults BRAIN=Pro em config/.env.example.
+2. [x] **Bugs P0 rápidos** (doc 07): Bug 3, 4, 5, 6 (`code_agent.py`), 7, 9; M1 (temp 0.0 alinhado). Restam M2–M8 parciais.
+3. [x] **Bug 1 (hotfix)**: confirmação pausa e espera `POST /confirm`.
+4. [x] **Bug 2 (hotfix)**: bloco de fontes só no loop (não nas `_inject_*`).
+5. [x] Tabela `llm_usage` + `record_llm_usage()` + métricas em memória.
 
-**Gate de saída:** suíte verde, baseline de métricas coletado em ~10 tasks reais.
+**Gate de saída:** suíte dos novos testes verde (2026-07-18). Baseline em tasks reais: pendente (backend offline neste desktop sem `/media/server` — fallback local ativo).
+
+**Extra adiantado da Fase 2:** tools `file_read/write/edit/append/glob/grep` já no executor + schema (flags nativas ainda off).
 
 ## Fase 1 — Cérebro novo (docs 01 + 02 núcleo) (3-5 dias)
 
