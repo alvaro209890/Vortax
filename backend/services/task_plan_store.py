@@ -130,6 +130,10 @@ class TaskPlanStore:
             for step in steps:
                 if step.get("status") in {"pending", "running"} and step.get("tool_hint") in {"execute", "validate"}:
                     return step
+        if hint == "deliver":
+            for step in reversed(steps):
+                if step.get("status") in {"pending", "running"}:
+                    return step
         return None
 
     def start_step(self, task_id: str, *, hint: str | None = None) -> dict[str, Any] | None:

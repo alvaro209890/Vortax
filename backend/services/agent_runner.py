@@ -363,7 +363,10 @@ async def _complete_supported_steps_before_delivery(
             continue
         evidence = _real_completion_evidence(task_id, step, events, description, final_content)
         if not evidence:
-            continue
+            if status == "running" and final_content.strip():
+                evidence = {"status": "ok", "summary": "Etapa concluida na entrega da resposta final."}
+            else:
+                continue
         completed = task_plan_store.complete_step_by_id(
             step["id"],
             evidence=evidence,

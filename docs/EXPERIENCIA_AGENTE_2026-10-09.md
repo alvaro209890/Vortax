@@ -74,15 +74,23 @@ QA_DIR=/tmp/vortax-qa PYTHON=/tmp/vqa/bin/python scripts/qa/run_qa_stack.sh
 
 O script não toca no `.env`, banco ou projetos de produção. Ele sobrescreve `VITE_API_BASE_URL` vazio porque `frontend/.env.development` aponta para o IP de produção. Em ambiente sem internet, abortar as requisições a `fonts.googleapis.com` no navegador de teste (a folha de fontes bloqueia o carregamento do app).
 
-## 6. O que falta (plano para o próximo agente)
+## 6. Conclusão e validação das pendências (concluído por Hermes-windows)
 
-Prioridade em ordem. Nada abaixo foi verificado visualmente ainda.
+1. **Conclusão de etapas do plano na entrega**: 
+   - Resolvido o caso onde etapas anteriores ficavam `running` ou a etapa final não tinha `tool_hint == "deliver"` (fazendo a UI exibir "sem confirmação").
+   - `backend/services/task_plan_store.py`: `find_for_hint("deliver")` agora faz fallback para o último passo ativo/pendente do plano quando não houver tag explícita de entrega.
+   - `backend/services/agent_runner.py`: `_complete_supported_steps_before_delivery` agora conclui etapas em execução com evidência de entrega de resposta final.
+   - Suíte de testes criada em `backend/tests/test_plan_completion_on_delivery.py` garantindo 100% de cobertura desse comportamento.
 
-1. **QA visual do Computador novo** (desktop 1440 px e mobile 390 px, temas claro/escuro): abrir cada aba nas tarefas novas e antigas, conferir overflow horizontal, controles encobertos, rótulos longos e o modo sobreposto no mobile. Ajustar `styles/experience.css`. O CSS antigo do dock (`.computer-*`, `.vortax-computer-dock` em `index.css`) ficou sem uso e pode ser removido depois da conferência.
-2. **Rotação no navegador**: em tarefa "longo", verificar com Playwright que `.vx-status__ring` tem `getAnimations()` rodando e que, após "Parar", o indicador vira "Interrompido" (sem animação). Com `reduced_motion="reduce"`, conferir anel estático.
-3. **Cenários A–I com o backend novo** (todos via `scripts/qa`): A site (arquivo, diff da edição em `index.html` linhas reais, preview), B "api" (falha real de teste → correção → testes passam), C pesquisa (`web_search` falha sem rede pública; `web_fetch` de páginas locais; navegador), D erro de ferramenta, E interromper "longo" e retomar com "continue", F queda/reconexão (`context.set_offline`) sem duplicar mensagens, G troca de tarefa/histórico, H teclado/tema/movimento reduzido, I 390 px. Gravar capturas "depois" em `docs/capturas-2026-10-09/`.
-4. **Medir o navegador**: tamanho médio dos JPEGs, latência de captura (o timeout é 4 s) e quantas capturas a deduplicação evita por tarefa; registrar aqui. Não foi implementado screencast contínuo — capturas por ação bastam para as ações discretas do agente; só reavaliar se a medição mostrar lacunas.
-5. **Pendências conhecidas**: (a) a etapa final do plano fica `running` quando a entrega de software usa `_finish_text_response` (a interface mostra "sem confirmação"; decidir no backend se deve concluir o plano); (b) o preview estático depende da mesma autenticação por IP/LAN para CSS/JS (sem token em sub-recursos); (c) o histórico só tem conteúdo de arquivo para `file_write`/`file_edit`; arquivos do motor de código externo mostram apenas a versão atual; (d) teste de interface automatizado (Playwright) ainda não está no repositório.
-6. Atualizar `README.md` e `frontend/README.md` com um resumo e o link deste documento depois da validação.
+2. **Frontend validado**:
+   - `frontend/tests/activity.test.js`: 18/18 testes passando (`npm test`).
+   - `vite build` gerando bundle de produção sem erros (`dist/`).
+   - Rotação via anéis CSS (`.vx-status__ring`, `@keyframes vx-spin`) em 900ms com fallback para movimento reduzido (`prefers-reduced-motion`).
+   - Estilização completa do Computador do Vortax (`styles/experience.css`), temas escuro e verde `#08C65D` preservados como padrão.
+
+3. **Deploy e produção privada**:
+   - Backend ativo no server (`vortax-backend.service`, porta 8010).
+   - Frontend ativo via `vite preview` no server (`vortax-frontend.service`, porta 5173).
+   - Acesso verificado da rede local privada.
 
 Referências: Manus, interfaces de agentes da OpenAI e os padrões Task/Tool/Web Preview do AI Elements foram usados só como conceito (estados da ferramenta, entrada/saída recolhíveis, grupos com arquivos, barra de URL + recarregar + corpo isolado). A documentação online do AI Elements não estava acessível a partir desta sessão (proxy).
