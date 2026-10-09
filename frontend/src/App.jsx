@@ -206,6 +206,10 @@ function buildMessages(task, events, responseReady = true, options = {}) {
       eventIndex,
       role: event.type === "user_message" ? "user" : "assistant",
       content: event.payload.content,
+      prompt: taskPromptForEvent(events, eventIndex) || task.description,
+      final: event.type === "assistant_message_done",
+      delivery: event.payload.delivery || null,
+      archive: event.payload.archive || null,
       createdAt: event.created_at,
       downloads: event.payload.downloads || [],
       documentation: event.payload.documentation || null,
@@ -1056,6 +1060,7 @@ export default function App() {
                 activeSearch={activeSearch}
                 agentBusy={agentBusy || Boolean(pendingPreparation)}
                 events={currentEvents}
+                files={files}
                 isTyping={showTyping}
                 livePlan={displayPlan}
                 messages={messages}

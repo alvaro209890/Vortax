@@ -27,6 +27,7 @@ from services.exact_solver import is_exact_prompt, should_answer_directly
 from services.research_execution import RESEARCH_TOOLS, evidence_fallback, is_research_task
 from services.task_plan_store import task_plan_store
 from services.task_store import TaskStore
+from services.software_delivery import DELIVERY_INSTRUCTION, archive_requested, software_request
 from tools.tool_executor import execute_tool
 
 logger = logging.getLogger("vortax.agent.loop")
@@ -213,6 +214,7 @@ async def run_native_agent_loop(
         _answer_simple_prompt,
         _history_with_user_profile,
         _latest_user_prompt,
+        _finish_text_response,
     )
 
     store.update_status(task_id, "running")
@@ -224,6 +226,11 @@ async def run_native_agent_loop(
         await bus.publish(task_id, "context_compacted", context_payload)
     await bus.publish(task_id, "context_status", context_payload)
     latest_prompt = _latest_user_prompt(history) or description
+    software_task = software_request(latest_prompt)
+    if archive_requested(latest_prompt) and not software_task:
+        await _finish_text_response(task_id, latest_prompt, "", store, bus)
+        return
+    stream_response = bool(getattr(settings, "DEEPSEEK_STREAMING", False)) and not software_task
 
     # Conversa, pergunta curta ou conta exata não precisam de plano, ferramentas nem portões:
     # vai direto ao modelo numa chamada só.
@@ -258,6 +265,8 @@ async def run_native_agent_loop(
         )
 
     tools = openai_tools_payload()
+    if software_task:
+        messages.append({"role": "system", "content": DELIVERY_INSTRUCTION})
     research_task = is_research_task(latest_prompt)
     if research_task:
         tools = [tool for tool in tools if tool["function"]["name"] in RESEARCH_TOOLS]
@@ -322,7 +331,7 @@ async def run_native_agent_loop(
         turn_request = request_agent_turn(
             turn_messages,
             tools=turn_tools,
-            stream=bool(getattr(settings, "DEEPSEEK_STREAMING", False)),
+            stream=stream_response,
             bus=bus,
             task_id=task_id,
             purpose="fast" if research_task else "brain",
@@ -342,7 +351,7 @@ async def run_native_agent_loop(
         tool_calls = turn.get("tool_calls") or []
         if finishing and tool_calls:
             # Some providers still return calls after tools=None. Never execute them after the budget.
-            if getattr(settings, "DEEPSEEK_STREAMING", False):
+            if stream_response:
                 await bus.publish(task_id, "assistant_message_discard", {"reason": "budget"})
             if research_task:
                 turn["content"] = evidence_fallback(database.list_sources(task_id))
@@ -351,7 +360,7 @@ async def run_native_agent_loop(
                 messages.append({"role": "system", "content": FINISH_NOW_MESSAGE})
                 continue
         content = (turn.get("content") or "").strip() if turn.get("content") else ""
-        streamed = bool(getattr(settings, "DEEPSEEK_STREAMING", False)) and bool(content)
+        streamed = stream_response and bool(content)
 
         if tool_calls:
             # Texto que veio junto com tool_calls não é a entrega: o front descarta o que já
@@ -495,6 +504,9 @@ async def run_native_agent_loop(
             continue
 
         # Entrega
+        if software_task:
+            await _finish_text_response(task_id, latest_prompt, content, store, bus)
+            return
         if not (getattr(settings, "DEEPSEEK_STREAMING", False) and content):
             # se não streamou, publicar de uma vez
             # (com stream, deltas já saíram; ainda assim done fecha)

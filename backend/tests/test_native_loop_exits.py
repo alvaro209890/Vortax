@@ -77,6 +77,9 @@ def run_loop(
                 new=mock.AsyncMock(return_value=(history, {"status": "ok", "percent": 1}, False)),
             ),
             mock.patch.object(loop_mod, "evaluate_delivery_gates", return_value=[blocked] if gate_blocks else []),
+            # Native software now shares the finalizer; keep this loop fixture isolated from persistence.
+            mock.patch("services.agent_runner.prepare_context_history", new=mock.AsyncMock(return_value=(history, {}, False))),
+            mock.patch("services.agent_runner._save_task_title", new=mock.AsyncMock()),
         ]
         patches.append(mock.patch.object(loop_mod.settings, "DEEPSEEK_STREAMING", streaming))
         if budget is not None:

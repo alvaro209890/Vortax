@@ -22,8 +22,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
-import { fileDownloadUrl } from "../lib/api.js";
+import { fileDownloadUrl, getAuthToken, taskDownloadZipUrl } from "../lib/api.js";
 import { isToolWorkEvent } from "../lib/events.js";
+import { presentSoftwareMessage } from "../lib/softwareDelivery.js";
 
 /* ── Code Block with Copy Button ─────────────────────────────────── */
 
@@ -446,6 +447,7 @@ function MessageArticle({ message, onOpenDocument }) {
         ) : null}
         <MessageDocuments documents={message.documents} onOpenDocument={onOpenDocument} taskId={message.taskId} />
         <MessageDownloads downloads={message.downloads} excludedPaths={documentPaths} taskId={message.taskId} />
+        {message.archive && <ProjectArchive archive={message.archive} taskId={message.taskId} />}
         {message.images?.length > 0 && (
           <div className="message-images">
             {message.images.map((image, index) => (
@@ -1109,10 +1111,26 @@ function MessageDownloads({ downloads = [], excludedPaths = new Set(), taskId })
 
 /* ── Message List ────────────────────────────────────────────────── */
 
+function ProjectArchive({ archive, taskId }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    let active = true;
+    getAuthToken().then(() => { if (active) setUrl(taskDownloadZipUrl(taskId)); });
+    return () => { active = false; };
+  }, [taskId]);
+  return <div className="message-downloads">
+    <a className="message-download-btn" href={url || undefined} download={archive.name} aria-disabled={!url}>
+      {url ? <Download size={15} /> : <Loader2 size={15} className="spin" />}
+      <span>{url ? `Baixar projeto ZIP · ${archive.file_count} arquivos` : "Preparando ZIP…"}</span>
+    </a>
+  </div>;
+}
+
 export function MessageList({
   activeSearch,
   agentBusy = false,
   events = [],
+  files = [],
   isTyping = false,
   messages,
   onComputerFocus,
@@ -1121,8 +1139,8 @@ export function MessageList({
   const endRef = useRef(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const timelineItems = useMemo(
-    () => buildTimelineItems(messages, events, agentBusy, activeSearch, pendingPreparation),
-    [activeSearch, agentBusy, events, messages, pendingPreparation],
+    () => buildTimelineItems(messages.map((message) => presentSoftwareMessage(message, files, events)), events, agentBusy, activeSearch, pendingPreparation),
+    [activeSearch, agentBusy, events, files, messages, pendingPreparation],
   );
   const showTypingMessage = isTyping && !timelineItems.some((item) => item.type === "progress");
   const lastTimelineKey = timelineItems.at(-1)?.key || "";

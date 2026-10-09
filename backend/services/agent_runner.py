@@ -938,6 +938,11 @@ def _format_document_research_gate_instruction(description: str, status: dict[st
 
 
 def _generated_file_response_payload(task_id: str, result: str, events: list[dict[str, Any]]) -> dict[str, Any]:
+    from services.software_delivery import delivery_payload
+    prompt = next((str(event.get("payload", {}).get("content") or "") for event in reversed(events) if event.get("type") == "user_message"), "")
+    software_payload = delivery_payload(task_id, prompt, events, settings.WORKSPACE_PATH / task_id)
+    if software_payload is not None:
+        return software_payload
     latest_call = _latest_code_agent_call(events)
     command = latest_call[1] if latest_call else ""
     files = [
@@ -1000,8 +1005,7 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
     if docs:
         payload["documentation"] = _file_payload(docs[0])
 
-    # Se o resultado ja tem um bloco de codigo ou e longo, nao sobrescrevemos com a mensagem padrao
-    # Isso permite que o codigo apareça no chat com o botao de copiar
+    # Preserve requested document/explanation content outside software delivery.
     has_code = "```" in result
     is_short = len(result.strip()) < 50
 
@@ -1081,6 +1085,7 @@ async def _finish_text_response(
     bus: EventBus,
     *,
     emit_activity: bool = True,
+    refresh_context: bool = True,
 ) -> None:
     signup = credential_store.signup_summary(task_id)
     if signup:
@@ -1108,7 +1113,8 @@ async def _finish_text_response(
     final_content = _sanitize_chat_content(str(payload.get("content") or result))
     payload["content"] = final_content
     store.update_status(task_id, "done", result=final_content)
-    asyncio.create_task(_save_task_title(task_id, description, bus))
+    if refresh_context:
+        asyncio.create_task(_save_task_title(task_id, description, bus))
     await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluido"})
     await bus.publish(task_id, "assistant_message_done", payload)
     if emit_activity:
@@ -1127,10 +1133,11 @@ async def _finish_text_response(
         evidence={"status": "ok", "summary": "Resposta final entregue ao usuario."},
     )
     await _cleanup_project_runtime(task_id, bus, "Servidor temporario do projeto fechado apos a resposta no chat.")
-    _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
-    if final_compacted:
-        await bus.publish(task_id, "context_compacted", final_context)
-    await bus.publish(task_id, "context_status", final_context)
+    if refresh_context:
+        _, final_context, final_compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+        if final_compacted:
+            await bus.publish(task_id, "context_compacted", final_context)
+        await bus.publish(task_id, "context_status", final_context)
     await bus.publish(task_id, "agent_status", {"status": "done", "label": "Entrega pronta"})
 
 
@@ -1863,6 +1870,10 @@ async def _run_agent_task_inner(
 
         history = _history_with_user_profile(history, user_profile)
         latest_prompt = _latest_user_prompt(history) or description
+        from services.software_delivery import archive_requested, software_request
+        if archive_requested(latest_prompt) and not software_request(latest_prompt):
+            await _finish_text_response(task_id, latest_prompt, "", store, bus)
+            return
         if is_exact_prompt(latest_prompt):
             await _complete_plan_step(task_id, "understand", bus)
             await _start_plan_step(task_id, "execute", bus)
@@ -2375,6 +2386,11 @@ async def run_agent_task(
 ) -> None:
     """Entrypoint: loop nativo (Fase 1) quando USE_NATIVE_TOOLS=true; senão legado JSON."""
     try:
+        from services.software_delivery import archive_requested, software_request
+        if archive_requested(description) and not software_request(description):
+            store.update_status(task_id, "running")
+            await _finish_text_response(task_id, description, "", store, bus, refresh_context=False)
+            return
         use_native = bool(getattr(settings, "USE_NATIVE_TOOLS", False)) and deepseek_configured()
         if use_native:
             try:

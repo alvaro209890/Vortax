@@ -3,7 +3,6 @@ import base64
 import contextlib
 import io
 import re
-import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -149,7 +148,8 @@ def _store_authorization(task_id: str, user_id: str, payload: AuthorizedTaskCrea
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 async def _create_live_plan(task_id: str, description: str, *, replan: bool = False) -> list[dict]:
-    if should_answer_directly(description):
+    from services.software_delivery import archive_requested, software_request
+    if should_answer_directly(description) or (archive_requested(description) and not software_request(description)):
         steps = task_plan_store.replace_plan(task_id, direct_response_steps(description), description)
         event_type = "task_plan_replanned" if replan else "task_plan_created"
         await event_bus.publish(task_id, event_type, {"steps": steps, "direct": True, "fallback": True})
@@ -573,23 +573,11 @@ async def download_task_zip(
     if not project_dir.exists() or not project_dir.is_dir():
         raise HTTPException(status_code=404, detail="Nenhum arquivo encontrado para esta conversa")
 
-    # Coleta todos os arquivos recursivamente
-    file_paths: list[Path] = []
-    for entry in project_dir.rglob("*"):
-        if entry.is_file() and entry.name != ".gitkeep":
-            file_paths.append(entry)
-
-    if not file_paths:
+    from services.software_delivery import build_project_zip
+    try:
+        zip_buffer = await asyncio.to_thread(build_project_zip, project_dir)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Nenhum arquivo encontrado para esta conversa")
-
-    # Gera ZIP em memória
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path in file_paths:
-            arcname = str(file_path.relative_to(project_dir))
-            zf.write(file_path, arcname)
-
-    zip_buffer.seek(0)
 
     task_id_short = task_id[:8]
     filename = f"vortax-{task_id_short}.zip"
