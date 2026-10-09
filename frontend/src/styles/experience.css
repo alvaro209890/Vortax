@@ -66,6 +66,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
+  flex-shrink: 0;
   min-width: 0;
 }
 
@@ -75,9 +77,17 @@
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
+  flex-shrink: 0;
   width: var(--vx-status-size);
   height: var(--vx-status-size);
+  min-width: var(--vx-status-size);
+  min-height: var(--vx-status-size);
+  max-width: var(--vx-status-size);
+  max-height: var(--vx-status-size);
+  aspect-ratio: 1 / 1;
   border-radius: 50%;
+  box-sizing: border-box;
+  overflow: hidden;
   color: var(--status-muted);
   transition: background-color var(--dur-micro) var(--ease-standard), color var(--dur-micro) var(--ease-standard), border-color var(--dur-micro) var(--ease-standard);
 }
@@ -133,6 +143,16 @@
   display: grid;
   place-items: center;
   line-height: 0;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.vx-status__glyph svg {
+  display: block;
+  flex: 0 0 auto;
+  flex-shrink: 0;
 }
 
 .vx-status__glyph-text {
@@ -1711,7 +1731,13 @@ code.vx-target {
   text-align: left;
 }
 
-.vx-term__list li button span {
+.vx-term__list li button .vx-status-wrap {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+}
+
+.vx-term__list li button .vx-term__title,
+.vx-term__list li button > span:not(.vx-status-wrap) {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1721,6 +1747,8 @@ code.vx-target {
 
 .vx-term__list li button time {
   flex: 0 0 auto;
+  flex-shrink: 0;
+  margin-left: auto;
   color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: 10.5px;

@@ -113,7 +113,7 @@ export const TerminalPane = memo(function TerminalPane({ computer }) {
             <li key={entry.id}>
               <button aria-current={entry.id === action.id ? "true" : undefined} className={entry.id === action.id ? "is-active" : ""} onClick={() => computer.selectTerminal(entry.id)} type="button">
                 <StatusIndicator size={12} status={entry.status} />
-                <span>{clip(entry.target?.type === "command" ? entry.target.value : entry.title, 48)}</span>
+                <span className="vx-term__title">{clip(entry.target?.type === "command" ? entry.target.value : entry.title, 48)}</span>
                 <time>{formatClock(entry.startedAt)}</time>
               </button>
             </li>
