@@ -778,7 +778,7 @@ async def _ask_deepseek_for_response(
                 bus,
                 actor="deepseek",
                 target="vertex",
-                message=f"DeepSeek respondeu ao prompt interativo do {CODE_AGENT_LABEL}: {content}",
+                message=f"Vortax respondeu ao prompt interativo do {CODE_AGENT_LABEL}: {content}",
                 kind="auto_response",
             )
         return content[:500]

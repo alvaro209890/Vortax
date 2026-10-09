@@ -12,6 +12,7 @@ const hiddenTypes = new Set([
   "task_step_failed",
   "user_message",
   "assistant_message_delta",
+  "assistant_message_discard",
   "agent_status",
   "agent_progress",
   "shell_stdout",

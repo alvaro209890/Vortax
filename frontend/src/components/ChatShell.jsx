@@ -55,7 +55,7 @@ export function ChatShell({ sidebar, main }) {
     // fecha ao escolher conversa, nova conversa ou tab (não ao digitar busca)
     if (
       event.target.closest(
-        ".task-item, .task-list-header button, .sidebar-tab, .brand, .task-delete"
+        ".task-item, .new-task-btn, .brand, .task-delete"
       )
     ) {
       // task-delete: deixa o handler do delete rodar; ainda fecha drawer

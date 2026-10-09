@@ -1,5 +1,6 @@
 const explicitBaseUrl = import.meta.env.VITE_API_BASE_URL;
-const defaultBaseUrl = `${window.location.protocol}//${window.location.hostname}:8010`;
+// Sem URL explícita, usa a mesma origem: o proxy do Vite (dev e preview) leva /api, /health e /ws ao backend.
+const defaultBaseUrl = window.location.origin;
 
 export const API_BASE_URL = explicitBaseUrl || defaultBaseUrl;
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");

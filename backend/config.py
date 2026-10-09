@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     GROQ_VISION_TIMEOUT_SECONDS: float = 60.0
 
     MAX_ITERATIONS: int = 30
+    # segundos de trabalho do loop nativo antes de forçar a entrega (agent/loop.py)
+    AGENT_TIME_BUDGET_SECONDS: int = 300
     DEEP_RESEARCH_DEPTH: int = 3
     CONTEXT_TOKEN_LIMIT: int = 24000
     CONTEXT_WARNING_RATIO: float = 0.70

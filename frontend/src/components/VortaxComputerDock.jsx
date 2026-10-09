@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { isToolWorkEvent } from "../lib/events.js";
 import {
   ChevronDown,
   ChevronLeft,
@@ -54,8 +55,14 @@ function useElapsedTimer(busy, startTime) {
   const [now, setNow] = useState(Date.now());
   const [frozenElapsed, setFrozenElapsed] = useState("");
   const startRef = useRef(null);
-  startRef.current = startTime;
   const wasBusyRef = useRef(false);
+  // O horário vem do relógio do servidor. Se ele estiver adiantado em relação a esta
+  // máquina, o início cai "no futuro" e o cronômetro travaria em 0:00; nesse caso
+  // conta a partir de quando a tarefa foi vista rodando aqui.
+  const serverStart = startTime ? new Date(startTime).getTime() : NaN;
+  if (!wasBusyRef.current) {
+    startRef.current = Number.isFinite(serverStart) ? Math.min(serverStart, Date.now()) : null;
+  }
 
   useEffect(() => {
     if (busy) {
@@ -804,6 +811,23 @@ const ComputerLiveControls = memo(function ComputerLiveControls({ activeFrameInd
   );
 });
 
+
+const CONNECTION_LABELS = {
+  connecting: "conectando",
+  reconnecting: "reconectando",
+  offline: "sem conexão",
+  error: "falha na conexão",
+  closed: "desconectado",
+};
+
+// "Pedido concluído · 0:42 · reconectando" — repete nada e só fala da conexão quando ela não está ok.
+function dockStatusLine(current, runState, connectionState) {
+  const parts = [current];
+  if (runState && runState !== current && !/conclu/i.test(runState)) parts.push(runState);
+  if (CONNECTION_LABELS[connectionState]) parts.push(CONNECTION_LABELS[connectionState]);
+  return parts.join(" · ");
+}
+
 const ComputerSidePanel = memo(function ComputerSidePanel({
   agentStatus,
   focusScene,
@@ -909,7 +933,7 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
             <strong>Computador do Vortax</strong>
             <span>
               {visiblePreview.mode === "search" || visiblePreview.mode === "browser" ? <Globe2 size={13} /> : <Monitor size={13} />}
-              {panelRunStateLabel ? `${panelRunStateLabel} · ` : ""}{current} · {statusLabel(agentStatus)} · {connectionState}
+              {dockStatusLine(current, panelRunStateLabel, connectionState)}
             </span>
           </div>
           <div className="computer-side-actions">
@@ -1055,12 +1079,13 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
     || preview.label
     || activeTask?.description
     || "Computador do Vortax";
+  // Conversa simples (sem ferramenta) não abre o computador; tarefa em andamento com plano abre.
   const hasDockContent = Boolean(codeAgentProgress)
-    || (livePlan.hasSteps && !livePlan.isDirect)
+    || (busy && livePlan.hasSteps && !livePlan.isDirect)
     || codingSnapshot.hasCodingActivity
     || frameHistory.length > 0
     || Boolean(focusRequest)
-    || promptEvents.some((event) => ["agent_activity", "agent_progress", "tool_call", "tool_result", "source_saved"].includes(event.type));
+    || promptEvents.some(isToolWorkEvent);
 
   const handleOpenSide = useCallback(() => setSideOpen(true), []);
   const handleCloseSide = useCallback(() => setSideOpen(false), []);
@@ -1088,7 +1113,7 @@ export const VortaxComputerDock = memo(function VortaxComputerDock({ activeTask,
               <span className="computer-live-dot" />
               <strong>Computador do Vortax</strong>
             </div>
-            <small>{runStateLabel ? `${runStateLabel} · ` : ""}{current} · {statusLabel(effectiveAgentStatus)} · {connectionState}</small>
+            <small>{dockStatusLine(current, runStateLabel, connectionState)}</small>
           </div>
           <span className="computer-dock-count">{done}/{total || 1}</span>
         </button>

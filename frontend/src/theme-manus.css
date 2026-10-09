@@ -1,0 +1,1019 @@
+/* ══════════════════════════════════════════════════════════════════
+   Camada visual "Manus" do Vortax
+   Carrega depois do index.css e redesenha as superfícies principais:
+   barra lateral fixa, cabeçalho limpo, mensagens sem avatar, composer
+   em cartão, tela inicial centralizada e o "Computador do Vortax".
+   Cores sempre pelos tokens de tema do index.css (claro/escuro).
+   ══════════════════════════════════════════════════════════════════ */
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  letter-spacing: -0.006em;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: rgb(var(--accent-rgb) / 0.22);
+}
+
+/* ── Casca ────────────────────────────────────────────────────────── */
+
+.app-shell.manus-layout,
+.app-shell.manus-layout.sidebar-open,
+.app-shell.manus-layout.sidebar-closed {
+  background: var(--bg-app);
+}
+
+.manus-layout .chat-panel {
+  background: var(--bg-app);
+}
+
+@media (min-width: 769px) {
+  .app-shell.manus-layout.sidebar-open {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
+
+  .manus-layout.sidebar-open .sidebar {
+    position: relative;
+    inset: auto;
+    width: 272px;
+    max-width: none;
+    height: 100dvh;
+    border: 0;
+    border-right: 1px solid var(--border-light);
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .manus-layout .sidebar-backdrop {
+    display: none;
+  }
+
+  .manus-layout.sidebar-open .chat-header {
+    padding-left: 28px;
+  }
+}
+
+/* ── Barra lateral ────────────────────────────────────────────────── */
+
+.manus-layout .sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 12px;
+  background: var(--bg-sidebar);
+  border-color: var(--border-light);
+  box-shadow: var(--shadow-float);
+}
+
+.manus-layout .sidebar-toggle-container {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  z-index: 2;
+  margin: 0;
+}
+
+.manus-layout .sidebar-toggle-btn,
+.manus-layout .sidebar-open-btn,
+.icon-ghost-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.manus-layout .sidebar-toggle-btn:hover,
+.manus-layout .sidebar-open-btn:hover,
+.icon-ghost-btn:hover {
+  background: rgb(var(--ov) / 0.07);
+  color: var(--text-primary);
+}
+
+.manus-layout .sidebar-open-btn {
+  top: 14px;
+  left: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+}
+
+.sidebar-head {
+  min-height: 32px;
+  padding: 0 40px 0 6px;
+  display: flex;
+  align-items: center;
+}
+
+.manus-layout .brand {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.manus-layout .brand strong {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.backend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.backend-dot.online {
+  background: var(--accent);
+}
+
+.backend-dot.offline {
+  background: var(--accent-danger);
+}
+
+.new-task-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+.new-task-btn:hover {
+  background: var(--bg-surface);
+}
+
+.manus-layout .task-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.manus-layout .task-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 8px;
+  padding: 0 10px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: rgb(var(--ov) / 0.05);
+  color: var(--text-muted);
+}
+
+.manus-layout .task-search:focus-within {
+  border-color: var(--border-strong);
+  background: var(--bg-panel);
+}
+
+.manus-layout .task-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.manus-layout .task-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 8px 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.manus-layout .task-item:hover {
+  background: rgb(var(--ov) / 0.05);
+  transform: none;
+}
+
+.manus-layout .task-item.active {
+  background: var(--bg-panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05), inset 0 0 0 1px var(--border-light);
+}
+
+.task-status-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+
+.task-status-dot.done {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.task-status-dot.running,
+.task-status-dot.thinking,
+.task-status-dot.executing,
+.task-status-dot.queued {
+  background: var(--accent-warn);
+  opacity: 1;
+  animation: vx-pulse 1.4s ease-in-out infinite;
+}
+
+.task-status-dot.error {
+  background: var(--accent-danger);
+  opacity: 1;
+}
+
+.manus-layout .task-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.manus-layout .task-content span {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.manus-layout .task-content small {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.manus-layout .task-delete {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.manus-layout .task-item:hover .task-delete,
+.manus-layout .task-item.active .task-delete {
+  opacity: 1;
+}
+
+.manus-layout .task-delete:hover {
+  background: rgb(var(--ov) / 0.08);
+  color: var(--accent-danger);
+}
+
+@media (hover: none) {
+  .manus-layout .task-delete {
+    opacity: 1;
+  }
+}
+
+.manus-layout .panel-state {
+  margin: 8px 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.sidebar-settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.sidebar-back-btn:hover {
+  background: rgb(var(--ov) / 0.06);
+  color: var(--text-primary);
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.sidebar-footer-btn {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.sidebar-footer-btn:hover,
+.sidebar-footer-btn.active {
+  background: rgb(var(--ov) / 0.06);
+  color: var(--text-primary);
+}
+
+/* ── Cabeçalho ────────────────────────────────────────────────────── */
+
+.manus-layout .chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 10px 20px 10px 60px;
+  border-bottom: 1px solid transparent;
+  background: var(--bg-app);
+}
+
+.manus-layout .chat-header-left {
+  min-width: 0;
+}
+
+.chat-title {
+  display: block;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.manus-layout .chat-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.manus-layout .chat-health-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.manus-layout .detail-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.manus-layout .detail-open-btn:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.manus-layout .status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--ov) / 0.06);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: none;
+}
+
+.manus-layout .status-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.manus-layout .status-badge.ok::before {
+  background: var(--accent);
+}
+
+.manus-layout .status-badge.active::before {
+  background: var(--accent-warn);
+  animation: vx-pulse 1.4s ease-in-out infinite;
+}
+
+.manus-layout .status-badge.error::before {
+  background: var(--accent-danger);
+}
+
+.manus-layout .context-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(var(--ov) / 0.06);
+  box-shadow: none;
+}
+
+.manus-layout .context-indicator strong {
+  display: none;
+}
+
+.manus-layout .context-indicator span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.manus-layout .context-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) var(--context-percent, 0%), rgb(var(--ov) / 0.14) 0);
+  box-shadow: none;
+  -webkit-mask: radial-gradient(circle, transparent 3.5px, #000 4px);
+  mask: radial-gradient(circle, transparent 3.5px, #000 4px);
+}
+
+.manus-layout .context-indicator.warning .context-dot {
+  background: conic-gradient(var(--accent-warn) var(--context-percent, 0%), rgb(var(--ov) / 0.14) 0);
+}
+
+.manus-layout .context-indicator.full .context-dot {
+  background: conic-gradient(var(--accent-danger) var(--context-percent, 0%), rgb(var(--ov) / 0.14) 0);
+}
+
+/* ── Mensagens ────────────────────────────────────────────────────── */
+
+.manus-layout .message-list {
+  background: var(--bg-app);
+}
+
+.manus-layout .message-list-inner {
+  width: min(100% - 40px, 760px);
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 0 28px;
+  gap: 22px;
+}
+
+.manus-layout .message {
+  display: flex;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.manus-layout .message-avatar {
+  display: none;
+}
+
+.manus-layout .message-content {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* A bolha do usuário é o próprio article (as media queries do index.css ajustam a largura). */
+.manus-layout .message.user {
+  align-self: flex-end;
+  width: auto;
+  max-width: min(560px, 78%);
+  padding: 10px 15px;
+  border: 0;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--bg-user-bubble);
+}
+
+.manus-layout .message.user .message-content {
+  display: block;
+  color: var(--text-primary);
+}
+
+.manus-layout .message.assistant {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+}
+
+.manus-layout .message.assistant .message-content {
+  display: block;
+  width: 100%;
+}
+
+.manus-layout .message .markdown-body {
+  display: block;
+}
+
+.manus-layout .message-role {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.message-role-mark {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.manus-layout .markdown-body {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.68;
+}
+
+.manus-layout .markdown-body p {
+  margin: 0 0 0.75em;
+}
+
+.manus-layout .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.manus-layout .markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--accent-rgb) / 0.35);
+  text-underline-offset: 3px;
+}
+
+.manus-layout .markdown-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.manus-layout .markdown-body ul,
+.manus-layout .markdown-body ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.3em;
+}
+
+.manus-layout .markdown-body li + li {
+  margin-top: 0.3em;
+}
+
+.manus-layout .markdown-body li::marker {
+  color: var(--text-muted);
+}
+
+.manus-layout .markdown-body h1,
+.manus-layout .markdown-body h2,
+.manus-layout .markdown-body h3 {
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.manus-layout .markdown-body :not(pre) > code {
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  background: rgb(var(--ov) / 0.07);
+  color: var(--text-primary);
+  font-size: 0.88em;
+}
+
+.manus-layout .markdown-body table {
+  border-collapse: collapse;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.manus-layout .markdown-body th,
+.manus-layout .markdown-body td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.manus-layout .markdown-body th {
+  background: var(--bg-surface);
+  font-weight: 600;
+}
+
+.manus-layout .code-block {
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--screen-bg);
+  box-shadow: none;
+}
+
+.manus-layout .typing-status {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Progresso do turno: lista de passos discreta, como os "chips" do Manus */
+.manus-layout .chat-progress-copy {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.manus-layout .chat-progress-current,
+.manus-layout .chat-progress-activity {
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: none;
+}
+
+.manus-layout .chat-progress-current.clickable:hover,
+.manus-layout .chat-progress-activity:hover {
+  background: var(--bg-surface);
+}
+
+/* ── Composer ─────────────────────────────────────────────────────── */
+
+.manus-layout .composer-wrapper {
+  width: min(100% - 40px, 760px);
+  margin: 0 auto;
+  padding: 0 0 16px;
+  background: transparent;
+}
+
+.manus-layout .composer-container {
+  min-height: 0;
+  border: 1px solid var(--border-light);
+  border-radius: 22px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.manus-layout .composer-container:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-float);
+}
+
+.manus-layout .composer-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  grid-template-areas:
+    "text text text text text"
+    "plus lock pill mic send";
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 12px 10px;
+}
+
+.manus-layout .composer-row textarea {
+  grid-area: text;
+  width: 100%;
+  min-height: 48px;
+  padding: 4px 6px 6px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.manus-layout .composer-row textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.manus-layout .composer-row > label.composer-icon-btn {
+  grid-area: plus;
+}
+
+.manus-layout .composer-row > button.composer-icon-btn {
+  grid-area: lock;
+}
+
+.manus-layout .composer-computer-pill {
+  grid-area: pill;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.manus-layout .composer-voice-btn {
+  grid-area: mic;
+}
+
+.manus-layout .composer-send-btn {
+  grid-area: send;
+}
+
+.manus-layout .composer-icon-btn,
+.manus-layout .composer-voice-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-light);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.manus-layout .composer-icon-btn:hover,
+.manus-layout .composer-voice-btn:hover {
+  background: rgb(var(--ov) / 0.06);
+  color: var(--text-primary);
+}
+
+.manus-layout .composer-send-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(var(--ov) / 0.1);
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.manus-layout .composer-send-btn.active {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+}
+
+.manus-layout .composer-send-btn.stop-mode {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+}
+
+/* ── Tela inicial ─────────────────────────────────────────────────── */
+
+.manus-layout .onboarding-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 0 20px 12vh;
+  overflow-y: auto;
+  background: var(--bg-app);
+}
+
+.manus-layout .onboarding-hero {
+  width: min(100%, 760px);
+  margin: 0 0 22px;
+  text-align: left;
+}
+
+.manus-layout .onboarding-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.manus-layout .onboarding-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.onboarding-composer {
+  width: min(100%, 760px);
+}
+
+.onboarding-composer .composer-wrapper {
+  width: 100%;
+  padding: 0;
+}
+
+.onboarding-composer .composer-row textarea {
+  min-height: 72px;
+}
+
+.onboarding-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 760px);
+  margin-top: 18px;
+}
+
+.onboarding-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.onboarding-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/* ── Computador do Vortax (dock acima do composer) ────────────────── */
+
+.manus-layout .vortax-computer-dock {
+  width: min(100% - 40px, 760px);
+  margin: 0 auto 8px;
+}
+
+.manus-layout .computer-dock-bar,
+.manus-layout .computer-dock-inline-panel {
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.manus-layout .computer-dock-main strong {
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.manus-layout .computer-dock-main small {
+  color: var(--text-muted);
+}
+
+.manus-layout .computer-live-dot {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.manus-layout .computer-dock-detail-btn,
+.manus-layout .computer-dock-toggle {
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.manus-layout .computer-dock-detail-btn:hover,
+.manus-layout .computer-dock-toggle:hover {
+  background: rgb(var(--ov) / 0.06);
+  color: var(--text-primary);
+}
+
+/* ── Gerais ───────────────────────────────────────────────────────── */
+
+.submit-error {
+  width: min(100% - 40px, 760px);
+  margin: 0 auto 8px;
+  padding: 9px 14px;
+  border: 1px solid rgb(217 69 59 / 0.25);
+  border-radius: 12px;
+  background: rgb(217 69 59 / 0.08);
+  color: var(--accent-danger);
+  font-size: 13px;
+}
+
+@keyframes vx-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 768px) {
+  .manus-layout .chat-header {
+    padding: 10px 12px 10px 56px;
+  }
+
+  .manus-layout .detail-open-btn span,
+  .manus-layout .context-indicator {
+    display: none;
+  }
+
+  .manus-layout .message-list-inner,
+  .manus-layout .composer-wrapper,
+  .manus-layout .vortax-computer-dock,
+  .submit-error {
+    width: calc(100% - 32px);
+  }
+
+  .manus-layout .composer-computer-pill {
+    display: none;
+  }
+
+  .manus-layout .onboarding-screen {
+    padding: 0 16px 8vh;
+  }
+
+  .manus-layout .message.user .message-content {
+    max-width: 88%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-status-dot,
+  .manus-layout .status-badge.active::before {
+    animation: none;
+  }
+}

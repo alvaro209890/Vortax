@@ -11,133 +11,84 @@ import {
 const EXAMPLES = [
   {
     icon: Globe,
-    category: "Pesquisa",
-    color: "blue",
     prompt: "Pesquise as últimas notícias sobre inteligência artificial e me faça um resumo detalhado com as fontes",
-    label: "Resumo de notícias sobre IA",
-    detail: "Pesquisa na web + múltiplas fontes",
+    label: "Resumo de notícias de IA",
   },
   {
     icon: Code2,
-    category: "Desenvolvimento",
-    color: "green",
     prompt: "Crie um site de portfólio moderno e responsivo com HTML, CSS e JavaScript — dark mode, animações suaves e seções de projetos e contato",
-    label: "Site de portfólio completo",
-    detail: "HTML + CSS + JS • validação automática",
+    label: "Site de portfólio",
   },
   {
     icon: FileSearch,
-    category: "Análise",
-    color: "purple",
-    prompt: "Compare os planos e preços das principais operadoras de internet fibra no Brasil em 2025 e indique o melhor custo-benefício",
-    label: "Comparação de planos de internet",
-    detail: "Pesquisa em múltiplas fontes + tabela",
+    prompt: "Compare os planos e preços das principais operadoras de internet fibra no Brasil e indique o melhor custo-benefício",
+    label: "Comparar planos de internet",
   },
   {
     icon: Terminal,
-    category: "Script",
-    color: "orange",
     prompt: "Crie um script Python que monitora uma pasta e renomeia automaticamente os arquivos de imagem com data e tamanho no nome",
-    label: "Script de organização de arquivos",
-    detail: "Python • pronto para executar",
+    label: "Script de organização",
   },
   {
     icon: Zap,
-    category: "Automação",
-    color: "yellow",
     prompt: "Pesquise e compare os 5 melhores notebooks para programação com preços atuais no Brasil, incluindo prós e contras de cada um",
-    label: "Comparativo de notebooks 2025",
-    detail: "Pesquisa de preços + análise técnica",
+    label: "Comparativo de notebooks",
   },
   {
     icon: Sparkles,
-    category: "Criação",
-    color: "cyan",
     prompt: "Desenvolva uma API REST completa em Python com FastAPI para gerenciar uma lista de tarefas — endpoints de CRUD, validação e documentação",
     label: "API REST com FastAPI",
-    detail: "Python + FastAPI • com documentação",
   },
 ];
 
-const COLOR_MAP = {
-  blue:   { bg: "rgba(59, 130, 246, 0.1)",  border: "rgba(59, 130, 246, 0.2)",  icon: "#60a5fa" },
-  green:  { bg: "rgba(8, 198, 93, 0.1)",    border: "rgba(8, 198, 93, 0.2)",    icon: "#08C65D" },
-  purple: { bg: "rgba(168, 85, 247, 0.1)",  border: "rgba(168, 85, 247, 0.2)",  icon: "#c084fc" },
-  orange: { bg: "rgba(249, 115, 22, 0.1)",  border: "rgba(249, 115, 22, 0.2)",  icon: "#fb923c" },
-  yellow: { bg: "rgba(234, 179, 8, 0.1)",   border: "rgba(234, 179, 8, 0.2)",   icon: "#facc15" },
-  cyan:   { bg: "rgba(6, 182, 212, 0.1)",   border: "rgba(6, 182, 212, 0.2)",   icon: "#22d3ee" },
-};
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Bom dia";
+  if (hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
 
-export function OnboardingScreen({ onSubmit }) {
-  function handleExample(prompt) {
-    onSubmit(prompt, []);
-  }
-
+export function OnboardingScreen({ composer, onSubmit }) {
   return (
     <div className="onboarding-screen">
       <motion.div
         className="onboarding-hero"
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
       >
-        <img src="/vortax-logo.png" alt="Vortax" className="onboarding-logo" />
-        <h1 className="onboarding-title">Como posso ajudar hoje?</h1>
-        <p className="onboarding-subtitle">
-          Pesquiso na web, crio software completo, analiso dados e opero este computador
-          enquanto você acompanha tudo em tempo real.
-        </p>
-
-        <div className="onboarding-caps">
-          <span><Globe size={12} /> Pesquisa com múltiplas fontes</span>
-          <span><Code2 size={12} /> Desenvolvimento de software</span>
-          <span><Zap size={12} /> Execução de scripts</span>
-          <span><FileSearch size={12} /> Análise e comparação</span>
-        </div>
+        <h1 className="onboarding-title">{greeting()}!</h1>
+        <p className="onboarding-subtitle">O que posso fazer por você?</p>
       </motion.div>
 
       <motion.div
-        className="onboarding-grid"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.4, delay: 0.12, ease: "easeOut" }}
+        className="onboarding-composer"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.06, ease: "easeOut" }}
       >
-        {EXAMPLES.map((example, index) => {
-          const colors = COLOR_MAP[example.color];
-          const Icon = example.icon;
-          return (
-            <motion.button
-              key={example.label}
-              className="onboarding-card"
-              style={{
-                "--card-bg": colors.bg,
-                "--card-border": colors.border,
-                "--card-icon": colors.icon,
-              }}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.15 + index * 0.05, ease: "easeOut" }}
-              whileHover={{ y: -2, scale: 1.01 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => handleExample(example.prompt)}
-              type="button"
-            >
-              <div className="onboarding-card-icon">
-                <Icon size={16} />
-              </div>
-              <div className="onboarding-card-body">
-                <span className="onboarding-card-category">{example.category}</span>
-                <strong className="onboarding-card-label">{example.label}</strong>
-                <span className="onboarding-card-detail">{example.detail}</span>
-              </div>
-            </motion.button>
-          );
-        })}
+        {composer}
       </motion.div>
 
-      <p className="onboarding-hint">
-        Clique em um exemplo ou escreva sua própria tarefa no campo abaixo
-      </p>
+      <motion.div
+        className="onboarding-chips"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.35, delay: 0.14, ease: "easeOut" }}
+      >
+        {EXAMPLES.map(({ icon: Icon, label, prompt }) => (
+          <button
+            className="onboarding-chip"
+            key={label}
+            onClick={() => onSubmit(prompt, [])}
+            title={prompt}
+            type="button"
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
+      </motion.div>
     </div>
   );
 }

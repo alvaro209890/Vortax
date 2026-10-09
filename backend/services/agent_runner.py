@@ -185,6 +185,27 @@ def _activity_for_action(action_name: str, action_params: dict[str, Any] | None 
         return "code", "Executando comando", {"command": command[:220]}
     if action_name == "exact_solve":
         return "analysis", "Resolvendo cálculo", {}
+    # ferramentas do loop nativo
+    if action_name == "web_search":
+        return "search", "Pesquisando na web", {"query": str(params.get("query") or "").strip()}
+    if action_name == "web_fetch":
+        return "source", "Lendo página", {"url": str(params.get("url") or "").strip()}
+    if action_name in {"shell_exec", "shell_view", "shell_write", "shell_kill"}:
+        return "code", "Executando comando", {"command": str(params.get("command") or "")[:220]}
+    if action_name == "file_read":
+        return "file", "Lendo arquivo", {"file": str(params.get("path") or "")}
+    if action_name in {"file_write", "file_edit", "file_append"}:
+        return "file", "Editando arquivo", {"file": str(params.get("path") or "")}
+    if action_name in {"glob", "grep"}:
+        return "file", "Procurando arquivos", {}
+    if action_name == "validate_project":
+        return "validation", "Validando projeto", {}
+    if action_name == "document_render":
+        return "file", "Gerando documento", {}
+    if action_name == "vision_analyze":
+        return "analysis", "Analisando imagem", {}
+    if action_name == "todo_write":
+        return "analysis", "Atualizando plano", {}
     return "analysis", "Executando etapa", {}
 
 
@@ -1337,7 +1358,7 @@ async def _inject_pre_research_if_needed(
             "agent_progress",
             {
                 "label": "Pesquisa de referencias concluida",
-                "detail": f"Dados coletados. O DeepSeek usara as referencias ao planejar a criacao com {CODE_AGENT_LABEL}.",
+                "detail": f"Dados coletados. O Vortax usara as referencias ao planejar a criacao com {CODE_AGENT_LABEL}.",
             },
         )
         await publish_agent_activity(
@@ -2335,7 +2356,7 @@ async def _run_agent_task_inner(
         await bus.publish(task_id, "error", {"message": str(exc)})
         await _fail_running_plan_step(task_id, bus, str(exc))
         await _cleanup_project_runtime(task_id, bus, "Tarefa finalizada com erro; preview interno fechado.")
-        await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no DeepSeek"})
+        await bus.publish(task_id, "agent_status", {"status": "error", "label": "Erro no modelo"})
     except Exception as exc:
         store.update_status(task_id, "error", result=str(exc))
         await bus.publish(task_id, "error", {"message": str(exc)})

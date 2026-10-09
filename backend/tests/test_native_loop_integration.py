@@ -9,6 +9,10 @@ from unittest import mock
 from tests.live_helpers import apply_key_to_settings, live_enabled
 
 
+# Pedido de tarefa (conversa simples como "diga oi" agora vai pela resposta rápida).
+PROMPT = "Pesquise as novidades do Python 3.14 e entregue um resumo"
+
+
 class NativeLoopMockTests(unittest.TestCase):
     def test_loop_delivers_when_model_returns_content(self):
         from agent import loop as loop_mod
@@ -38,7 +42,11 @@ class NativeLoopMockTests(unittest.TestCase):
                 loop_mod, "database"
             ) as db, mock.patch.object(loop_mod, "evaluate_delivery_gates", return_value=[]), mock.patch.object(
                 loop_mod, "first_blocking_gate", return_value=None
-            ), mock.patch.object(loop_mod, "publish_agent_activity", new=mock.AsyncMock()):
+            ), mock.patch.object(loop_mod, "publish_agent_activity", new=mock.AsyncMock()), mock.patch.object(
+                loop_mod,
+                "prepare_context_history",
+                new=mock.AsyncMock(return_value=([{"role": "user", "content": PROMPT}], {"status": "ok"}, False)),
+            ):
                 plan.list_steps.return_value = []
                 plan.replace_plan.return_value = [{"id": "s1", "status": "pending"}]
                 plan.complete_step_by_id.return_value = {}
@@ -54,7 +62,7 @@ class NativeLoopMockTests(unittest.TestCase):
                     events.append((etype, payload))
 
                 bus.publish = capture  # type: ignore
-                await loop_mod.run_native_agent_loop(task_id, "diga oi", store, bus)
+                await loop_mod.run_native_agent_loop(task_id, PROMPT, store, bus)
                 return events
 
         events = asyncio.run(_run())

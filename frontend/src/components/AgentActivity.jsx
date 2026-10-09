@@ -504,7 +504,7 @@ export function CodeAgentProgressPanel({ events, taskDescription }) {
 }
 
 function actorLabel(actor) {
-  if (actor === "deepseek") return "DeepSeek";
+  if (actor === "deepseek") return "Modelo";
   if (actor === "openclaude" || actor === "vertex") return "Vortax";
   return "Vortax";
 }

@@ -4,7 +4,7 @@
 
 > Versão MVP local em LAN. Sem autenticação, sem hospedagem externa.
 
-> Deploy externo atual: frontend publicado no Firebase Hosting em `https://notazap-2520f.web.app`; backend local exposto por Cloudflare Tunnel em `https://vortax-api.cursar.space`.
+> Deploy atual (09/10/2026): roda no servidor de casa, **só na rede local/Tailscale**, sem login — `http://192.168.0.104:5173`. O front é servido por `vite preview`, que faz proxy de `/api`, `/health` e `/ws` para o backend em `127.0.0.1:8010`. O Firebase Hosting e o túnel `vortax-api.cursar.space` estão parados. Mudanças desta rodada em [`docs/ATUALIZACAO_2026-10-09.md`](docs/ATUALIZACAO_2026-10-09.md).
 
 ---
 
@@ -81,7 +81,7 @@ Por padrão, `WORKSPACE_PATH` aponta para:
 - **Indicador de contexto** — bolinha no topo do chat mostra se o contexto está ok, quase cheio ou compactado
 - **Upload de imagens** — envie prints ou fotos para análise com IA (Groq/Llama 4 Scout)
 - **Indicador de digitação** — enquanto a IA prepara a resposta, o chat mostra os três pontos animados no balão do Vortax
-- **Agente ReAct / function calling** — DeepSeek **V4 Pro** (loop nativo) decide tools → executa → avalia → repete; Flash para título; fallback JSON legado se `USE_NATIVE_TOOLS=false`
+- **Agente ReAct / function calling** — o modelo (hoje `ag/gemini-3.8-flash-high` pelo 9Router, endpoint compatível com OpenAI; as variáveis continuam `DEEPSEEK_*`) decide tools → executa → avalia → repete; fallback JSON legado se `USE_NATIVE_TOOLS=false`. O loop tem saída garantida: o portão de entrega recusa no máximo 2 vezes e há orçamento de tempo (`AGENT_TIME_BUDGET_SECONDS`, padrão 300 s)
 - **Desenvolvimento de software** — usa o motor interno do Vortax para criar projetos completos
 - **Validação pós-desenvolvimento** — sites passam por preview/Chrome/visão; scripts Python passam por `py_compile`; projetos Node/JS passam por checagem de sintaxe, build e testes quando aplicável
 - **Correção automática de bugs** — se `web_validation` ou `project_validation` falhar, o runner impede `finish`, corrige os bugs e repete a validação
@@ -192,9 +192,9 @@ A documentação dedicada do frontend fica em [`frontend/README.md`](frontend/RE
 
 ## Respostas Rápidas e Exatas
 
-O runner possui um roteador antes do planner:
+O runner possui um roteador antes do planner (vale para o loop nativo e para o legado):
 
-- Perguntas simples, conceituais e curtas usam resposta direta do DeepSeek no chat, sem abrir ciclo de planejamento.
+- Perguntas simples, conceituais e curtas usam resposta direta do modelo no chat, numa chamada só, sem plano, ferramentas nem portões.
 - Pedidos de criação, correção, publicação, automação, pesquisa ou dado atual continuam no planner com ferramentas.
 - Pesquisas sobre pessoas disparam consultas automáticas em LinkedIn, GitHub, Wikipedia, currículos e notícias.
 - Perguntas de matemática/exatas chamam `exact_solve` antes de responder. A tool resolve contas, porcentagens e equações simples de forma determinística.

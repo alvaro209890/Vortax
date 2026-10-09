@@ -59,7 +59,13 @@ export const API_BASE_URL = explicitBaseUrl || defaultBaseUrl;
 export const WS_BASE_URL = API_BASE_URL.replace(/^http/, "ws");
 ```
 
-Em desenvolvimento local, sem variável de ambiente, o frontend usa o mesmo host na porta `8010`. Em produção, use `VITE_API_BASE_URL` para apontar para o backend público.
+Sem variável de ambiente o frontend chama a **mesma origem** (`/api`, `/health`, `/ws`) e o proxy do Vite — no `npm run dev` e no `vite preview` — leva ao backend (`VORTAX_API_TARGET`, padrão `http://127.0.0.1:8010`). Assim funciona igual na LAN, no Tailscale e atrás de túnel. Use `VITE_API_BASE_URL` só se o backend estiver em outro host.
+
+Para desenvolver de outra máquina apontando para o backend do servidor:
+
+```bash
+VORTAX_API_TARGET=http://192.168.0.104:8010 npm run dev
+```
 
 Arquivo de produção esperado:
 

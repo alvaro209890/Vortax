@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from agent.gates import evaluate_delivery_gates, first_blocking_gate
@@ -13,17 +14,42 @@ from agent.tools.registry import openai_tools_payload, tool_is_read_only
 from config import settings
 from database import database
 from services.activity_events import publish_agent_activity
+from services.context_manager import prepare_context_history
 from services.deepseek_client import (
     DeepSeekError,
     deepseek_configured,
     request_agent_turn,
 )
 from services.event_bus import EventBus
+from services.exact_solver import is_exact_prompt, should_answer_directly
 from services.task_plan_store import task_plan_store
 from services.task_store import TaskStore
 from tools.tool_executor import execute_tool
 
 logger = logging.getLogger("vortax.agent.loop")
+
+# Recusas do portão de entrega antes de aceitar a resposta como está.
+MAX_GATE_REJECTIONS = 2
+# Tempo máximo de trabalho antes de pedir a entrega com o que já foi apurado
+# (sobrescreve com AGENT_TIME_BUDGET_SECONDS no .env).
+DEFAULT_TIME_BUDGET_SECONDS = 300
+FINISH_NOW_MESSAGE = (
+    "[GATE:finish] Tempo de trabalho esgotado. Não use mais ferramentas: escreva agora a "
+    "entrega final em markdown com o que já apurou, citando as fontes consultadas e "
+    "deixando claro o que ficou sem confirmação."
+)
+
+
+def _api_history(history: list[dict[str, Any]], fallback: str) -> list[dict[str, str]]:
+    """Histórico do context_manager no formato da API (só role/content, sem vazios)."""
+    cleaned = [
+        {"role": str(item.get("role")), "content": str(item.get("content") or "")}
+        for item in history
+        if item.get("role") in {"user", "assistant", "system"} and str(item.get("content") or "").strip()
+    ]
+    if not cleaned or cleaned[-1]["role"] != "user":
+        cleaned.append({"role": "user", "content": fallback})
+    return cleaned
 
 
 def _native_system_prompt(user_id: str | None = None) -> str:
@@ -177,9 +203,36 @@ async def run_native_agent_loop(
         user_profile=user_profile,
     )
 
+    # import local: agent_runner importa este módulo dentro de run_agent_task
+    from services.agent_runner import (
+        _answer_exact_prompt,
+        _answer_simple_prompt,
+        _history_with_user_profile,
+        _latest_user_prompt,
+    )
+
     store.update_status(task_id, "running")
-    await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando (nativo)"})
-    await bus.publish(task_id, "agent_progress", {"label": "Loop nativo DeepSeek", "detail": description[:200]})
+
+    # Histórico da conversa (com compactação): sem isso o modelo só via a mensagem atual
+    # e esquecia o que foi dito antes no mesmo chat.
+    history, context_payload, compacted = await prepare_context_history(task_id, bus.history(task_id), description)
+    if compacted:
+        await bus.publish(task_id, "context_compacted", context_payload)
+    await bus.publish(task_id, "context_status", context_payload)
+    latest_prompt = _latest_user_prompt(history) or description
+
+    # Conversa, pergunta curta ou conta exata não precisam de plano, ferramentas nem portões:
+    # vai direto ao modelo numa chamada só.
+    if is_exact_prompt(latest_prompt) or should_answer_directly(latest_prompt):
+        history = _history_with_user_profile(history, user_profile)
+        if is_exact_prompt(latest_prompt):
+            await _answer_exact_prompt(task_id, latest_prompt, history, store, bus)
+        else:
+            await _answer_simple_prompt(task_id, latest_prompt, history, store, bus)
+        return
+
+    await bus.publish(task_id, "agent_status", {"status": "thinking", "label": "Trabalhando"})
+    await bus.publish(task_id, "agent_progress", {"label": "Iniciando tarefa", "detail": description[:200]})
 
     # Plano inicial se vazio
     if not task_plan_store.list_steps(task_id):
@@ -190,7 +243,7 @@ async def run_native_agent_loop(
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": _native_system_prompt(user_id)},
-        {"role": "user", "content": description},
+        *_api_history(history, description),
     ]
     if user_profile:
         messages.append(
@@ -202,9 +255,19 @@ async def run_native_agent_loop(
 
     tools = openai_tools_payload()
     max_iter = int(settings.MAX_ITERATIONS or 30)
+    time_budget = float(getattr(settings, "AGENT_TIME_BUDGET_SECONDS", 0) or DEFAULT_TIME_BUDGET_SECONDS)
+    started = time.monotonic()
+    gate_rejections = 0
+    tools_since_rejection = False
+    finishing = False  # orçamento estourado: próxima rodada é sem tools e a entrega passa direto
 
     for iteration in range(max_iter):
         state.iteration = iteration + 1
+        last_round = iteration == max_iter - 1
+        if not finishing and (last_round or time.monotonic() - started > time_budget):
+            finishing = True
+            messages.append({"role": "system", "content": FINISH_NOW_MESSAGE})
+            await bus.publish(task_id, "agent_progress", {"label": "Finalizando com o que já foi apurado"})
         if not await _wait_paused(task_id, store, bus):
             store.update_status(task_id, "stopped", result="Interrompido")
             await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida."})
@@ -218,7 +281,7 @@ async def run_native_agent_loop(
 
         turn = await request_agent_turn(
             messages,
-            tools=tools,
+            tools=None if finishing else tools,
             stream=bool(getattr(settings, "DEEPSEEK_STREAMING", False)),
             bus=bus,
             task_id=task_id,
@@ -227,8 +290,13 @@ async def run_native_agent_loop(
 
         tool_calls = turn.get("tool_calls") or []
         content = (turn.get("content") or "").strip() if turn.get("content") else ""
+        streamed = bool(getattr(settings, "DEEPSEEK_STREAMING", False)) and bool(content)
 
         if tool_calls:
+            # Texto que veio junto com tool_calls não é a entrega: o front descarta o que já
+            # recebeu em delta, senão as narrações de cada iteração se empilham na tela.
+            if streamed:
+                await bus.publish(task_id, "assistant_message_discard", {"reason": "tool_calls"})
             # assistant message with tool_calls for API history
             raw = turn.get("raw_message")
             if raw:
@@ -278,6 +346,7 @@ async def run_native_agent_loop(
             else:
                 pairs = [await _run_one(c) for c in tool_calls]
 
+            tools_since_rejection = True
             sources_before = len(database.list_sources(task_id))
             files_before = len(database.list_generated_files(task_id))
 
@@ -325,11 +394,24 @@ async def run_native_agent_loop(
             "user_prompt": description,
             "stagnant_iterations": state.stagnant_iterations,
         }
-        results = evaluate_delivery_gates(gate_ctx)
-        blocked = first_blocking_gate(results)
+        blocked = None
+        # Portão recusa no máximo MAX_GATE_REJECTIONS vezes, e só de novo se o modelo trabalhou
+        # (usou ferramenta) desde a última recusa. Sem isso ele reescrevia a mesma resposta
+        # até o limite de iterações (100) quando a política de fontes não fechava.
+        may_reject = (
+            not finishing
+            and gate_rejections < MAX_GATE_REJECTIONS
+            and (gate_rejections == 0 or tools_since_rejection)
+        )
+        if may_reject:
+            blocked = first_blocking_gate(evaluate_delivery_gates(gate_ctx))
         if blocked is not None:
+            gate_rejections += 1
+            tools_since_rejection = False
             messages.append({"role": "system", "content": blocked.as_system_message()})
-            # se streaming já publicou deltas, ainda assim pedimos mais trabalho
+            # a resposta recusada pelo portão já saiu em delta: manda o front descartar
+            if streamed:
+                await bus.publish(task_id, "assistant_message_discard", {"reason": "gate"})
             continue
 
         # Entrega
@@ -350,7 +432,7 @@ async def run_native_agent_loop(
                 task_plan_store.complete_step_by_id(step["id"], status="passed")
         await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
         await publish_agent_activity(
-            bus, task_id, kind="finalizing", title="Entrega final", detail="Loop nativo concluiu.", status="done"
+            bus, task_id, kind="finalizing", title="Entrega final", detail="Resposta entregue.", status="done"
         )
         return
 

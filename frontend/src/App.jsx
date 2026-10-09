@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LogOut, MessageSquarePlus, PanelRightOpen, Settings, Trash2 } from "lucide-react";
+import { ArrowLeft, PanelRightOpen, Plus, Search, Settings, Trash2 } from "lucide-react";
 
 import { useAuth } from "./auth/AuthProvider.jsx";
 import { AiExchangePanel } from "./components/AgentActivity.jsx";
@@ -15,6 +15,7 @@ import { MessageList } from "./components/MessageList.jsx";
 import { SecureCredentialsDialog } from "./components/SecureCredentialsDialog.jsx";
 import { SourceList } from "./components/SourceList.jsx";
 import { StatusBadge } from "./components/StatusBadge.jsx";
+import { ThemeToggle } from "./components/ThemeToggle.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
 import { TaskDetailDrawer } from "./components/TaskDetailDrawer.jsx";
 import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
@@ -131,6 +132,48 @@ function dedupeMessagesForDisplay(messages = []) {
   }, []);
 }
 
+// O backend emite a resposta em pedaços (assistant_message_delta, incrementais) e depois
+// a resposta inteira (assistant_message_done). Cada turno vira UMA mensagem: os deltas
+// se juntam enquanto a resposta chega e são descartados quando o done aparece.
+function collapseAssistantDeltas(events) {
+  const collapsed = [];
+  let stream = null;
+
+  const flushStream = () => {
+    if (stream?.content.trim()) {
+      collapsed.push({
+        event: { ...stream.event, payload: { content: stream.content, streaming: true } },
+        eventIndex: stream.eventIndex,
+      });
+    }
+    stream = null;
+  };
+
+  events.forEach((event, eventIndex) => {
+    if (event.type === "assistant_message_delta") {
+      const piece = event.payload?.delta ?? event.payload?.content ?? "";
+      if (!stream) stream = { event, eventIndex, content: "" };
+      stream.content += piece;
+      return;
+    }
+    // Texto que o modelo escreveu junto com ferramentas (ou que o portão de entrega
+    // recusou) não é a resposta: o backend manda descartar o que já chegou.
+    if (event.type === "assistant_message_discard") {
+      stream = null;
+      return;
+    }
+    if (event.type === "assistant_message_done") {
+      stream = null;
+      collapsed.push({ event, eventIndex });
+      return;
+    }
+    if (event.type === "user_message") flushStream();
+    collapsed.push({ event, eventIndex });
+  });
+  flushStream();
+  return collapsed;
+}
+
 function buildMessages(task, events, responseReady = true, options = {}) {
   if (!task) return [welcomeMessage];
   const includeFallback = options.includeFallback !== false;
@@ -156,8 +199,7 @@ function buildMessages(task, events, responseReady = true, options = {}) {
     return false;
   };
 
-  const messages = events
-    .map((event, eventIndex) => ({ event, eventIndex }))
+  const messages = collapseAssistantDeltas(events)
     .filter(({ event, eventIndex }) => assistantOk(event, eventIndex))
     .map(({ event, eventIndex }) => ({
       id: `${event.type}-${event.created_at}-${eventIndex}`,
@@ -255,7 +297,7 @@ function isAuthError(error) {
 
 function agentStatusLabel(status) {
   const labels = {
-    done: "Pronto",
+    done: "Concluída",
     error: "Erro",
     executing: "Executando",
     idle: "Parado",
@@ -266,6 +308,12 @@ function agentStatusLabel(status) {
     thinking: "Pensando",
   };
   return labels[status] || status;
+}
+
+function backendStatusLabel(status) {
+  if (status === "online") return "Backend conectado";
+  if (status === "offline") return "Backend fora do ar";
+  return "Conectando ao backend";
 }
 
 function latestEventIndex(events, predicate) {
@@ -861,139 +909,148 @@ export default function App() {
 
   if (!user) return <AuthScreen />;
 
+  const isEmptyState = !activeTaskId && !taskLoading;
+  const activeTitle = tasks.find((task) => task.id === activeTaskId)?.title
+    || activeTask?.title
+    || activeTask?.description
+    || "Tarefa";
+  // Um composer só: centralizado na tela inicial (como no Manus), embaixo durante a conversa.
+  const composer = (
+    <Composer
+      disabled={backendStatus !== "online"}
+      isBusy={agentBusy}
+      onSecureLogin={() => setSecureLoginOpen(true)}
+      onStop={handleStop}
+      onSubmit={handleSubmit}
+      stopping={stopping}
+    />
+  );
+
   return (
     <>
       <ChatShell
         sidebar={
           <>
-            <div className="brand">
-              <img className="brand-logo" src="/vortax-logo.png" alt="Vortax" />
-              <div>
+            <div className="sidebar-head">
+              <div className="brand">
+                <img className="brand-mark" src="/vortax-icon-180.png" alt="" />
                 <strong>Vortax</strong>
-                <span>Agente autonomo</span>
+                <span
+                  aria-label={backendStatusLabel(backendStatus)}
+                  className={`backend-dot ${backendStatus}`}
+                  title={backendStatusLabel(backendStatus)}
+                />
               </div>
-            </div>
-            <StatusBadge status={backendStatus} label={`Backend ${backendStatus}`} />
-
-            <div className="sidebar-tabs">
-              <button
-                className={`sidebar-tab ${sidebarTab === "chats" ? "active" : ""}`}
-                onClick={() => setSidebarTab("chats")}
-                type="button"
-              >
-                <MessageSquarePlus size={14} />
-                Conversas
-              </button>
-              <button
-                className={`sidebar-tab ${sidebarTab === "settings" ? "active" : ""}`}
-                onClick={() => setSidebarTab("settings")}
-                type="button"
-              >
-                <Settings size={14} />
-                Configurações
-              </button>
             </div>
 
             {sidebarTab === "chats" ? (
-              <div className="task-list">
-                <div className="task-list-header">
-                  <span className="panel-label">Conversas</span>
-                  <button onClick={handleNewChat} title="Novo chat" type="button">
-                    <MessageSquarePlus size={15} />
-                  </button>
-                </div>
-                {!tasksLoading && !tasksError && tasks.length > 0 && (
-                  <input
-                    className="task-search"
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar conversas..."
-                    type="search"
-                    value={searchQuery}
-                  />
-                )}
-                {tasksLoading ? (
-                  <p className="panel-state">Carregando conversas...</p>
-                ) : tasksError ? (
-                  <p className="panel-state error">Nao foi possivel carregar conversas.</p>
-                ) : tasks.length === 0 ? (
-                  <p className="panel-state">Nenhuma conversa criada.</p>
-                ) : filteredTasks.length === 0 ? (
-                  <p className="panel-state">Nenhuma conversa encontrada.</p>
-                ) : (
-                  filteredTasks.map((task) => (
-                    <div
-                      className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
-                      key={task.id}
-                      onClick={() => setActiveTaskId(task.id)}
-                    >
-                      <div className="task-content">
-                        <span>{task.title || task.description}</span>
-                        <small>{task.status}</small>
-                      </div>
-                      <button
-                        className="task-delete"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteTask(task.id);
-                        }}
-                        title="Excluir chat"
-                        type="button"
+              <>
+                <button className="new-task-btn" onClick={handleNewChat} type="button">
+                  <Plus size={16} />
+                  Nova tarefa
+                </button>
+                <div className="task-list">
+                  {!tasksLoading && !tasksError && tasks.length > 0 && (
+                    <label className="task-search">
+                      <Search size={14} />
+                      <input
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Buscar tarefas"
+                        type="search"
+                        value={searchQuery}
+                      />
+                    </label>
+                  )}
+                  {tasksLoading ? (
+                    <p className="panel-state">Carregando tarefas...</p>
+                  ) : tasksError ? (
+                    <p className="panel-state error">Não foi possível carregar as tarefas.</p>
+                  ) : tasks.length === 0 ? (
+                    <p className="panel-state">Nenhuma tarefa ainda.</p>
+                  ) : filteredTasks.length === 0 ? (
+                    <p className="panel-state">Nenhuma tarefa encontrada.</p>
+                  ) : (
+                    filteredTasks.map((task) => (
+                      <div
+                        className={`task-item ${task.id === activeTaskId ? "active" : ""}`}
+                        key={task.id}
+                        onClick={() => setActiveTaskId(task.id)}
                       >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
+                        <span className={`task-status-dot ${task.status}`} title={agentStatusLabel(task.status)} />
+                        <div className="task-content">
+                          <span>{task.title || task.description}</span>
+                          <small>{agentStatusLabel(task.status)}</small>
+                        </div>
+                        <button
+                          className="task-delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTask(task.id);
+                          }}
+                          title="Excluir tarefa"
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
             ) : (
-              <SettingsPanel />
+              <div className="sidebar-settings">
+                <button className="sidebar-back-btn" onClick={() => setSidebarTab("chats")} type="button">
+                  <ArrowLeft size={15} />
+                  Tarefas
+                </button>
+                <SettingsPanel />
+              </div>
             )}
+
+            <div className="sidebar-footer">
+              <button
+                className={`sidebar-footer-btn ${sidebarTab === "settings" ? "active" : ""}`}
+                onClick={() => setSidebarTab(sidebarTab === "settings" ? "chats" : "settings")}
+                type="button"
+              >
+                <Settings size={15} />
+                Configurações
+              </button>
+              <ThemeToggle />
+            </div>
           </>
         }
         main={
           <>
             <header className="chat-header">
               <div className="chat-header-left">
-                <div className="chat-brand-mark">
-                  <img className="chat-brand-logo" src="/vortax-logo.png" alt="Vortax" />
-                </div>
                 <div className="chat-header-text">
-                  <div className="chat-brand-line">
-                    <strong>Vortax</strong>
-                    <span>Lite</span>
-                  </div>
-                  <small>{activeTask?.description || "Agente autonomo para pesquisar, criar e validar tarefas"}</small>
+                  <strong className="chat-title">{activeTaskId ? activeTitle : "Vortax"}</strong>
                 </div>
               </div>
               <div className="chat-header-actions">
-                <button
-                  className="detail-open-btn"
-                  onClick={() => setDetailsOpen(true)}
-                  title="Abrir detalhes"
-                  type="button"
-                  aria-label="Abrir detalhes da tarefa"
-                >
-                  <PanelRightOpen size={16} />
-                  <span>Detalhes</span>
-                </button>
-                <div className="chat-health-group" aria-label="Status">
-                  <ContextIndicator context={contextState} />
-                  <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
-                </div>
-                <button
-                  className="user-menu-btn"
-                  onClick={signOut}
-                  title={user.displayName || user.email || "Sair"}
-                  type="button"
-                  aria-label="Sair da conta"
-                >
-                  <span className="user-menu-label">{user.displayName || user.email || "Usuario"}</span>
-                  <LogOut size={15} />
-                </button>
+                {activeTaskId && (
+                  <>
+                    <div className="chat-health-group" aria-label="Status">
+                      {contextState && <ContextIndicator context={contextState} />}
+                      <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
+                    </div>
+                    <button
+                      className="detail-open-btn"
+                      onClick={() => setDetailsOpen(true)}
+                      title="Abrir detalhes"
+                      type="button"
+                      aria-label="Abrir detalhes da tarefa"
+                    >
+                      <PanelRightOpen size={16} />
+                      <span>Detalhes</span>
+                    </button>
+                  </>
+                )}
               </div>
             </header>
-            {!activeTaskId && !taskLoading ? (
-              <OnboardingScreen onSubmit={handleSubmit} />
+            {isEmptyState ? (
+              <OnboardingScreen composer={composer} onSubmit={handleSubmit} />
             ) : (
               <MessageList
                 activeSearch={activeSearch}
@@ -1009,26 +1066,21 @@ export default function App() {
                 pendingPreparation={pendingPreparation}
               />
             )}
-            <VortaxComputerDock
-              activeTask={activeTask}
-              agentStatus={agentStatus}
-              connectionState={connectionState}
-              events={currentEvents}
-              focusRequest={computerFocusRequest}
-              livePlan={displayPlan}
-              onOpenDetails={() => setDetailsOpen(true)}
-            />
+            {!isEmptyState && (
+              <VortaxComputerDock
+                activeTask={activeTask}
+                agentStatus={agentStatus}
+                connectionState={connectionState}
+                events={currentEvents}
+                focusRequest={computerFocusRequest}
+                livePlan={displayPlan}
+                onOpenDetails={() => setDetailsOpen(true)}
+              />
+            )}
             {submitError && (
               <div className="submit-error">{submitError}</div>
             )}
-            <Composer
-              disabled={backendStatus !== "online"}
-              isBusy={agentBusy}
-              onSecureLogin={() => setSecureLoginOpen(true)}
-              onStop={handleStop}
-              onSubmit={handleSubmit}
-              stopping={stopping}
-            />
+            {!isEmptyState && composer}
           </>
         }
       />

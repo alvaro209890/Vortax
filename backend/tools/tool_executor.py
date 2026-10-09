@@ -950,7 +950,7 @@ async def execute_tool(
                     {
                         "actor": "deepseek",
                         "target": "vertex",
-                        "message": f"DeepSeek delegou a criacao de codigo ao {CODE_AGENT_LABEL}.",
+                        "message": f"Vortax delegou a criacao de codigo ao {CODE_AGENT_LABEL}.",
                         "kind": "delegation",
                     },
                 )

@@ -16,7 +16,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  User,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -24,6 +23,7 @@ import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
 import { fileDownloadUrl } from "../lib/api.js";
+import { isToolWorkEvent } from "../lib/events.js";
 
 /* ── Code Block with Copy Button ─────────────────────────────────── */
 
@@ -418,6 +418,15 @@ function DocumentViewerOverlay({ document, onClose, taskId }) {
   );
 }
 
+function AssistantByline({ label = "Vortax" }) {
+  return (
+    <div className="message-role">
+      <img alt="" className="message-role-mark" src="/vortax-icon-32.png" />
+      {label}
+    </div>
+  );
+}
+
 function MessageArticle({ message, onOpenDocument }) {
   const documentPaths = new Set((message.documents || []).map((item) => item?.path).filter(Boolean));
   return (
@@ -426,11 +435,8 @@ function MessageArticle({ message, onOpenDocument }) {
       key={message.id}
       variants={fadeInUp}
     >
-      <div className="message-avatar">
-        {message.role === "user" ? <User size={18} /> : <Sparkles size={18} />}
-      </div>
       <div className="message-content">
-        <div className="message-role">{message.role === "user" ? "Você" : "Vortax"}</div>
+        {message.role !== "user" && <AssistantByline />}
         {message.content ? (
           <div className="markdown-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -522,6 +528,9 @@ function isDirectResponseSegment(events, previousUserIndex, currentUserIndex, ne
   const end = nextUserIndex ?? events.length;
   const scoped = events.filter((_, index) => index > start && index < end);
   if (scoped.some(isDirectPlanEvent)) return true;
+  // Turno que terminou sem usar nenhuma ferramenta foi conversa: não mostra cartão de progresso.
+  const answered = scoped.some((event) => event.type === "assistant_message_done");
+  if (answered && !scoped.some(isToolWorkEvent)) return true;
   return !likelyTaskPrompt(message?.content || "")
     && scoped.some((event) => event.type === "agent_progress" && /resposta r[aá]pida/i.test(String(event.payload?.label || "")));
 }
@@ -555,6 +564,22 @@ function toolTitle(name = "", fallback = "Executando etapa") {
     browser_navigate: "Navegando",
     browser_screenshot: "Capturando tela",
     shell_run: "Executando comando",
+    shell_exec: "Executando comando",
+    shell_view: "Lendo terminal",
+    shell_write: "Enviando ao terminal",
+    shell_kill: "Encerrando processo",
+    web_search: "Pesquisando na web",
+    web_fetch: "Lendo página",
+    file_read: "Lendo arquivo",
+    file_write: "Criando arquivo",
+    file_edit: "Editando arquivo",
+    file_append: "Editando arquivo",
+    glob: "Procurando arquivos",
+    grep: "Procurando no código",
+    validate_project: "Validando projeto",
+    document_render: "Gerando documento",
+    vision_analyze: "Analisando imagem",
+    todo_write: "Atualizando plano",
   };
   return labels[name] || fallback;
 }
@@ -912,11 +937,8 @@ function ChatProgressArticle({ activities = [], activeSearch, onComputerFocus })
 
   return (
     <article className="message assistant progress-message chat-progress-message">
-      <div className="message-avatar">
-        <Sparkles size={18} />
-      </div>
       <div className="message-content">
-        <div className="message-role">Vortax trabalhando</div>
+        <AssistantByline />
         <div className="chat-progress-copy">{activityOpening(activities, activeSearch)}</div>
         <button
           className={`chat-progress-current ${latest.status || "running"} ${latestDisabled ? "" : "clickable"}`}
@@ -1145,10 +1167,8 @@ export function MessageList({
             animate={{ opacity: 1, y: 0 }}
             transition={{ type: "spring", stiffness: 200, damping: 22 }}
           >
-            <div className="message-avatar">
-              <Sparkles size={18} />
-            </div>
             <div className="message-content">
+              <AssistantByline />
               <div aria-label="Vortax esta pensando" className="typing-status" role="status">
                 <span>Vortax está pensando</span>
                 <span className="typing-dots" aria-hidden="true">
