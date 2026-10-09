@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import re
 import shlex
 from typing import Any, Awaitable, Callable
@@ -26,6 +27,7 @@ from services.research_policy import cached_search_result
 from services.safe_diagnostics import sanitize_payload
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
+from services.tool_context import current_call_id, new_call_id
 from services.web_validation import validate_web_project_after_code_agent, web_intent_from_command
 from pathlib import Path
 from services.project_files import sync_task_workspace_files
@@ -281,6 +283,65 @@ async def _publish_browser_view(task_id: str, tool_name: str, result: dict, bus:
     return True
 
 
+# Última captura publicada por tarefa (hash da imagem + cursor). Uma captura igual à
+# anterior não traz informação nova: não é reenviada nem gravada de novo.
+_LAST_FRAME_SIGNATURE: dict[str, str] = {}
+_MAX_FRAME_SIGNATURES = 256
+
+
+def _frame_signature(frame: dict[str, Any]) -> str:
+    image = str(frame.get("image_base64") or "")
+    cursor = frame.get("cursor") or {}
+    cursor_key = f"{cursor.get('x')}:{cursor.get('y')}:{cursor.get('action')}" if isinstance(cursor, dict) else ""
+    return hashlib.sha1(image.encode("ascii", "ignore")).hexdigest() + "|" + cursor_key
+
+
+async def _publish_browser_frame(task_id: str, frame: dict[str, Any], bus: EventBus, *, trigger: str) -> bool:
+    """Publica uma captura real (ou o bloqueio dela). Retorna False se nada foi publicado."""
+    if frame.get("empty"):
+        return False
+    captured_at = utc_now()
+    if frame.get("blocked") and frame.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
+        # Depois de um bloqueio a próxima captura válida sempre sai, mesmo se igual à anterior.
+        _LAST_FRAME_SIGNATURE.pop(task_id, None)
+        await bus.publish(
+            task_id,
+            "screen_frame_blocked",
+            {
+                "caption": "Tela ocultada por conter dados sensiveis.",
+                "title": frame.get("title"),
+                "url": frame.get("url"),
+                "reason": frame.get("blocked_reason"),
+                "captured_at": captured_at,
+                "trigger": trigger,
+            },
+        )
+        return True
+    if not frame.get("image_base64"):
+        return False
+    signature = _frame_signature(frame)
+    if _LAST_FRAME_SIGNATURE.get(task_id) == signature:
+        return False
+    if len(_LAST_FRAME_SIGNATURE) >= _MAX_FRAME_SIGNATURES and task_id not in _LAST_FRAME_SIGNATURE:
+        _LAST_FRAME_SIGNATURE.pop(next(iter(_LAST_FRAME_SIGNATURE)))
+    _LAST_FRAME_SIGNATURE[task_id] = signature
+    await bus.publish(
+        task_id,
+        "screen_frame",
+        {
+            "caption": frame.get("title") or frame.get("url") or "Tela do Chrome",
+            "title": frame.get("title"),
+            "url": frame.get("url"),
+            "image_base64": frame.get("image_base64"),
+            "cursor": frame.get("cursor"),
+            "viewport": frame.get("viewport"),
+            "captured_at": captured_at,
+            "trigger": trigger,
+        },
+    )
+    return True
+
+
 async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bus: EventBus) -> None:
     if not tool_name.startswith("browser_") or tool_name == "browser_screenshot":
         return
@@ -290,32 +351,7 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
         except BrowserPoolError:
             return
         frame = await asyncio.wait_for(bt.screenshot(task_id=task_id), timeout=4.0)
-        if frame.get("empty"):
-            return
-        if frame.get("blocked") and frame.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
-            await bus.publish(
-                task_id,
-                "screen_frame_blocked",
-                {
-                    "caption": "Tela ocultada por conter dados sensiveis.",
-                    "title": frame.get("title"),
-                    "url": frame.get("url"),
-                    "reason": frame.get("blocked_reason"),
-                },
-            )
-            return
-        await bus.publish(
-            task_id,
-            "screen_frame",
-            {
-                "caption": frame.get("title") or frame.get("url") or "Tela do Chrome",
-                "title": frame.get("title"),
-                "url": frame.get("url"),
-                "image_base64": frame.get("image_base64"),
-                "cursor": frame.get("cursor"),
-                "viewport": frame.get("viewport"),
-            },
-        )
+        await _publish_browser_frame(task_id, frame, bus, trigger=tool_name)
     except Exception as exc:
         await bus.publish(task_id, "error", {"message": f"Screenshot apos tool falhou: {type(exc).__name__}"})
 
@@ -748,17 +784,36 @@ async def execute_tool(
     task_id: str,
     bus: EventBus,
     description: str = "",
+    call_id: str | None = None,
+) -> dict[str, Any]:
+    call_id = call_id or new_call_id()
+    token = current_call_id.set(call_id)
+    try:
+        return await _execute_tool(tool_name, params, task_id=task_id, bus=bus, description=description, call_id=call_id)
+    finally:
+        current_call_id.reset(token)
+
+
+async def _execute_tool(
+    tool_name: str,
+    params: dict[str, Any] | None,
+    *,
+    task_id: str,
+    bus: EventBus,
+    description: str,
+    call_id: str,
 ) -> dict[str, Any]:
     safe_params = _safe_tool_params(tool_name, params)
     await bus.publish(
         task_id,
         "tool_call",
-        {"name": tool_name, "description": description or tool_name, "params": safe_params},
+        {"name": tool_name, "description": description or tool_name, "params": safe_params, "call_id": call_id},
     )
 
     if not _is_known_tool(tool_name):
         error = {"success": False, "error": f"Ferramenta desconhecida: {tool_name}"}
         await bus.publish(task_id, "error", {"message": error["error"]})
+        await bus.publish(task_id, "tool_result", {"name": tool_name, "result": error, "call_id": call_id})
         return error
 
     # Permissões por ação (PLANO §12.2) — baseadas no dono da task
@@ -780,7 +835,7 @@ async def execute_tool(
                 "error": f"Permissao negada para a ferramenta '{tool_name}'.",
             }
             await bus.publish(task_id, "error", {"message": error["error"]})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": error})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": error, "call_id": call_id})
             return error
     except Exception:
         pass
@@ -792,7 +847,7 @@ async def execute_tool(
             except ValueError as exc:
                 result = {"success": False, "error": str(exc)}
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
             if tool_name in {"file_write", "file_edit", "file_append"} and result.get("success"):
                 project_dir = _project_dir(task_id)
                 project_index = sync_task_workspace_files(task_id, project_dir)
@@ -836,7 +891,7 @@ async def execute_tool(
             else:
                 result = await shell_sessions.shell_kill(str(p.get("session_id") or ""))
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
             if tool_name == "shell_exec" and result.get("success"):
                 project_dir = _project_dir(task_id)
                 project_index = sync_task_workspace_files(task_id, project_dir)
@@ -863,7 +918,7 @@ async def execute_tool(
                 save_source=bool(p.get("save_source", True)),
             )
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
             if result.get("source_saved"):
                 await bus.publish(
                     task_id,
@@ -878,7 +933,7 @@ async def execute_tool(
 
             result = await validate_project(task_id, bus=bus)
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
             return {"success": bool(result.get("success")), "data": result}
 
         if tool_name == "document_render":
@@ -891,7 +946,7 @@ async def execute_tool(
                 p.get("pdf_path"),
             )
             compact = compact_tool_result(result if isinstance(result, dict) else {"result": result})
-            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+            await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
             if result.get("success"):
                 project_dir = _project_dir(task_id)
                 project_index = sync_task_workspace_files(task_id, project_dir)
@@ -920,7 +975,7 @@ async def execute_tool(
                     },
                 )
                 compact = compact_tool_result(cached)
-                await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+                await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
                 await _publish_browser_view(task_id, tool_name, cached, bus)
                 return {"success": True, "data": cached}
 
@@ -959,7 +1014,7 @@ async def execute_tool(
                         "skipped_manual_server": True,
                     }
                     compact = compact_tool_result(result)
-                    await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+                    await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
                     await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
                     return {"success": True, "data": result}
             if _is_code_agent_command(command):
@@ -1168,34 +1223,11 @@ async def execute_tool(
         result_blocked = isinstance(result, dict) and bool(result.get("blocked"))
         await _save_source_if_extracted(task_id, tool_name, result, bus)
         compact = compact_tool_result(result)
-        await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+        await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact, "call_id": call_id})
         reading_view = await _publish_browser_view(task_id, tool_name, result, bus)
 
         if tool_name == "browser_screenshot" and not result.get("empty"):
-            if result.get("blocked") and result.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
-                await bus.publish(
-                    task_id,
-                    "screen_frame_blocked",
-                    {
-                        "caption": "Tela ocultada por conter dados sensiveis.",
-                        "title": result.get("title"),
-                        "url": result.get("url"),
-                        "reason": result.get("blocked_reason"),
-                    },
-                )
-            else:
-                await bus.publish(
-                    task_id,
-                    "screen_frame",
-                    {
-                        "caption": result.get("title") or result.get("url") or "Tela do Chrome",
-                        "title": result.get("title"),
-                        "url": result.get("url"),
-                        "image_base64": result.get("image_base64"),
-                        "cursor": result.get("cursor"),
-                        "viewport": result.get("viewport"),
-                    },
-                )
+            await _publish_browser_frame(task_id, result, bus, trigger=tool_name)
         elif not result_blocked and not reading_view:
             await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
         if result_blocked:
@@ -1213,4 +1245,10 @@ async def execute_tool(
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         await bus.publish(task_id, "error", {"message": message, "tool": tool_name})
+        # Fecha a chamada: sem isso a interface não sabe que esta ferramenta terminou.
+        await bus.publish(
+            task_id,
+            "tool_result",
+            {"name": tool_name, "result": {"success": False, "error": message}, "call_id": call_id},
+        )
         return {"success": False, "error": message}

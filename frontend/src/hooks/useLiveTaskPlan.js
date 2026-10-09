@@ -123,6 +123,7 @@ export function buildLiveTaskPlan(initialPlan, events) {
     .join("|");
 
   return {
+    agentStatus: latestStatus,
     currentStep,
     doneCount,
     failedCount,
@@ -142,4 +143,19 @@ export function buildLiveTaskPlan(initialPlan, events) {
 
 export function useLiveTaskPlan(initialPlan, events) {
   return useMemo(() => buildLiveTaskPlan(initialPlan, events), [initialPlan, events]);
+}
+
+// Estado exibido de uma etapa do plano. Uma etapa "running" só gira enquanto a tarefa
+// está ativa; depois disso ela aparece como interrompida ou sem confirmação de término.
+export function planStepStatus(step, plan, liveStatus) {
+  const status = step?.status;
+  if (status === "passed") return "done";
+  if (status === "failed") return "failed";
+  if (status === "skipped") return "unknown";
+  if (status !== "running") return "pending";
+  const agentStatus = liveStatus || plan?.agentStatus || "";
+  if (agentStatus === "paused") return "paused";
+  if (agentStatus === "stopped" || agentStatus === "error") return "interrupted";
+  if (agentStatus === "done" || agentStatus === "idle") return "unknown";
+  return "running";
 }

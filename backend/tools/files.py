@@ -87,16 +87,31 @@ def file_read(task_id: str, path: str, offset: int = 1, limit: int | None = None
     }
 
 
+def _line_count(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
 def file_write(task_id: str, path: str, content: str) -> dict[str, Any]:
     target = resolve_task_path(task_id, path)
     data = str(content or "")
     if len(data.encode("utf-8")) > MAX_WRITE_BYTES:
         return {"success": False, "error": f"Conteudo excede {MAX_WRITE_BYTES} bytes"}
+    existed = target.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(data, encoding="utf-8")
     sync_task_workspace_files(task_id, _workspace(task_id))
     annotate_workspace_files(task_id, tool_origin="file_write", paths=[path], validation_status="pending")
-    return {"success": True, "path": path, "size_bytes": target.stat().st_size, "created_at": utc_now()}
+    return {
+        "success": True,
+        "path": path,
+        "size_bytes": target.stat().st_size,
+        "created_at": utc_now(),
+        # Campos para a interface diferenciar criação de sobrescrita sem adivinhar.
+        "created": not existed,
+        "line_count": _line_count(data),
+    }
 
 
 def file_edit(
@@ -139,7 +154,16 @@ def file_edit(
     sync_task_workspace_files(task_id, _workspace(task_id))
     annotate_workspace_files(task_id, tool_origin="file_edit", paths=[path], validation_status="pending")
     mark_file_read(task_id, rel)  # ainda "lido" após edit
-    return {"success": True, "path": path, "replacements": count if replace_all else 1}
+    # Linhas (1-based) do primeiro trecho substituído, já no arquivo novo.
+    start_line = text.count("\n", 0, text.find(old)) + 1
+    return {
+        "success": True,
+        "path": path,
+        "replacements": count if replace_all else 1,
+        "start_line": start_line,
+        "end_line": start_line + max(_line_count(new) - 1, 0),
+        "line_count": _line_count(updated),
+    }
 
 
 def file_append(task_id: str, path: str, content: str) -> dict[str, Any]:

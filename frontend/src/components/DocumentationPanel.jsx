@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Download, FileText, Loader2 } from "lucide-react";
+import { BookOpen, Download, FileText } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { CollapsiblePanel } from "./CollapsiblePanel.jsx";
+import { StatusIndicator } from "./StatusIndicator.jsx";
 import { fileDownloadUrl } from "../lib/api.js";
 
 function isMarkdownFile(file) {
@@ -119,7 +120,7 @@ export function DocumentationPanel({ files, taskId }) {
 
             <div className="documentation-content markdown-body">
               {loading ? (
-                <p className="documentation-loading"><Loader2 className="spinner" size={14} /> Carregando documentação...</p>
+                <p className="documentation-loading"><StatusIndicator size={14} status="running" label="Carregando documentação" /> Carregando documentação...</p>
               ) : error ? (
                 <p className="panel-state error">Nao foi possivel abrir este Markdown.</p>
               ) : (

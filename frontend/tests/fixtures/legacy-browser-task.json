@@ -1,0 +1,893 @@
+{
+"_fixture": "Eventos reais gravados pelo backend do Vortax (commit 3a84c37) numa execução de QA isolada com modelo roteirizado (scripts/qa). Imagens substituídas por marcadores.",
+"task": {
+"id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"status": "done"
+},
+"events": [
+{
+"event_id": 11,
+"type": "task_created",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.696488+00:00",
+"payload": {
+"task": {
+"id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"user_id": "local-dev-user",
+"description": "Navegue até o site local da cooperativa, abra Contato, preencha o nome e role a página",
+"status": "queued",
+"created_at": "2026-10-09T17:02:19.695753+00:00",
+"updated_at": "2026-10-09T17:02:19.695753+00:00",
+"result": null
+}
+}
+},
+{
+"event_id": 12,
+"type": "user_message",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.696900+00:00",
+"payload": {
+"content": "Navegue até o site local da cooperativa, abra Contato, preencha o nome e role a página"
+}
+},
+{
+"event_id": 13,
+"type": "agent_status",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.698459+00:00",
+"payload": {
+"status": "queued",
+"label": "Preparando"
+}
+},
+{
+"event_id": 14,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.698873+00:00",
+"payload": {
+"label": "Iniciando ambiente",
+"detail": "Criando plano de tarefas",
+"tool": "planning"
+}
+},
+{
+"event_id": 15,
+"type": "agent_activity",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.699242+00:00",
+"payload": {
+"kind": "analysis",
+"title": "Iniciando ambiente",
+"detail": "Criando plano de tarefas",
+"status": "running",
+"metadata": {},
+"tool": "planning"
+}
+},
+{
+"event_id": 16,
+"type": "context_status",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.700611+00:00",
+"payload": {
+"estimated_tokens": 25,
+"token_limit": 24000,
+"warning_threshold": 16800,
+"compact_threshold": 21120,
+"status": "ok",
+"ratio": 0.0010416666666666667,
+"percent": 0,
+"compaction_count": 0,
+"last_compacted_event_id": null,
+"updated_at": "2026-10-09T17:02:19.700242+00:00",
+"summary": "",
+"checkpoint": {}
+}
+},
+{
+"event_id": 17,
+"type": "agent_status",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.701242+00:00",
+"payload": {
+"status": "thinking",
+"label": "Trabalhando"
+}
+},
+{
+"event_id": 18,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.701607+00:00",
+"payload": {
+"label": "Iniciando tarefa",
+"detail": "Navegue até o site local da cooperativa, abra Contato, preencha o nome e role a página"
+}
+},
+{
+"event_id": 19,
+"type": "task_plan_created",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.702804+00:00",
+"payload": {
+"steps": [
+{
+"id": "faa59857-634f-4a17-9bbe-bb01670fb0d5",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 1,
+"label": "Entender pedido",
+"detail": "Navegue até o site local da cooperativa, abra Contato, preencha o nome e role a página",
+"status": "pending",
+"tool_hint": "understand",
+"started_at": null,
+"finished_at": null,
+"updated_at": "2026-10-09T17:02:19.701953+00:00",
+"acceptance_criteria": [
+"Objetivo principal identificado."
+],
+"evidence": []
+},
+{
+"id": "b2e4f57a-f9c4-45eb-9983-c61d6c5ea6d3",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 2,
+"label": "Executar trabalho",
+"detail": "Usar as ferramentas certas para pesquisar, criar ou resolver a tarefa.",
+"status": "pending",
+"tool_hint": "execute",
+"started_at": null,
+"finished_at": null,
+"updated_at": "2026-10-09T17:02:19.701953+00:00",
+"acceptance_criteria": [
+"Acoes principais executadas sem bloquear a conversa."
+],
+"evidence": []
+},
+{
+"id": "22dd71bc-cc05-47d0-b1f2-a7d90ac01537",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 3,
+"label": "Validar entrega",
+"detail": "Conferir resultados, arquivos, fontes ou projeto antes de finalizar.",
+"status": "pending",
+"tool_hint": "validate",
+"started_at": null,
+"finished_at": null,
+"updated_at": "2026-10-09T17:02:19.701953+00:00",
+"acceptance_criteria": [
+"Resultado revisado e problemas importantes registrados."
+],
+"evidence": []
+},
+{
+"id": "17fde563-9e53-4072-8945-f8ababe449ba",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 4,
+"label": "Entregar resposta",
+"detail": "Responder com o resumo final e disponibilizar artefatos quando existirem.",
+"status": "pending",
+"tool_hint": "deliver",
+"started_at": null,
+"finished_at": null,
+"updated_at": "2026-10-09T17:02:19.701953+00:00",
+"acceptance_criteria": [
+"Usuario recebe uma conclusao clara da tarefa."
+],
+"evidence": []
+}
+],
+"origin": "native_fallback"
+}
+},
+{
+"event_id": 20,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:19.703793+00:00",
+"payload": {
+"label": "Planejando",
+"step": 1
+}
+},
+{
+"event_id": 23,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:20.854425+00:00",
+"payload": {
+"name": "browser_navigate",
+"description": "browser_navigate",
+"params": {
+"url": "http://192.0.2.2:8765/"
+}
+}
+},
+{
+"event_id": 28,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:22.821960+00:00",
+"payload": {
+"caption": "Cooperativa Horta Viva",
+"title": "Cooperativa Horta Viva",
+"url": "http://192.0.2.2:8765/",
+"image_base64": "FIXTURE_JPEG_54232",
+"cursor": null,
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 29,
+"type": "tool_result",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:22.837376+00:00",
+"payload": {
+"name": "browser_navigate",
+"result": {
+"url": "http://192.0.2.2:8765/",
+"title": "Cooperativa Horta Viva",
+"launch_mode": "headless"
+}
+}
+},
+{
+"event_id": 30,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:22.964946+00:00",
+"payload": {
+"caption": "Cooperativa Horta Viva",
+"title": "Cooperativa Horta Viva",
+"url": "http://192.0.2.2:8765/",
+"image_base64": "FIXTURE_JPEG_54232",
+"cursor": null,
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 31,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:22.967657+00:00",
+"payload": {
+"label": "Planejando",
+"step": 2
+}
+},
+{
+"event_id": 34,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:24.131214+00:00",
+"payload": {
+"name": "browser_click_text",
+"description": "browser_click_text",
+"params": {
+"text": "Contato"
+}
+}
+},
+{
+"event_id": 39,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:24.513911+00:00",
+"payload": {
+"caption": "Cooperativa Horta Viva",
+"title": "Cooperativa Horta Viva",
+"url": "http://192.0.2.2:8765/",
+"image_base64": "FIXTURE_JPEG_54232",
+"cursor": {
+"x": 181.359375,
+"y": 32.0,
+"action": "move"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 40,
+"type": "tool_result",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:24.586775+00:00",
+"payload": {
+"name": "browser_click_text",
+"result": {
+"clicked_text": "Contato",
+"url": "http://192.0.2.2:8765/contato.html",
+"title": "Contato — Horta Viva"
+}
+}
+},
+{
+"event_id": 41,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:24.734248+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_29268",
+"cursor": {
+"x": 181.359375,
+"y": 32.0,
+"action": "click"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 42,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:24.736339+00:00",
+"payload": {
+"label": "Planejando",
+"step": 3
+}
+},
+{
+"event_id": 45,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:25.885038+00:00",
+"payload": {
+"name": "browser_type",
+"description": "browser_type",
+"params": {
+"text": "[REDACTED 5 chars]",
+"selector": "#nome"
+}
+}
+},
+{
+"event_id": 46,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:26.231248+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_29268",
+"cursor": {
+"x": 413.0,
+"y": 272.875,
+"action": "move"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 47,
+"type": "tool_result",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:26.246821+00:00",
+"payload": {
+"name": "browser_type",
+"result": {
+"typed_chars": 5,
+"selector": "#nome"
+}
+}
+},
+{
+"event_id": 48,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:26.346798+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_31616",
+"cursor": {
+"x": 413.0,
+"y": 272.875,
+"action": "type"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 49,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:26.348632+00:00",
+"payload": {
+"label": "Planejando",
+"step": 4
+}
+},
+{
+"event_id": 54,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:27.494157+00:00",
+"payload": {
+"name": "browser_scroll",
+"description": "browser_scroll",
+"params": {
+"direction": "down",
+"amount": 500
+}
+}
+},
+{
+"event_id": 58,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:27.818906+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_31616",
+"cursor": {
+"x": 1024.5,
+"y": 408.59999999999997,
+"action": "scroll"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 59,
+"type": "tool_result",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:28.049093+00:00",
+"payload": {
+"name": "browser_scroll",
+"result": {
+"direction": "down",
+"amount": 500,
+"url": "http://192.0.2.2:8765/contato.html"
+}
+}
+},
+{
+"event_id": 60,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:28.158883+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_11320",
+"cursor": {
+"x": 1024.5,
+"y": 408.59999999999997,
+"action": "scroll"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 61,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:28.160424+00:00",
+"payload": {
+"label": "Planejando",
+"step": 5
+}
+},
+{
+"event_id": 66,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:29.304667+00:00",
+"payload": {
+"name": "browser_click_text",
+"description": "browser_click_text",
+"params": {
+"text": "Área do cliente"
+}
+}
+},
+{
+"event_id": 67,
+"type": "screen_frame",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:29.682172+00:00",
+"payload": {
+"caption": "Contato — Horta Viva",
+"title": "Contato — Horta Viva",
+"url": "http://192.0.2.2:8765/contato.html",
+"image_base64": "FIXTURE_JPEG_31616",
+"cursor": {
+"x": 278.3515625,
+"y": 32.0,
+"action": "move"
+},
+"viewport": {
+"width": 1366,
+"height": 681
+}
+}
+},
+{
+"event_id": 68,
+"type": "tool_result",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:29.761782+00:00",
+"payload": {
+"name": "browser_click_text",
+"result": {
+"clicked_text": "Área do cliente",
+"url": "http://192.0.2.2:8765/cliente.html",
+"title": "Área do cliente — Horta Viva"
+}
+}
+},
+{
+"event_id": 69,
+"type": "screen_frame_blocked",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:29.795491+00:00",
+"payload": {
+"caption": "Tela ocultada por conter dados sensiveis.",
+"title": "Área do cliente — Horta Viva",
+"url": "http://192.0.2.2:8765/cliente.html",
+"reason": "sensitive_input"
+}
+},
+{
+"event_id": 70,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:29.796334+00:00",
+"payload": {
+"label": "Planejando",
+"step": 6
+}
+},
+{
+"event_id": 73,
+"type": "tool_call",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:02:30.944893+00:00",
+"payload": {
+"name": "browser_go_back",
+"description": "browser_go_back",
+"params": {}
+}
+},
+{
+"event_id": 102,
+"type": "error",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:00.959888+00:00",
+"payload": {
+"message": "TimeoutError: Page.go_back: Timeout 30000ms exceeded.\nCall log:\n  - waiting for navigation until \"domcontentloaded\"\n    - navigated to \"http://192.0.2.2:8765/contato.html\"\n",
+"tool": "browser_go_back"
+}
+},
+{
+"event_id": 103,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:00.961424+00:00",
+"payload": {
+"label": "Planejando",
+"step": 7
+}
+},
+{
+"event_id": 104,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.113373+00:00",
+"payload": {
+"delta": "Abri o site, entrei em C",
+"content": "Abri o site, entrei em C"
+}
+},
+{
+"event_id": 105,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.143221+00:00",
+"payload": {
+"delta": "ontato, preenchi o nome ",
+"content": "ontato, preenchi o nome "
+}
+},
+{
+"event_id": 106,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.174027+00:00",
+"payload": {
+"delta": "e rolei a página. A área",
+"content": "e rolei a página. A área"
+}
+},
+{
+"event_id": 107,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.203688+00:00",
+"payload": {
+"delta": " do cliente pede senha, ",
+"content": " do cliente pede senha, "
+}
+},
+{
+"event_id": 108,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.233864+00:00",
+"payload": {
+"delta": "então a tela foi ocultad",
+"content": "então a tela foi ocultad"
+}
+},
+{
+"event_id": 109,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.264265+00:00",
+"payload": {
+"delta": "a e voltei à página ante",
+"content": "a e voltei à página ante"
+}
+},
+{
+"event_id": 110,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.294414+00:00",
+"payload": {
+"delta": "rior.",
+"content": "rior."
+}
+},
+{
+"event_id": 111,
+"type": "assistant_message_discard",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.327772+00:00",
+"payload": {
+"reason": "gate"
+}
+},
+{
+"event_id": 112,
+"type": "agent_progress",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:02.328425+00:00",
+"payload": {
+"label": "Planejando",
+"step": 8
+}
+},
+{
+"event_id": 113,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.476799+00:00",
+"payload": {
+"delta": "Abri o site, entrei em C",
+"content": "Abri o site, entrei em C"
+}
+},
+{
+"event_id": 114,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.505554+00:00",
+"payload": {
+"delta": "ontato, preenchi o nome ",
+"content": "ontato, preenchi o nome "
+}
+},
+{
+"event_id": 115,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.535711+00:00",
+"payload": {
+"delta": "e rolei a página. A área",
+"content": "e rolei a página. A área"
+}
+},
+{
+"event_id": 116,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.565922+00:00",
+"payload": {
+"delta": " do cliente pede senha, ",
+"content": " do cliente pede senha, "
+}
+},
+{
+"event_id": 117,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.596291+00:00",
+"payload": {
+"delta": "então a tela foi ocultad",
+"content": "então a tela foi ocultad"
+}
+},
+{
+"event_id": 118,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.626472+00:00",
+"payload": {
+"delta": "a e voltei à página ante",
+"content": "a e voltei à página ante"
+}
+},
+{
+"event_id": 119,
+"type": "assistant_message_delta",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.656765+00:00",
+"payload": {
+"delta": "rior.",
+"content": "rior."
+}
+},
+{
+"event_id": 120,
+"type": "assistant_message_done",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.688970+00:00",
+"payload": {
+"content": "Abri o site, entrei em Contato, preenchi o nome e rolei a página. A área do cliente pede senha, então a tela foi ocultada e voltei à página anterior."
+}
+},
+{
+"event_id": 121,
+"type": "task_step_completed",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.690598+00:00",
+"payload": {
+"step": {
+"id": "faa59857-634f-4a17-9bbe-bb01670fb0d5",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 1,
+"label": "Entender pedido",
+"detail": "Navegue até o site local da cooperativa, abra Contato, preencha o nome e role a página",
+"status": "passed",
+"tool_hint": "understand",
+"started_at": "2026-10-09T17:03:03.690009+00:00",
+"finished_at": "2026-10-09T17:03:03.690009+00:00",
+"updated_at": "2026-10-09T17:03:03.690009+00:00",
+"acceptance_criteria": [
+"Objetivo principal identificado."
+],
+"evidence": []
+}
+}
+},
+{
+"event_id": 122,
+"type": "task_step_completed",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.691234+00:00",
+"payload": {
+"step": {
+"id": "b2e4f57a-f9c4-45eb-9983-c61d6c5ea6d3",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 2,
+"label": "Executar trabalho",
+"detail": "Usar as ferramentas certas para pesquisar, criar ou resolver a tarefa.",
+"status": "passed",
+"tool_hint": "execute",
+"started_at": "2026-10-09T17:03:03.690911+00:00",
+"finished_at": "2026-10-09T17:03:03.690911+00:00",
+"updated_at": "2026-10-09T17:03:03.690911+00:00",
+"acceptance_criteria": [
+"Acoes principais executadas sem bloquear a conversa."
+],
+"evidence": []
+}
+}
+},
+{
+"event_id": 123,
+"type": "task_step_completed",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.691783+00:00",
+"payload": {
+"step": {
+"id": "22dd71bc-cc05-47d0-b1f2-a7d90ac01537",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 3,
+"label": "Validar entrega",
+"detail": "Conferir resultados, arquivos, fontes ou projeto antes de finalizar.",
+"status": "passed",
+"tool_hint": "validate",
+"started_at": "2026-10-09T17:03:03.691498+00:00",
+"finished_at": "2026-10-09T17:03:03.691498+00:00",
+"updated_at": "2026-10-09T17:03:03.691498+00:00",
+"acceptance_criteria": [
+"Resultado revisado e problemas importantes registrados."
+],
+"evidence": []
+}
+}
+},
+{
+"event_id": 124,
+"type": "task_step_completed",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.692446+00:00",
+"payload": {
+"step": {
+"id": "17fde563-9e53-4072-8945-f8ababe449ba",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"position": 4,
+"label": "Entregar resposta",
+"detail": "Responder com o resumo final e disponibilizar artefatos quando existirem.",
+"status": "passed",
+"tool_hint": "deliver",
+"started_at": "2026-10-09T17:03:03.692020+00:00",
+"finished_at": "2026-10-09T17:03:03.692020+00:00",
+"updated_at": "2026-10-09T17:03:03.692020+00:00",
+"acceptance_criteria": [
+"Usuario recebe uma conclusao clara da tarefa."
+],
+"evidence": []
+}
+}
+},
+{
+"event_id": 125,
+"type": "agent_status",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.692739+00:00",
+"payload": {
+"status": "done",
+"label": "Concluído"
+}
+},
+{
+"event_id": 126,
+"type": "agent_activity",
+"task_id": "2401391d-de4e-4984-8cf6-d08568462c48",
+"created_at": "2026-10-09T17:03:03.693035+00:00",
+"payload": {
+"kind": "finalizing",
+"title": "Entrega final",
+"detail": "Resposta entregue.",
+"status": "done",
+"metadata": {}
+}
+}
+],
+"files": []
+}

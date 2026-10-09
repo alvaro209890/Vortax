@@ -10,6 +10,8 @@
 
 Correção de navegador, ponteiro e tempo de pesquisa (09/10/2026): [diagnóstico, limites e validação](docs/NAVEGADOR_PESQUISA_2026-10-09.md).
 
+Acompanhamento do agente, Computador do Vortax e navegador (09/10/2026, parcial): [o que mudou e o que falta](docs/EXPERIENCIA_AGENTE_2026-10-09.md).
+
 ## Computador do Vortax — Desenvolvimento de Software
 
 O Vortax possui um motor de desenvolvimento interno para criar software, sites, scripts e qualquer projeto de código que você pedir.

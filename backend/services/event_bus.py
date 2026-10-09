@@ -5,6 +5,7 @@ from database import database
 from starlette.websockets import WebSocket
 
 from services.stream_contract import build_stream_event
+from services.tool_context import DERIVED_EVENT_TYPES, current_call_id
 
 
 class EventBus:
@@ -27,6 +28,9 @@ class EventBus:
                 sockets.remove(websocket)
 
     async def publish(self, task_id: str, event_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
+        call_id = current_call_id.get()
+        if call_id and event_type in DERIVED_EVENT_TYPES and "call_id" not in (payload or {}):
+            payload = {**(payload or {}), "call_id": call_id}
         event = build_stream_event(task_id, event_type, payload)
         event_id = database.insert_event(task_id, event["type"], event["created_at"], event["payload"])
         event["event_id"] = event_id

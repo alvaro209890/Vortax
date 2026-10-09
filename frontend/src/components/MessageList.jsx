@@ -1,30 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  ArrowDown,
   BookOpen,
   Check,
-  Code2,
   Copy,
   Download,
   ExternalLink,
   FileSpreadsheet,
-  FileSearch,
   FileText,
-  Loader2,
-  Monitor,
   Presentation,
-  Search,
-  ShieldCheck,
-  Sparkles,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
+import { useStickToBottom } from "../hooks/useStickToBottom.js";
 import { fileDownloadUrl, getAuthToken, taskDownloadZipUrl } from "../lib/api.js";
-import { isToolWorkEvent } from "../lib/events.js";
 import { presentSoftwareMessage } from "../lib/softwareDelivery.js";
+import { StatusIndicator } from "./StatusIndicator.jsx";
+import { PreparingTurn, TurnActivity } from "./TurnActivity.jsx";
 
 /* ── Code Block with Copy Button ─────────────────────────────────── */
 
@@ -476,29 +472,9 @@ function MessageArticle({ message, onOpenDocument }) {
   );
 }
 
-function numericIndex(value) {
-  return Number.isFinite(value) ? value : null;
-}
-
-function publicText(value) {
-  return String(value || "")
-    .replace(/\bOpenClaude\b/g, "Vortax")
-    .replace(/\bVertex CLI\b/g, "Vortax")
-    .replace(/\bVertex\b/g, "Vortax")
-    .replace(/\bopenclaude\b/g, "Vortax")
-    .replace(/\bvertex\b/g, "Vortax");
-}
-
-function latestUserMessage(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "user") return messages[index];
-  }
-  return null;
-}
-
 function likelyTaskPrompt(prompt = "") {
   const value = String(prompt || "").trim().toLowerCase();
-  return /(pesquis|busc|procure|not[ií]cia|crie|criar|construa|monte|gere|gerar|desenvolv|implemente|program|c[oó]digo|fa[cç]a|calcule|analise|compare|investigue|verifique|colete|acesse|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|melhore|otimize|publique|execute|rode|instale)/i.test(value);
+  return /(pesquis|busc|procure|not[ií]cia|crie|criar|construa|monte|gere|gerar|desenvolv|implemente|program|c[oó]digo|fa[cç]a|calcule|analise|compare|investigue|verifique|colete|acesse|site|app|dashboard|relat[oó]rio|arquivo|imagem|pdf|planilha|documento|automatize|corrija|edite|altere|melhore|otimize|publique|execute|rode|instale|naveg)/i.test(value);
 }
 
 function isDirectPlanEvent(event) {
@@ -511,576 +487,35 @@ function isDirectPlanEvent(event) {
     && /responder mensagem|resposta direta/i.test(String(steps[0]?.label || steps[0]?.detail || ""));
 }
 
-function latestEventIndexBefore(events, beforeIndex, predicate) {
-  const limit = Number.isFinite(beforeIndex) ? beforeIndex : events.length;
-  for (let index = limit - 1; index >= 0; index -= 1) {
-    if (predicate(events[index])) return index;
-  }
-  return -1;
+// Um turno só mostra acompanhamento quando houve trabalho de ferramenta (ou ele está
+// começando um pedido de tarefa). Conversa simples não ganha cartão de progresso.
+function showsActivity(turn, message) {
+  if (!turn) return false;
+  if (turn.actions.length > 0) return true;
+  if (!["running", "paused", "waiting"].includes(turn.status)) return false;
+  if (turn.events.some(({ event }) => isDirectPlanEvent(event))) return false;
+  return turn.status === "waiting" || likelyTaskPrompt(message?.content || "");
 }
 
-function isDirectResponseSegment(events, previousUserIndex, currentUserIndex, nextUserIndex, message) {
-  if (currentUserIndex === null) return false;
-  const previousAssistantDoneIndex = latestEventIndexBefore(
-    events,
-    currentUserIndex,
-    (event) => event?.type === "assistant_message_done",
-  );
-  const start = Math.max(previousUserIndex ?? -1, previousAssistantDoneIndex);
-  const end = nextUserIndex ?? events.length;
-  const scoped = events.filter((_, index) => index > start && index < end);
-  if (scoped.some(isDirectPlanEvent)) return true;
-  // Turno que terminou sem usar nenhuma ferramenta foi conversa: não mostra cartão de progresso.
-  const answered = scoped.some((event) => event.type === "assistant_message_done");
-  if (answered && !scoped.some(isToolWorkEvent)) return true;
-  return !likelyTaskPrompt(message?.content || "")
-    && scoped.some((event) => event.type === "agent_progress" && /resposta r[aá]pida/i.test(String(event.payload?.label || "")));
-}
-
-function toolKind(name = "") {
-  if (name === "browser_google_search") return "search";
-  if (["browser_extract_article", "browser_extract_text", "browser_extract_links"].includes(name)) return "source";
-  if (name.startsWith("browser_")) return "browser";
-  if (name === "shell_run") return "code";
-  if (name === "exact_solve") return "validation";
-  return "analysis";
-}
-
-function stepKind(step = {}) {
-  const hint = String(step.tool_hint || "").toLowerCase();
-  if (/(research|search|web)/.test(hint)) return "search";
-  if (/(code|editor|vertex|openclaude|execute|shell|terminal)/.test(hint)) return "code";
-  if (/(valid|review|quality)/.test(hint)) return "validation";
-  if (/(deliver|finish|file|document|report)/.test(hint)) return "file";
-  return "analysis";
-}
-
-function toolTitle(name = "", fallback = "Executando etapa") {
-  const labels = {
-    browser_click_link_by_index: "Abrindo resultado",
-    browser_extract_article: "Lendo fonte",
-    browser_extract_links: "Extraindo links",
-    browser_extract_text: "Lendo pagina",
-    browser_get_state: "Verificando navegador",
-    browser_google_search: "Pesquisando na web",
-    browser_navigate: "Navegando",
-    browser_screenshot: "Capturando tela",
-    shell_run: "Executando comando",
-    shell_exec: "Executando comando",
-    shell_view: "Lendo terminal",
-    shell_write: "Enviando ao terminal",
-    shell_kill: "Encerrando processo",
-    web_search: "Pesquisando na web",
-    web_fetch: "Lendo página",
-    file_read: "Lendo arquivo",
-    file_write: "Criando arquivo",
-    file_edit: "Editando arquivo",
-    file_append: "Editando arquivo",
-    glob: "Procurando arquivos",
-    grep: "Procurando no código",
-    validate_project: "Validando projeto",
-    document_render: "Gerando documento",
-    vision_analyze: "Analisando imagem",
-    todo_write: "Atualizando plano",
-  };
-  return labels[name] || fallback;
-}
-
-function summarizeToolResult(result) {
-  if (!result) return "";
-  if (typeof result === "string") return result;
-  if (result.query && Array.isArray(result.results)) return `${result.results.length} resultados para "${result.query}"`;
-  if (Array.isArray(result.links)) return `${result.links.length} links encontrados`;
-  if (result.opened?.title) return result.opened.title;
-  if (result.title && result.url) return `${result.title} - ${result.url}`;
-  if (result.text) return String(result.text).slice(0, 220);
-  if (result.error) return result.error;
-  if (result.success === false) return "A ferramenta retornou falha.";
-  return "Pronto";
-}
-
-function actionDetail(payload = {}) {
-  const params = payload.params || {};
-  return payload.description
-    || params.query
-    || params.url
-    || params.command
-    || payload.name
-    || "";
-}
-
-function normalizeOperationalEvent(event, index) {
-  const payload = event?.payload || {};
-  const id = event?.event_id !== undefined && event?.event_id !== null
-    ? `activity-event-${event.event_id}`
-    : `activity-${event?.type || "event"}-${event?.created_at || index}-${index}`;
-
-  if (event?.type === "agent_activity") {
-    const title = String(payload.title || "").trim();
-    if (!title) return null;
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(payload.detail || ""),
-      event,
-      eventIndex: index,
-      id,
-      kind: payload.kind || "analysis",
-      metadata: payload.metadata || {},
-      status: payload.status || "running",
-      title: publicText(title),
-      tool: payload.tool || "",
-    };
-  }
-
-  if (event?.type === "agent_progress") {
-    const tool = payload.tool || "";
-    const title = payload.label || payload.detail || "Andamento";
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(payload.detail || ""),
-      event,
-      eventIndex: index,
-      id,
-      kind: toolKind(tool),
-      metadata: { ...(payload.origin ? { url: payload.origin } : {}) },
-      status: "running",
-      title: publicText(title),
-      tool,
-    };
-  }
-
-  if (event?.type === "tool_call") {
-    const name = payload.name || "";
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(actionDetail(payload)),
-      event,
-      eventIndex: index,
-      id,
-      kind: toolKind(name),
-      metadata: payload.params || {},
-      status: "running",
-      title: toolTitle(name),
-      tool: name,
-    };
-  }
-
-  if (event?.type === "tool_result") {
-    const name = payload.name || "";
-    const result = payload.result || {};
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(summarizeToolResult(result)),
-      event,
-      eventIndex: index,
-      id,
-      kind: toolKind(name),
-      metadata: result || {},
-      status: result?.success === false || result?.error ? "failed" : "done",
-      title: toolTitle(name, "Resultado"),
-      tool: name,
-    };
-  }
-
-  if (event?.type?.startsWith("task_step_")) {
-    const step = payload.step || {};
-    const failed = event.type === "task_step_failed" || step.status === "failed";
-    const done = event.type === "task_step_completed" || ["passed", "skipped"].includes(step.status);
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(step.evidence_summary?.at?.(-1) || step.detail || ""),
-      event,
-      eventIndex: index,
-      id,
-      kind: stepKind(step),
-      metadata: { step_id: step.id, tool_hint: step.tool_hint },
-      status: failed ? "failed" : done ? "done" : "running",
-      title: publicText(step.label || "Etapa da tarefa"),
-      tool: step.tool_hint || "",
-    };
-  }
-
-  if (event?.type === "source_saved") {
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(payload.url || payload.title || ""),
-      event,
-      eventIndex: index,
-      id,
-      kind: "source",
-      metadata: { source_title: payload.title, url: payload.url },
-      status: "done",
-      title: "Fonte salva",
-      tool: "source_saved",
-    };
-  }
-
-  if (event?.type === "screen_frame") {
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(payload.caption || payload.title || payload.url || "Tela atualizada"),
-      event,
-      eventIndex: index,
-      id,
-      kind: "browser",
-      metadata: { title: payload.title, url: payload.url },
-      status: "done",
-      title: "Tela atualizada",
-      tool: "screen_frame",
-    };
-  }
-
-  if (event?.type === "vertex_progress") {
-    const stage = payload.stage || payload.current_stage || "";
-    return {
-      createdAt: event.created_at || "",
-      detail: publicText(payload.file ? `${payload.message || "Trabalhando em"} ${payload.file}` : payload.message || ""),
-      event,
-      eventIndex: index,
-      id,
-      kind: "code",
-      metadata: { file: payload.file, stage },
-      status: payload.status === "done" || stage === "done" ? "done" : payload.status === "error" || stage === "error" ? "failed" : "running",
-      title: publicText(payload.title || payload.label || "Vortax no editor"),
-      tool: "vertex_progress",
-    };
-  }
-
-  if (event?.type === "files_created") {
-    const fileCount = payload.files?.length || 0;
-    const projectCount = payload.projects?.length || 0;
-    return {
-      createdAt: event.created_at || "",
-      detail: `${fileCount} arquivo(s) em ${projectCount || 1} projeto(s).`,
-      event,
-      eventIndex: index,
-      id,
-      kind: "file",
-      metadata: { files: payload.files || [], projects: payload.projects || [] },
-      status: "done",
-      title: "Arquivos gerados",
-      tool: "files_created",
-    };
-  }
-
-  return null;
-}
-
-function normalizeActivityEvent(event, index) {
-  return normalizeOperationalEvent(event, index);
-}
-
-function scopedActivities(events = [], afterEventIndex = null, beforeEventIndex = null) {
-  return events
-    .map((event, index) => ({ activity: normalizeActivityEvent(event, index), index }))
-    .filter(({ activity, index }) => activity
-      && (afterEventIndex === null || index > afterEventIndex)
-      && (beforeEventIndex === null || index < beforeEventIndex))
-    .map(({ activity }) => activity);
-}
-
-function activityOpening(activities, activeSearch) {
-  const latest = activities[activities.length - 1];
-  if (latest?.tool === "planning") {
-    return "Iniciando ambiente antes da execução.";
-  }
-  const kind = latest?.kind || (activeSearch ? "search" : "analysis");
-  if (kind === "search" || kind === "source" || kind === "browser") {
-    return "Pesquisando e verificando fontes.";
-  }
-  if (kind === "code" || kind === "file") {
-    return "Preparando arquivos e execução.";
-  }
-  if (kind === "validation") {
-    return "Conferindo a entrega.";
-  }
-  if (kind === "finalizing") {
-    return "Organizando a resposta final.";
-  }
-  return "Acompanhando a tarefa.";
-}
-
-function activityIcon(kind, size = 14) {
-  if (kind === "search") return <Search size={size} />;
-  if (kind === "source") return <FileSearch size={size} />;
-  if (kind === "browser") return <Monitor size={size} />;
-  if (kind === "code") return <Code2 size={size} />;
-  if (kind === "file") return <FileText size={size} />;
-  if (kind === "validation") return <ShieldCheck size={size} />;
-  if (kind === "finalizing") return <Check size={size} />;
-  return <Sparkles size={size} />;
-}
-
-function activityPillLabel(activity) {
-  const metadata = activity.metadata || {};
-  if (activity.kind === "search") return metadata.query || activity.detail || activity.title;
-  if (activity.kind === "source") return metadata.source_title || metadata.url || activity.detail || activity.title;
-  if (activity.kind === "browser") return metadata.url || activity.detail || activity.title;
-  if (activity.kind === "file") return metadata.file || activity.detail || activity.title;
-  return activity.detail || activity.title;
-}
-
-function activityStatusLabel(status) {
-  if (status === "done") return "concluído";
-  if (status === "failed") return "ajuste";
-  if (status === "blocked") return "bloqueado";
-  return "em andamento";
-}
-
-function normalizeActivityText(value = "") {
-  return publicText(value)
-    .replace(/https?:\/\/(www\.)?/gi, "")
-    .replace(/[?#].*$/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function lowSignalActivity(activity = {}) {
-  const title = normalizeActivityText(activity.title);
-  return activity.tool === "screen_frame"
-    || /planejando proximo passo|planejando próximo passo|tela atualizada|verificando navegador/.test(title);
-}
-
-function activitySignature(activity = {}) {
-  const metadata = activity.metadata || {};
-  const subject = metadata.query
-    || metadata.source_title
-    || metadata.url
-    || metadata.file
-    || activity.detail
-    || activity.title;
-  return [
-    activity.kind || "",
-    activity.tool || "",
-    normalizeActivityText(activity.title),
-    normalizeActivityText(subject).slice(0, 140),
-  ].join(":");
-}
-
-function primaryProgressActivity(activities = [], activeSearch) {
-  const meaningful = [...activities].reverse().find((activity) => !activity.synthetic && !lowSignalActivity(activity));
-  if (meaningful) return meaningful;
-  if (activities.length > 0) return activities[activities.length - 1];
-  return {
-    detail: activeSearch?.query || "",
-    kind: "search",
-    status: "running",
-    synthetic: true,
-    title: "Pesquisando na web",
-  };
-}
-
-function compactProgressActivities(activities = [], latest) {
-  const selected = [];
-  const seen = new Set(latest ? [activitySignature(latest)] : []);
-
-  [...activities].reverse().forEach((activity) => {
-    if (!activity || activity.synthetic || activity.id === latest?.id) return;
-    if (lowSignalActivity(activity) && selected.length > 0) return;
-    const signature = activitySignature(activity);
-    if (seen.has(signature)) return;
-    seen.add(signature);
-    selected.push(activity);
-  });
-
-  return selected.slice(0, 3).reverse();
-}
-
-function pendingPreparationActivity() {
-  return {
-    createdAt: new Date().toISOString(),
-    detail: "Criando plano de tarefas",
-    id: "pending-preparation",
-    kind: "analysis",
-    metadata: {},
-    status: "running",
-    synthetic: true,
-    title: "Iniciando ambiente",
-    tool: "planning",
-  };
-}
-
-function normalizeMessageText(value = "") {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function matchesPendingPreparation(message, pendingPreparation) {
-  if (!message || !pendingPreparation) return false;
-  if (message.id && message.id === pendingPreparation.id) return true;
-  const messageClientId = String(message.clientMessageId || "").trim();
-  const pendingClientId = String(pendingPreparation.clientMessageId || "").trim();
-  if (messageClientId && pendingClientId) return messageClientId === pendingClientId;
-  if (messageClientId || pendingClientId) return false;
-
-  const messageContent = normalizeMessageText(message.content);
-  const pendingContent = normalizeMessageText(pendingPreparation.content);
-  if (!messageContent || messageContent !== pendingContent) return false;
-
-  const messageTaskId = message.taskId;
-  const pendingTaskId = pendingPreparation.taskId;
-  return !messageTaskId
-    || !pendingTaskId
-    || messageTaskId === pendingTaskId
-    || messageTaskId === "new"
-    || pendingTaskId === "new";
-}
-
-function ChatProgressArticle({ activities = [], activeSearch, onComputerFocus }) {
-  if (!activities.length && !activeSearch) return null;
-  const latest = primaryProgressActivity(activities, activeSearch);
-  const visibleActivities = compactProgressActivities(activities, latest);
-  const latestDisabled = latest.synthetic || !latest.event;
-  const focusActivity = (activity) => onComputerFocus?.({
-    activity,
-    event: activity.event,
-    eventIndex: activity.eventIndex,
-  });
-
-  return (
-    <article className="message assistant progress-message chat-progress-message">
-      <div className="message-content">
-        <AssistantByline />
-        <div className="chat-progress-copy">{activityOpening(activities, activeSearch)}</div>
-        <button
-          className={`chat-progress-current ${latest.status || "running"} ${latestDisabled ? "" : "clickable"}`}
-          disabled={latestDisabled}
-          onClick={() => focusActivity(latest)}
-          title={latestDisabled ? undefined : "Ver esta cena no computador do Vortax"}
-          type="button"
-        >
-          <span className="chat-progress-current-icon">
-            {latest.status === "running" ? <Loader2 size={14} /> : activityIcon(latest.kind, 14)}
-          </span>
-          <div>
-            <strong>{latest.title}</strong>
-            {latest.detail ? <small>{latest.detail}</small> : null}
-          </div>
-          <em>{activityStatusLabel(latest.status)}</em>
-        </button>
-        {visibleActivities.length > 0 && (
-          <div className="chat-progress-activity-list">
-            {visibleActivities.map((activity) => (
-              <button
-                className={`chat-progress-activity ${activity.kind} ${activity.status}`}
-                key={activity.id}
-                onClick={() => focusActivity(activity)}
-                title="Ver esta cena no computador do Vortax"
-                type="button"
-              >
-                <span className="chat-progress-activity-icon">
-                  {activity.status === "running" ? <Loader2 size={13} /> : activityIcon(activity.kind, 13)}
-                </span>
-                <span className="chat-progress-activity-copy">
-                  <strong>{activity.title}</strong>
-                  {activity.detail ? <small>{activityPillLabel(activity)}</small> : null}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function buildTimelineItems(messages, events, agentBusy, activeSearch, pendingPreparation) {
+function buildTimelineItems(messages, turns, pendingPreparation, agentBusy) {
+  const turnByUserIndex = new Map(turns.filter((turn) => turn.userIndex >= 0).map((turn) => [turn.userIndex, turn]));
   const items = [];
-  const latestUser = latestUserMessage(messages);
-  let pendingPreparationRendered = false;
-  let realProgressRendered = false;
-
-  messages.forEach((message, messageIndex) => {
-    items.push({
-      key: `message-${message.id}`,
-      message,
-      type: "message",
-    });
-
-    if (message.role === "user") {
-      const currentIndex = numericIndex(message.eventIndex);
-      const previousUser = [...messages.slice(0, messageIndex)].reverse().find((item) => item.role === "user");
-      const previousUserIndex = numericIndex(previousUser?.eventIndex);
-      const nextUser = messages.slice(messageIndex + 1).find((item) => item.role === "user");
-      const nextUserIndex = numericIndex(nextUser?.eventIndex);
-      const isDirectResponse = isDirectResponseSegment(events, previousUserIndex, currentIndex, nextUserIndex, message);
-      let activities = currentIndex === null
-        ? []
-        : scopedActivities(events, currentIndex, nextUserIndex);
-      const isLatestUser = message.id === latestUser?.id;
-
-      if (isDirectResponse) {
-        activities = [];
-      }
-
-      if (!isDirectResponse && isLatestUser && activeSearch && !activities.some((activity) => activity.kind === "search")) {
-        activities = [
-          ...activities,
-          {
-            detail: activeSearch.query,
-            id: `active-search-${activeSearch.query}`,
-            kind: "search",
-            metadata: { query: activeSearch.query },
-            status: "running",
-            synthetic: true,
-            title: "Pesquisando na web",
-            tool: "browser_google_search",
-          },
-        ];
-      }
-
-      const shouldShowPendingPreparation = !isDirectResponse
-        && isLatestUser
-        && activities.length === 0
-        && (
-          matchesPendingPreparation(message, pendingPreparation)
-          || (agentBusy && likelyTaskPrompt(message.content))
-        );
-
-      if (shouldShowPendingPreparation) {
-        activities = [pendingPreparationActivity()];
-        pendingPreparationRendered = true;
-      }
-
-      const isOnlyPendingPreparation = activities.length === 1 && activities[0]?.tool === "planning";
-      if (activities.length > 0 && !isOnlyPendingPreparation) {
-        realProgressRendered = true;
-      }
-      if ((!isLatestUser || !agentBusy) && activities.length > 0 && !isOnlyPendingPreparation) {
-        activities = activities.map((activity) => (
-          activity.status === "running" ? { ...activity, status: "done" } : activity
-        ));
-      }
-
-      if (activities.length > 0) {
-        items.push({
-          activities,
-          activeSearch: isLatestUser ? activeSearch : null,
-          key: `progress-${message.id}-${activities.map((activity) => activity.id).join("-")}`,
-          type: "progress",
-        });
-      }
+  let activityShown = false;
+  messages.forEach((message) => {
+    items.push({ key: `message-${message.id}`, message, type: "message" });
+    if (message.role !== "user") return;
+    const turn = Number.isFinite(message.eventIndex) ? turnByUserIndex.get(message.eventIndex) : null;
+    if (showsActivity(turn, message)) {
+      items.push({ key: `activity-${turn.id}`, turn, type: "activity" });
+      activityShown = true;
+    } else if (!turn && pendingPreparation && message.clientMessageId && message.clientMessageId === pendingPreparation.clientMessageId) {
+      items.push({ key: `activity-pending-${message.id}`, type: "preparing" });
+      activityShown = true;
     }
   });
-
-  if (pendingPreparation && !pendingPreparationRendered && !realProgressRendered) {
-    items.push({
-      activities: [pendingPreparationActivity()],
-      activeSearch,
-      key: `progress-pending-preparation-${pendingPreparation.id || pendingPreparation.createdAt || "current"}`,
-      type: "progress",
-    });
+  if (!activityShown && agentBusy && pendingPreparation) {
+    items.push({ key: "activity-pending", type: "preparing" });
   }
-
-  if (items.length === 0 && agentBusy) {
-    items.push({
-      activities: [pendingPreparationActivity()],
-      activeSearch,
-      key: "progress-pending-empty",
-      type: "progress",
-    });
-  }
-
   return items;
 }
 
@@ -1120,34 +555,33 @@ function ProjectArchive({ archive, taskId }) {
   }, [taskId]);
   return <div className="message-downloads">
     <a className="message-download-btn" href={url || undefined} download={archive.name} aria-disabled={!url}>
-      {url ? <Download size={15} /> : <Loader2 size={15} className="spin" />}
+      {url ? <Download size={15} /> : <StatusIndicator size={14} status="running" label="Preparando ZIP" />}
       <span>{url ? `Baixar projeto ZIP · ${archive.file_count} arquivos` : "Preparando ZIP…"}</span>
     </a>
   </div>;
 }
 
 export function MessageList({
-  activeSearch,
+  activity,
   agentBusy = false,
   events = [],
   files = [],
   isTyping = false,
   messages,
-  onComputerFocus,
+  onFocusAction,
   pendingPreparation,
+  taskId,
 }) {
-  const endRef = useRef(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
+  const turns = activity?.turns || [];
   const timelineItems = useMemo(
-    () => buildTimelineItems(messages.map((message) => presentSoftwareMessage(message, files, events)), events, agentBusy, activeSearch, pendingPreparation),
-    [activeSearch, agentBusy, events, files, messages, pendingPreparation],
+    () => buildTimelineItems(messages.map((message) => presentSoftwareMessage(message, files, events)), turns, pendingPreparation, agentBusy),
+    [agentBusy, events, files, messages, pendingPreparation, turns],
   );
-  const showTypingMessage = isTyping && !timelineItems.some((item) => item.type === "progress");
-  const lastTimelineKey = timelineItems.at(-1)?.key || "";
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [showTypingMessage, lastTimelineKey, timelineItems.length]);
+  const showTypingMessage = isTyping && !timelineItems.some((item) => item.type !== "message" && (item.type === "preparing" || ["running", "paused", "waiting"].includes(item.turn?.status)));
+  const latestTurn = turns[turns.length - 1];
+  const changeKey = `${timelineItems.length}:${latestTurn?.actions.length || 0}:${latestTurn?.status || ""}:${showTypingMessage}`;
+  const { ref, scrollToBottom, stuck, unseen } = useStickToBottom(changeKey, { resetKey: taskId || "new" });
 
   return (
     <motion.div
@@ -1155,19 +589,16 @@ export function MessageList({
       variants={staggerContainer}
       initial="hidden"
       animate="visible"
+      ref={ref}
     >
       <div className="message-list-inner">
         <AnimatePresence initial={false}>
           {timelineItems.map((item) => {
-            if (item.type === "progress") {
-              return (
-                <ChatProgressArticle
-                  activities={item.activities}
-                  activeSearch={item.activeSearch}
-                  key={item.key}
-                  onComputerFocus={onComputerFocus}
-                />
-              );
+            if (item.type === "activity") {
+              return <TurnActivity key={item.key} onFocus={onFocusAction} turn={item.turn} />;
+            }
+            if (item.type === "preparing") {
+              return <PreparingTurn key={item.key} />;
             }
             return (
               <MessageArticle
@@ -1181,9 +612,9 @@ export function MessageList({
         {showTypingMessage && (
           <motion.article
             className="message assistant typing-message"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", stiffness: 200, damping: 22 }}
+            transition={{ duration: 0.18, ease: [0.2, 0.7, 0.2, 1] }}
           >
             <div className="message-content">
               <AssistantByline />
@@ -1198,8 +629,12 @@ export function MessageList({
             </div>
           </motion.article>
         )}
-        <div ref={endRef} />
       </div>
+      {!stuck ? (
+        <button className="vx-jump vx-jump--chat" onClick={() => scrollToBottom()} type="button">
+          <ArrowDown size={14} /> {unseen ? "Novas atualizações" : "Ir para o fim"}
+        </button>
+      ) : null}
       <DocumentViewerOverlay
         document={selectedDocument}
         onClose={() => setSelectedDocument(null)}

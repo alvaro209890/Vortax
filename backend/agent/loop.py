@@ -27,6 +27,7 @@ from services.exact_solver import is_exact_prompt, should_answer_directly
 from services.research_execution import RESEARCH_TOOLS, evidence_fallback, is_research_task
 from services.task_plan_store import task_plan_store
 from services.task_store import TaskStore
+from services.tool_context import new_call_id
 from services.software_delivery import DELIVERY_INSTRUCTION, archive_requested, software_request
 from tools.tool_executor import execute_tool
 
@@ -409,19 +410,21 @@ async def run_native_agent_loop(
                     return call, {"success": False, "error": "Já há resultados de duas buscas no contexto. Leia URLs retornadas com web_fetch ou sintetize os trechos; não repita buscas."}
                 if research_task and name in {"web_search", "browser_google_search"}:
                     research_searches += 1
+                call_id = new_call_id()
                 execution = execute_tool(
                     name,
                     args,
                     task_id=task_id,
                     bus=bus,
                     description=name,
+                    call_id=call_id,
                 )
                 try:
                     result = await asyncio.wait_for(execution, timeout=min(
                         settings.RESEARCH_TOOL_TIMEOUT_SECONDS, max(1, time_budget - (time.monotonic() - started))
                     )) if research_task else await execution
                 except asyncio.TimeoutError:
-                    await bus.publish(task_id, "tool_result", {"name": name, "result": {"success": False, "error": "Tempo limite da ferramenta; tente outra fonte."}})
+                    await bus.publish(task_id, "tool_result", {"name": name, "result": {"success": False, "error": "Tempo limite da ferramenta; tente outra fonte."}, "call_id": call_id})
                     return call, {"success": False, "error": "Tempo limite da ferramenta; tente outra fonte."}
                 data = result.get("data", result) if isinstance(result, dict) else {"result": result}
                 return call, data if isinstance(data, dict) else {"result": data}

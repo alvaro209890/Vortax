@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, PanelRightOpen, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowLeft, Monitor, PanelRightOpen, Plus, Search, Settings, Trash2 } from "lucide-react";
 
 import { useAuth } from "./auth/AuthProvider.jsx";
 import { AiExchangePanel } from "./components/AgentActivity.jsx";
@@ -19,6 +20,7 @@ import { ThemeToggle } from "./components/ThemeToggle.jsx";
 import { ActionTimeline } from "./components/ActionTimeline.jsx";
 import { TaskDetailDrawer } from "./components/TaskDetailDrawer.jsx";
 import { VortaxComputerDock } from "./components/VortaxComputerDock.jsx";
+import { ComputerPanel } from "./components/computer/ComputerPanel.jsx";
 import { OnboardingScreen } from "./components/OnboardingScreen.jsx";
 import { SettingsPanel, loadUserProfile } from "./components/SettingsPanel.jsx";
 import { useTaskData } from "./hooks/useTaskData.js";
@@ -26,6 +28,8 @@ import { useTaskEvents } from "./hooks/useTaskEvents.js";
 import { useTaskFiles } from "./hooks/useTaskFiles.js";
 import { buildLiveTaskPlan, useLiveTaskPlan } from "./hooks/useLiveTaskPlan.js";
 import { useTaskSources } from "./hooks/useTaskSources.js";
+import { useComputer } from "./hooks/useComputer.js";
+import { buildActivity } from "./lib/activity.js";
 import {
   appendTaskMessage,
   appendTaskImages,
@@ -39,6 +43,19 @@ import {
   listTasks,
   stopTask,
 } from "./lib/api.js";
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query).matches : false));
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    media.addEventListener?.("change", onChange);
+    return () => media.removeEventListener?.("change", onChange);
+  }, [query]);
+  return matches;
+}
 
 const welcomeMessage = {
   id: "welcome",
@@ -447,7 +464,8 @@ export default function App() {
   const [stopping, setStopping] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [secureLoginOpen, setSecureLoginOpen] = useState(false);
-  const [computerFocusRequest, setComputerFocusRequest] = useState(null);
+  const [computerOpen, setComputerOpen] = useState(false);
+  const wideLayout = useMediaQuery("(min-width: 1100px)");
   const [optimisticMessages, setOptimisticMessages] = useState([]);
   const [pendingPreparation, setPendingPreparation] = useState(null);
   const [taskToDelete, setTaskToDelete] = useState(null);
@@ -549,19 +567,24 @@ export default function App() {
     [activeTask, agentBusy, currentEvents],
   );
 
-  const activeSearch = useMemo(() => {
-    const scopedEvents = lastUserIndex >= 0 ? currentEvents.slice(lastUserIndex + 1) : currentEvents;
-    const reversed = [...scopedEvents].reverse();
-    const lastSearchCall = reversed.find((e) => e.type === "tool_call" && e.payload?.name === "browser_google_search");
-    if (!lastSearchCall) return null;
-    const lastSearchResult = reversed.find((e) => e.type === "tool_result" && e.payload?.name === "browser_google_search");
-    if (!lastSearchResult || lastSearchResult.created_at < lastSearchCall.created_at) {
-      return {
-        query: lastSearchCall.payload?.params?.query || "Buscando informações...",
-      };
-    }
-    return null;
-  }, [currentEvents, lastUserIndex]);
+  const activity = useMemo(
+    () => buildActivity(currentEvents, { agentStatus, pendingConfirmation }),
+    [agentStatus, currentEvents, pendingConfirmation],
+  );
+  const computer = useComputer({ activity, agentStatus, events: currentEvents, files, taskId: activeTaskId });
+  const hasComputerContent = activity.actions.length > 0
+    || computer.browser.frameCount > 0
+    || (agentBusy && displayPlan.hasSteps && !displayPlan.isDirect);
+  const handleFocusAction = useCallback((actionId) => {
+    computer.selectAction(actionId);
+    setComputerOpen(true);
+  }, [computer.selectAction]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleOpenComputer = useCallback(() => setComputerOpen((open) => (wideLayout ? !open : true)), [wideLayout]);
+  const handleCloseComputer = useCallback(() => setComputerOpen(false), []);
+
+  useEffect(() => {
+    if (!wideLayout) setComputerOpen(false);
+  }, [activeTaskId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (authLoading || !user) return undefined;
@@ -1025,68 +1048,108 @@ export default function App() {
           </>
         }
         main={
-          <>
-            <header className="chat-header">
-              <div className="chat-header-left">
-                <div className="chat-header-text">
-                  <strong className="chat-title">{activeTaskId ? activeTitle : "Vortax"}</strong>
+          <div className={`vx-split ${computerOpen && wideLayout && !isEmptyState ? "has-computer" : ""}`}>
+            <div className="vx-chat-column">
+              <header className="chat-header">
+                <div className="chat-header-left">
+                  <div className="chat-header-text">
+                    <strong className="chat-title" title={activeTaskId ? activeTitle : undefined}>{activeTaskId ? activeTitle : "Vortax"}</strong>
+                  </div>
                 </div>
-              </div>
-              <div className="chat-header-actions">
-                {activeTaskId && (
-                  <>
-                    <div className="chat-health-group" aria-label="Status">
-                      {contextState && <ContextIndicator context={contextState} />}
-                      <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
-                    </div>
-                    <button
-                      className="detail-open-btn"
-                      onClick={() => setDetailsOpen(true)}
-                      title="Abrir detalhes"
-                      type="button"
-                      aria-label="Abrir detalhes da tarefa"
-                    >
-                      <PanelRightOpen size={16} />
-                      <span>Detalhes</span>
-                    </button>
-                  </>
-                )}
-              </div>
-            </header>
-            {isEmptyState ? (
-              <OnboardingScreen composer={composer} onSubmit={handleSubmit} />
-            ) : (
-              <MessageList
-                activeSearch={activeSearch}
-                agentBusy={agentBusy || Boolean(pendingPreparation)}
-                events={currentEvents}
-                files={files}
-                isTyping={showTyping}
-                livePlan={displayPlan}
-                messages={messages}
-                onComputerFocus={(request) => setComputerFocusRequest({
-                  ...request,
-                  requestId: `${Date.now()}-${request?.eventIndex ?? "synthetic"}`,
-                })}
-                pendingPreparation={pendingPreparation}
-              />
-            )}
-            {!isEmptyState && (
-              <VortaxComputerDock
-                activeTask={activeTask}
-                agentStatus={agentStatus}
-                connectionState={connectionState}
-                events={currentEvents}
-                focusRequest={computerFocusRequest}
-                livePlan={displayPlan}
-                onOpenDetails={() => setDetailsOpen(true)}
-              />
-            )}
-            {submitError && (
-              <div className="submit-error">{submitError}</div>
-            )}
-            {!isEmptyState && composer}
-          </>
+                <div className="chat-header-actions">
+                  {activeTaskId && (
+                    <>
+                      <div className="chat-health-group" aria-label="Status">
+                        {contextState && <ContextIndicator context={contextState} />}
+                        <StatusBadge status={agentStatus} label={agentStatusLabel(agentStatus)} />
+                      </div>
+                      {hasComputerContent && (
+                        <button
+                          aria-label={computerOpen ? "Fechar o Computador do Vortax" : "Abrir o Computador do Vortax"}
+                          aria-pressed={computerOpen}
+                          className={`detail-open-btn ${computerOpen ? "is-active" : ""}`}
+                          onClick={handleOpenComputer}
+                          title="Computador do Vortax"
+                          type="button"
+                        >
+                          <Monitor size={16} />
+                          <span>Computador</span>
+                        </button>
+                      )}
+                      <button
+                        className="detail-open-btn"
+                        onClick={() => setDetailsOpen(true)}
+                        title="Abrir detalhes"
+                        type="button"
+                        aria-label="Abrir detalhes da tarefa"
+                      >
+                        <PanelRightOpen size={16} />
+                        <span>Detalhes</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </header>
+              {isEmptyState ? (
+                <OnboardingScreen composer={composer} onSubmit={handleSubmit} />
+              ) : (
+                <MessageList
+                  activity={activity}
+                  agentBusy={agentBusy || Boolean(pendingPreparation)}
+                  events={currentEvents}
+                  files={files}
+                  isTyping={showTyping}
+                  messages={messages}
+                  onFocusAction={handleFocusAction}
+                  pendingPreparation={pendingPreparation}
+                  taskId={activeTaskId}
+                />
+              )}
+              {!isEmptyState && hasComputerContent && (
+                <VortaxComputerDock
+                  agentStatus={agentStatus}
+                  computer={computer}
+                  connectionState={connectionState}
+                  onOpen={handleOpenComputer}
+                  onOpenDetails={() => setDetailsOpen(true)}
+                  open={computerOpen}
+                  plan={displayPlan}
+                />
+              )}
+              {submitError && (
+                <div className="submit-error">{submitError}</div>
+              )}
+              {!isEmptyState && composer}
+            </div>
+            <AnimatePresence>
+              {computerOpen && !isEmptyState && !wideLayout ? (
+                <motion.button
+                  animate={{ opacity: 1 }}
+                  aria-label="Fechar o Computador do Vortax"
+                  className="vx-computer-backdrop"
+                  exit={{ opacity: 0 }}
+                  initial={{ opacity: 0 }}
+                  key="computer-backdrop"
+                  onClick={handleCloseComputer}
+                  type="button"
+                />
+              ) : null}
+              {computerOpen && !isEmptyState ? (
+                <ComputerPanel
+                  activity={activity}
+                  agentStatus={agentStatus}
+                  computer={computer}
+                  connectionState={connectionState}
+                  files={files}
+                  key="computer-panel"
+                  onClose={handleCloseComputer}
+                  overlay={!wideLayout}
+                  plan={displayPlan}
+                  taskId={activeTaskId}
+                />
+              ) : null}
+            </AnimatePresence>
+          </div>
         }
       />
       <TaskDetailDrawer open={detailsOpen} onClose={() => setDetailsOpen(false)}>
