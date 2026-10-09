@@ -118,6 +118,10 @@ def rank_search_results(query: str, results: list[dict], *, limit: int = 10) -> 
         overlap = len(query_terms & result_terms)
         quality = source_quality_score(href, str(result.get("title") or ""), text)
         score = quality + overlap * 8 + _recency_score(text)
+        # News RSS redirects share an aggregator host; diversify by declared publisher.
+        publisher = urlparse(str(result.get("publisher_url") or "")).netloc.lower()
+        if host == "news.google.com" and publisher:
+            host = publisher
         if host.startswith("www."):
             host_key = host[4:]
         else:

@@ -1,3 +1,4 @@
+import asyncio
 import re
 import shlex
 from typing import Any, Awaitable, Callable
@@ -18,6 +19,7 @@ from services.document_artifacts import (
 )
 from services.document_intent import document_extensions_from_text, document_intent_from_text, report_artifact_profile
 from services.event_bus import EventBus
+from services.browser_presentation import browser_reading_view
 from services.github_repos import is_github_repo_analysis_request, normalize_public_github_repo
 from services.project_validation import validate_project_after_code_agent
 from services.research_policy import cached_search_result
@@ -160,7 +162,7 @@ async def _resolve_tool(tool_name: str, task_id: str) -> ToolCallable:
     return tool
 
 
-def compact_tool_result(result: dict[str, Any]) -> dict[str, Any]:
+def compact_tool_result(result: dict[str, Any], *, text_limit: int = 1800) -> dict[str, Any]:
     compact = _redact_local_preview(dict(result))
     compact.pop("local_urls", None)
     compact.pop("dev_server_url", None)
@@ -176,8 +178,8 @@ def compact_tool_result(result: dict[str, Any]) -> dict[str, Any]:
     if "image_base64" in compact:
         compact["image_base64"] = "[base64-image]"
     text = compact.get("text")
-    if isinstance(text, str) and len(text) > 1800:
-        compact["text"] = f"{text[:1800]}... [truncated]"
+    if isinstance(text, str) and len(text) > text_limit:
+        compact["text"] = f"{text[:text_limit]}... [truncated]"
     for key in ("links", "results"):
         items = compact.get(key)
         if isinstance(items, list):
@@ -256,15 +258,40 @@ async def _save_source_if_extracted(task_id: str, tool_name: str, result: dict[s
     )
 
 
+async def _publish_browser_view(task_id: str, tool_name: str, result: dict, bus: EventBus) -> bool:
+    view = browser_reading_view(tool_name, result)
+    if view is None:
+        return False
+    if view.get("kind") == "search" and view.get("via") != "cache":
+        existing = {source["url"]: source for source in database.list_sources(task_id)}
+        for item in result.get("results", [])[:10]:
+            url = str(item.get("href") or "")
+            if not url.startswith(("https://", "http://")):
+                continue
+            if url in existing and existing[url].get("source_type") != "search_index":
+                continue  # A later search must never overwrite a fully extracted article.
+            source = database.upsert_source(task_id, {
+                "url": url, "title": item.get("title"), "snippet": item.get("snippet"),
+                "extracted_text": "[Índice de busca; artigo completo não lido] " + str(item.get("title") or "") + " " + str(item.get("snippet") or ""),
+                "source_type": "search_index", "quality_score": source_quality_score(url, item.get("title", ""), item.get("snippet", "")),
+                "used": True, "created_at": utc_now(),
+            })
+            await bus.publish(task_id, "source_saved", {"id": source["id"], "url": url, "title": item.get("title"), "via": "search_index"})
+    await bus.publish(task_id, "browser_view", view)
+    return True
+
+
 async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bus: EventBus) -> None:
-    if (not tool_name.startswith("browser_") and tool_name != "shell_run") or tool_name == "browser_screenshot":
+    if not tool_name.startswith("browser_") or tool_name == "browser_screenshot":
         return
     try:
         try:
             bt = await browser_pool.get_existing(task_id)
         except BrowserPoolError:
             return
-        frame = await bt.screenshot(task_id=task_id)
+        frame = await asyncio.wait_for(bt.screenshot(task_id=task_id), timeout=4.0)
+        if frame.get("empty"):
+            return
         if frame.get("blocked") and frame.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
             await bus.publish(
                 task_id,
@@ -285,6 +312,8 @@ async def _publish_screenshot_if_browser_action(task_id: str, tool_name: str, bu
                 "title": frame.get("title"),
                 "url": frame.get("url"),
                 "image_base64": frame.get("image_base64"),
+                "cursor": frame.get("cursor"),
+                "viewport": frame.get("viewport"),
             },
         )
     except Exception as exc:
@@ -841,6 +870,7 @@ async def execute_tool(
                     "source_saved",
                     {"url": result.get("url"), "title": result.get("title"), "via": "web_fetch"},
                 )
+            await _publish_browser_view(task_id, tool_name, result, bus)
             return {"success": bool(result.get("success")), "data": result}
 
         if tool_name == "validate_project":
@@ -891,6 +921,7 @@ async def execute_tool(
                 )
                 compact = compact_tool_result(cached)
                 await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+                await _publish_browser_view(task_id, tool_name, cached, bus)
                 return {"success": True, "data": cached}
 
         tool = await _resolve_tool(tool_name, task_id)
@@ -979,7 +1010,16 @@ async def execute_tool(
                 )
             result = await tool(**tool_params, task_id=task_id, bus=bus)
         else:
-            result = await tool(**(params or {}), task_id=task_id)
+            browser_tool = getattr(tool, "__self__", None) if tool_name.startswith("browser_") else None
+            if browser_tool is not None:
+                async def observe():
+                    await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
+                browser_tool._observer = observe
+            try:
+                result = await tool(**(params or {}), task_id=task_id)
+            finally:
+                if browser_tool is not None:
+                    browser_tool._observer = None
         # Após shell_run, lista arquivos criados e publica files_created
         if tool_name == "shell_run":
             project_dir = _project_dir(task_id)
@@ -1129,8 +1169,9 @@ async def execute_tool(
         await _save_source_if_extracted(task_id, tool_name, result, bus)
         compact = compact_tool_result(result)
         await bus.publish(task_id, "tool_result", {"name": tool_name, "result": compact})
+        reading_view = await _publish_browser_view(task_id, tool_name, result, bus)
 
-        if tool_name == "browser_screenshot":
+        if tool_name == "browser_screenshot" and not result.get("empty"):
             if result.get("blocked") and result.get("blocked_reason") in {"sensitive_input", "security_challenge"}:
                 await bus.publish(
                     task_id,
@@ -1151,9 +1192,11 @@ async def execute_tool(
                         "title": result.get("title"),
                         "url": result.get("url"),
                         "image_base64": result.get("image_base64"),
+                        "cursor": result.get("cursor"),
+                        "viewport": result.get("viewport"),
                     },
                 )
-        elif not result_blocked:
+        elif not result_blocked and not reading_view:
             await _publish_screenshot_if_browser_action(task_id, tool_name, bus)
         if result_blocked:
             await bus.publish(

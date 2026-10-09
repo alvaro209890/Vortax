@@ -149,6 +149,13 @@ class GateCapTests(unittest.TestCase):
 
 
 class TimeBudgetTests(unittest.TestCase):
+    def test_parallel_batch_cannot_exceed_two_searches(self):
+        searches = _turn("", [{"id": f"s{i}", "name": "web_search", "arguments": {"query": f"IA {i}"}} for i in range(3)])
+        _, calls = run_loop("Pesquise notícias recentes de IA", [searches, _turn("Síntese.")])
+        results = [m["content"] for m in calls[1]["messages"] if m["role"] == "tool"]
+        self.assertEqual(sum('"ok": "web_search"' in r for r in results), 2)
+        self.assertEqual(sum("não repita buscas" in r for r in results), 1)
+
     def test_exhausted_budget_forces_answer_without_tools(self):
         search = _turn("", [{"id": "c1", "name": "web_search", "arguments": {"query": "dolar"}}])
         events, calls = run_loop(
@@ -158,7 +165,20 @@ class TimeBudgetTests(unittest.TestCase):
         )
         self.assertIsNone(calls[0]["tools"], "orçamento esgotado: rodada sem ferramentas")
         self.assertTrue(any("[GATE:finish]" in str(m.get("content")) for m in calls[0]["messages"]))
-        self.assertEqual(_done(events)[0]["content"], "Entrega parcial.")
+        self.assertIn("limite de tempo", _done(events)[0]["content"])
+        self.assertEqual(len(calls), 1, "provider tool calls after budget must not execute")
+
+    def test_research_uses_fast_model_and_restricted_tools(self):
+        _, calls = run_loop("Pesquise notícias recentes de IA", [_turn("Síntese com fontes.")])
+        self.assertEqual(calls[0]["purpose"], "fast")
+        names = {t["function"]["name"] for t in calls[0]["tools"]}
+        self.assertIn("web_fetch", names)
+        self.assertNotIn("shell_run", names)
+
+    def test_software_keeps_brain_and_shell(self):
+        _, calls = run_loop("Pesquise referências e crie um site", [_turn("Entrega.")])
+        self.assertEqual(calls[0]["purpose"], "brain")
+        self.assertIn("shell_run", {t["function"]["name"] for t in calls[0]["tools"]})
 
 
 if __name__ == "__main__":

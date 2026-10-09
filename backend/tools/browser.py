@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -17,6 +18,7 @@ from config import settings
 from services.credential_store import credential_store, normalize_origin
 from services.process_registry import register_pid, unregister_pid
 from services.source_quality import query_from_google_url, rank_search_results
+from services.web_feeds import feed_entries
 
 _STEALTH_JS = """
 // Mask webdriver flag
@@ -121,8 +123,28 @@ class BrowserTool:
         self._browser: Browser | None = None
         self._page: Page | None = None
         self._chrome_process: subprocess.Popen | None = None
+        self._chrome_tmp: tempfile.TemporaryDirectory | None = None
         self._launch_mode: str = "external"
         self._lock = asyncio.Lock()
+        self._cursor: dict[str, Any] | None = None
+        self._observer = None
+
+    async def _observe(self) -> None:
+        if self._observer:
+            with contextlib.suppress(Exception):
+                await self._observer()
+
+    async def _point_at(self, locator, action: str = "move") -> None:
+        await locator.scroll_into_view_if_needed(timeout=10000)
+        box = await locator.bounding_box(timeout=10000)
+        if not box:
+            return
+        page = await self._ensure_page()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        await page.mouse.move(x, y, steps=12)
+        self._cursor = {"x": x, "y": y, "action": "move"}
+        await self._observe()
+        self._cursor = {"x": x, "y": y, "action": action}
 
     @property
     def cdp_port(self) -> int:
@@ -191,7 +213,9 @@ class BrowserTool:
 
     async def _launch_chrome(self, *, headless: bool) -> None:
         chrome_binary = shutil.which(settings.CHROME_BINARY) or settings.CHROME_BINARY
-        runtime_tmp = self._profile_dir / "tmp"
+        # Unix socket names have a small length limit; task/profile paths can be long.
+        self._chrome_tmp = tempfile.TemporaryDirectory(prefix="vtx-", dir="/tmp" if os.name != "nt" else None)
+        runtime_tmp = Path(self._chrome_tmp.name)
         cache_dir = self._profile_dir / "disk-cache"
         crash_dir = self._profile_dir / "crashes"
         xdg_cache_dir = self._profile_dir / "xdg-cache"
@@ -203,9 +227,7 @@ class BrowserTool:
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
         env.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
-        env.setdefault("TMPDIR", str(runtime_tmp))
-        env.setdefault("TEMP", str(runtime_tmp))
-        env.setdefault("TMP", str(runtime_tmp))
+        env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(runtime_tmp)
         env.setdefault("XDG_CACHE_HOME", str(xdg_cache_dir))
 
         args = [
@@ -214,6 +236,8 @@ class BrowserTool:
             "--remote-debugging-address=127.0.0.1",
             "--no-first-run",
             "--no-default-browser-check",
+            # Task profiles are ephemeral. A desktop keyring prompt stalls headless navigation.
+            "--password-store=basic",
             f"--user-data-dir={self._profile_dir}",
             f"--disk-cache-dir={cache_dir}",
             f"--crash-dumps-dir={crash_dir}",
@@ -222,7 +246,10 @@ class BrowserTool:
             "--disable-dev-shm-usage",
             "--disable-crash-reporter",
             "--disable-breakpad",
-            # Anti-detection: keep extensions enabled, use realistic window
+            # Dedicated task profiles must not load component extensions or GPU renderers.
+            "--disable-extensions",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
             "--window-size=1366,768",
             "--lang=pt-BR",
@@ -256,6 +283,9 @@ class BrowserTool:
                 process.kill()
                 process.wait(timeout=3.0)
         self._chrome_process = None
+        if self._chrome_tmp is not None:
+            self._chrome_tmp.cleanup()
+            self._chrome_tmp = None
 
     async def _ensure_authorized_url(self, task_id: str | None, url: str) -> dict[str, Any] | None:
         if not task_id or not credential_store.has_authorization(task_id):
@@ -506,7 +536,9 @@ class BrowserTool:
         if blocked_scope:
             return blocked_scope
         page = await self._ensure_page()
+        self._cursor = None
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await self._observe()
         blocked_scope = await self._ensure_authorized_url(task_id, page.url)
         if blocked_scope:
             return blocked_scope
@@ -529,7 +561,9 @@ class BrowserTool:
 
     async def click_text(self, text: str, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
-        await page.get_by_text(text, exact=False).first.click(timeout=10000)
+        target = page.get_by_text(text, exact=False).first
+        await self._point_at(target, "click")
+        await target.click(timeout=10000)
         blocked_scope = await self._ensure_authorized_url(task_id, page.url)
         if blocked_scope:
             return blocked_scope
@@ -537,7 +571,9 @@ class BrowserTool:
 
     async def click_selector(self, selector: str, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
-        await page.locator(selector).first.click(timeout=10000)
+        target = page.locator(selector).first
+        await self._point_at(target, "click")
+        await target.click(timeout=10000)
         blocked_scope = await self._ensure_authorized_url(task_id, page.url)
         if blocked_scope:
             return blocked_scope
@@ -582,7 +618,9 @@ class BrowserTool:
         if blocked:
             return blocked
         if selector:
-            await page.locator(selector).first.fill(text, timeout=10000)
+            target = page.locator(selector).first
+            await self._point_at(target, "type")
+            await target.fill(text, timeout=10000)
         else:
             await page.keyboard.type(text)
         return {"typed_chars": len(text), "selector": selector}
@@ -635,29 +673,43 @@ class BrowserTool:
             "Upgrade-Insecure-Requests": "1",
         }
         ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}&kl=br-pt"
-        results: list[dict[str, Any]] = []
-        engine = "duckduckgo_http"
-        try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-                resp = await client.get(ddg_url)
-                if resp.status_code == 200:
-                    results = self._parse_ddg_html(resp.text)
-        except Exception:
-            pass
-        if not results:
+        async def fetch_engine(url, parser, engine):
             try:
-                brave_url = f"https://search.brave.com/search?q={quote_plus(query)}&source=web"
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-                    resp = await client.get(brave_url)
+                async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=headers) as client:
+                    resp = await client.get(url)
                     if resp.status_code == 200:
-                        results = self._parse_brave_html(resp.text)
-                        engine = "brave_http"
+                        return rank_search_results(query, parser(resp.text), limit=10), engine, url
             except Exception:
                 pass
+            return [], engine, url
+
+        brave_url = f"https://search.brave.com/search?q={quote_plus(query)}&source=web"
+        # Structured endpoints survive HTML redesigns and avoid slow CAPTCHA browser retries.
+        news = bool(re.search(r"not[ií]cia|news|lan[çc]amento|recent", query, re.I))
+        structured_url = (f"https://news.google.com/rss/search?q={quote_plus(query + ' when:7d')}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
+                          if news else f"https://www.bing.com/search?format=rss&q={quote_plus(query)}")
+        structured, engine, source_url = await fetch_engine(structured_url, feed_entries, "google_news_rss" if news else "bing_rss")
+        if structured:
+            return {"query": query, "url": source_url, "title": f"Pesquisa: {query}", "results": structured,
+                    "result_count": len(structured), "engine": engine}
+        jobs = [asyncio.create_task(fetch_engine(ddg_url, self._parse_ddg_html, "duckduckgo_http")),
+                asyncio.create_task(fetch_engine(brave_url, self._parse_brave_html, "brave_http"))]
+        results, engine, search_url = [], "http_fallback_empty", ddg_url
+        try:
+            for completed in asyncio.as_completed(jobs):
+                found, provider, url = await completed
+                if found:
+                    results, engine, search_url = found, provider, url
+                    break
+        finally:
+            for job in jobs:
+                if not job.done():
+                    job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
         ranked = rank_search_results(query, results, limit=10)
         return {
             "query": query,
-            "url": ddg_url,
+            "url": search_url,
             "title": f"Search - {query}",
             "results": ranked,
             "result_count": len(ranked),
@@ -853,6 +905,8 @@ class BrowserTool:
 
     async def screenshot(self, task_id: str | None = None) -> dict[str, Any]:
         page = await self._ensure_page()
+        if page.url in {"about:blank", "chrome://newtab/", ""}:
+            return {"empty": True, "url": page.url}
         safe = await self.safe_to_capture(task_id)
         if not safe.get("safe"):
             return {
@@ -865,11 +919,14 @@ class BrowserTool:
         blocked = await self._blocked_page_reason(page)
         if blocked:
             raise BrowserToolError(blocked)
-        image = await page.screenshot(type="jpeg", quality=75, full_page=False)
+        image = await page.screenshot(type="jpeg", quality=75, full_page=False, timeout=3000)
+        viewport = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
         return {
             "url": page.url,
             "title": await page.title(),
             "image_base64": base64.b64encode(image).decode("ascii"),
+            "cursor": self._cursor,
+            "viewport": viewport,
         }
 
     async def scroll(self, direction: str = "down", amount: int = 700, task_id: str | None = None) -> dict[str, Any]:
@@ -877,7 +934,13 @@ class BrowserTool:
         delta = abs(int(amount))
         if direction == "up":
             delta = -delta
+        viewport = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
+        x, y = viewport["width"] * 0.75, viewport["height"] * 0.6
+        await page.mouse.move(x, y, steps=10)
+        self._cursor = {"x": x, "y": y, "action": "scroll"}
+        await self._observe()
         await page.mouse.wheel(0, delta)
+        await page.wait_for_timeout(220)
         return {"direction": direction, "amount": abs(int(amount)), "url": page.url}
 
     async def scroll_to_top(self, task_id: str | None = None) -> dict[str, Any]:

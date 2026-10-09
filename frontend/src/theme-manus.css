@@ -1017,3 +1017,46 @@ kbd {
     animation: none;
   }
 }
+/* Real browser captures and HTTP reading, sharing one responsive surface. */
+.browser-surface { overflow:hidden; border:1px solid var(--border-light); border-radius:14px; background:var(--bg-secondary); }
+.browser-chrome { padding:10px 12px; background:rgb(var(--ov) / .025); border-bottom:1px solid var(--border-light); }
+.browser-tab { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); padding-bottom:9px; }
+.browser-tab span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.browser-tab i, .browser-footnote>span { width:6px; height:6px; border-radius:50%; background:var(--text-muted); }
+.browser-tab i.active, .browser-footnote>span.active { background:var(--accent); box-shadow:0 0 9px rgb(var(--accent-rgb) / .4); }
+.browser-address { display:flex; align-items:center; gap:8px; border:1px solid var(--border-light); border-radius:7px; padding:7px 10px; color:var(--text-muted); font-size:11px; }
+.browser-address span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.browser-address svg { flex-shrink:0; }
+.browser-viewport { position:relative; width:100%; min-height:220px; overflow:hidden; background:var(--bg-primary); }
+.browser-content { width:100%; height:100%; }
+.browser-content>img { display:block; width:100%; height:auto; }
+.browser-pointer { position:absolute; pointer-events:none; z-index:3; filter:drop-shadow(0 2px 3px #0005); }
+.browser-pointer-name { position:absolute; top:22px; left:17px; background:var(--accent); color:#082013; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; }
+.browser-click-ring { position:absolute; width:32px; height:32px; border:2px solid var(--accent); border-radius:50%; top:-13px; left:-13px; animation:vx-click .65s ease-out both; }
+.browser-scroll-mark, .browser-type-mark { position:absolute; top:-15px; left:14px; color:var(--accent); font-size:22px; animation:vx-scroll .6s ease-out both; }
+.browser-reading { max-height:460px; overflow:auto; padding:22px; color:var(--text-primary); }
+.browser-query { display:flex; align-items:center; gap:10px; padding-bottom:15px; border-bottom:1px solid var(--border-light); margin-bottom:15px; }
+.browser-reading h3 { margin:0 0 12px; font-size:17px; line-height:1.4; }
+.browser-query h3 { margin:0; }
+.browser-reading article { margin:0 0 18px; }
+.browser-reading article small { display:block; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.browser-reading article a { display:block; color:var(--accent); font-size:15px; line-height:1.5; text-decoration:none; }
+.browser-reading article p, .browser-article-text { font-size:12px; line-height:1.8; color:var(--text-secondary); margin:5px 0; overflow-wrap:anywhere; }
+.browser-article-text { white-space:pre-wrap; }
+.browser-empty { min-height:260px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:28px; color:var(--text-muted); text-align:center; }
+.browser-empty strong { font-size:15px; color:var(--text-primary); }
+.browser-empty p { margin:0; font-size:12px; line-height:1.6; }
+.browser-loading { display:flex; gap:5px; }
+.browser-loading span { height:4px; width:24px; border-radius:4px; background:var(--accent); animation:vx-pulse 1.2s infinite; }
+.browser-loading span:nth-child(2) { animation-delay:.15s; }
+.browser-loading span:nth-child(3) { animation-delay:.3s; }
+.browser-footnote { display:flex; align-items:center; gap:7px; padding:8px 12px; font-size:10px; color:var(--text-muted); border-top:1px solid var(--border-light); }
+.browser-footnote small { margin-left:auto; font-size:10px; }
+@keyframes vx-click { from { transform:scale(.2); opacity:1; } to { transform:scale(1.8); opacity:0; } }
+@keyframes vx-scroll { from { transform:translateY(-4px); opacity:1; } to { transform:translateY(8px); opacity:0; } }
+@media(max-width:480px) { .browser-reading { padding:16px; } .browser-viewport { min-height:180px; } }
+@media(prefers-reduced-motion:reduce) { .browser-surface *, .computer-progress-step { animation:none!important; transition:none!important; } }
+/* The shared browser has three rows, replacing the old two-row screenshot grid. */
+.computer-stage.browser-surface { display:flex; flex-direction:column; }
+.computer-stage.browser-surface .browser-viewport { flex:none; }
+.computer-stage.browser-surface .browser-content>img { height:auto; object-fit:initial; }

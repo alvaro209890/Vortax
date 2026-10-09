@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     MAX_ITERATIONS: int = 30
     # segundos de trabalho do loop nativo antes de forçar a entrega (agent/loop.py)
     AGENT_TIME_BUDGET_SECONDS: int = 300
+    RESEARCH_TIME_BUDGET_SECONDS: int = 90
+    RESEARCH_TOOL_TIMEOUT_SECONDS: int = 25
+    RESEARCH_MODEL_TIMEOUT_SECONDS: int = 35
     DEEP_RESEARCH_DEPTH: int = 3
     CONTEXT_TOKEN_LIMIT: int = 24000
     CONTEXT_WARNING_RATIO: float = 0.70

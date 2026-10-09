@@ -13,6 +13,7 @@ import httpx
 
 from services.source_quality import source_quality_score, source_type_for_url
 from services.stream_contract import utc_now
+from services.web_feeds import feed_entries, feed_text
 
 MAX_BYTES = 1_500_000
 MAX_TEXT = 40_000
@@ -92,7 +93,11 @@ async def web_fetch(
 
     text: str
     title = final_url
-    if "application/json" in content_type or final_url.endswith(".json"):
+    rows = feed_entries(raw.decode("utf-8", errors="replace")) if "xml" in content_type or b"<rss" in raw[:500] or b"<feed" in raw[:500] else []
+    if rows:
+        text = feed_text(rows)
+        title, kind = "Notícias e publicações", "feed"
+    elif "application/json" in content_type or final_url.endswith(".json"):
         try:
             text = raw.decode("utf-8", errors="replace")
         except Exception:

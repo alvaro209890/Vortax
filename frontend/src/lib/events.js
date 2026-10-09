@@ -5,6 +5,8 @@ const TOOL_WORK_EVENTS = new Set([
   "tool_result",
   "source_saved",
   "screen_frame",
+  "browser_view",
+  "screen_frame_blocked",
   "vertex_progress",
   "files_created",
 ]);

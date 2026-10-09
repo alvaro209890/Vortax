@@ -1,5 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { BrowserSurface } from "./BrowserSurface.jsx";
+import { browserScene, isBrowserScene } from "../lib/browserScenes.js";
 import { isToolWorkEvent } from "../lib/events.js";
 import {
   ChevronDown,
@@ -166,7 +168,7 @@ function eventTime(event) {
 function latestBrowserActivity(events) {
   const event = latestEvent(events, (item) => {
     const name = item.payload?.name;
-    return (item.type === "tool_call" || item.type === "tool_result") && typeof name === "string" && name.startsWith("browser_");
+    return (item.type === "tool_call" || item.type === "tool_result") && typeof name === "string" && (name.startsWith("browser_") || name === "web_search" || name === "web_fetch");
   });
   if (!event) return null;
 
@@ -174,7 +176,7 @@ function latestBrowserActivity(events) {
   const result = payload.result || {};
   const params = payload.params || {};
   const query = params.query || result.query || "";
-  const url = result.url || result.opened?.href || "";
+  const url = params.url || result.url || result.opened?.href || "";
   const title = result.title || result.opened?.title || "";
   const label = query
     ? `Pesquisando: ${query}`
@@ -183,7 +185,7 @@ function latestBrowserActivity(events) {
   return {
     createdAt: eventTime(event),
     label,
-    mode: payload.name === "browser_google_search" ? "search" : "browser",
+    mode: ["browser_google_search", "web_search"].includes(payload.name) ? "search" : "browser",
     query,
     title,
     url,
@@ -197,23 +199,13 @@ function isCodeAgentShell(event) {
 }
 
 function latestPreview(events) {
-  const frame = latestEvent(events, (event) => event.type === "screen_frame" && event.payload?.image_base64);
+  const frame = latestEvent(events, isBrowserScene);
   const codeAgent = latestEvent(events, (event) => event.type === "vertex_progress");
   const shell = latestEvent(events, (event) => event.type === "tool_call" && event.payload?.name === "shell_run");
   const browser = latestBrowserActivity(events);
   const candidates = [];
 
-  if (frame) {
-    candidates.push({
-      createdAt: eventTime(frame),
-      image: frame.payload.image_base64,
-      label: frame.payload.caption || frame.payload.title || "Navegador",
-      mode: "browser",
-      title: frame.payload.title || "",
-      url: frame.payload.url || "",
-      using: "Navegador",
-    });
-  }
+  if (frame) candidates.push(browserScene(frame));
   if (browser) {
     candidates.push(browser);
   }
@@ -237,72 +229,20 @@ function latestPreview(events) {
 
   if (candidates.length > 0) {
     const latest = candidates.sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (frame && latest.mode === "browser" && !latest.image) {
-      return {
-        ...latest,
-        image: frame.payload.image_base64,
-        label: latest.label || frame.payload.caption || frame.payload.title || "Navegador",
-        title: latest.title || frame.payload.title || "",
-        url: latest.url || frame.payload.url || "",
-      };
-    }
     return latest;
   }
   return { label: "Ambiente pronto", mode: "idle", using: "Computador" };
 }
 
 function framePreview(event, frameIndex, eventIndex = frameIndex) {
-  const payload = event.payload || {};
-  return {
-    createdAt: eventTime(event),
-    eventIndex,
-    frameIndex,
-    image: payload.image_base64,
-    label: payload.caption || payload.title || "Navegador",
-    mode: "browser",
-    title: payload.title || "",
-    url: payload.url || "",
-    using: "Navegador",
-  };
+  return browserScene(event, frameIndex, eventIndex);
 }
 
 function screenFrameHistory(events, eventIndexOffset = 0) {
-  return events
-    .map((event, eventIndex) => ({ event, eventIndex }))
-    .filter(({ event }) => event.type === "screen_frame" && event.payload?.image_base64)
+  return events.map((event, eventIndex) => ({ event, eventIndex }))
+    .filter(({ event }) => isBrowserScene(event))
     .map(({ event, eventIndex }, frameIndex) => framePreview(event, frameIndex, eventIndex + eventIndexOffset));
 }
-
-const BrowserFrame = memo(function BrowserFrame({ image }) {
-  const [display, setDisplay] = useState({ prev: null, curr: image, seq: 0 });
-  const currRef = useRef(image);
-  const tidRef = useRef(null);
-
-  useEffect(() => {
-    if (!image || image === currRef.current) return;
-    clearTimeout(tidRef.current);
-    const prevImg = currRef.current;
-    currRef.current = image;
-    setDisplay((d) => ({ prev: prevImg, curr: image, seq: d.seq + 1 }));
-    tidRef.current = setTimeout(() => setDisplay((d) => ({ ...d, prev: null })), 280);
-  }, [image]);
-
-  useEffect(() => () => clearTimeout(tidRef.current), []);
-
-  return (
-    <div className="browser-frame-wrap">
-      {display.prev && (
-        <img aria-hidden="true" className="browser-frame-prev" src={`data:image/jpeg;base64,${display.prev}`} />
-      )}
-      <img
-        alt="Tela ao vivo"
-        className="browser-frame-curr"
-        key={display.seq}
-        src={`data:image/jpeg;base64,${display.curr}`}
-      />
-    </div>
-  );
-});
 
 const ComputerPreview = memo(function ComputerPreview({ preview, snapshot }) {
   if (preview.image) {
@@ -385,49 +325,9 @@ const CodingWorkspace = memo(function CodingWorkspace({ snapshot }) {
   );
 });
 
-const ComputerStage = memo(function ComputerStage({ preview, snapshot }) {
-  if (preview.image) {
-    return (
-      <div className="computer-stage browser-live">
-        <div className="computer-stage-address">{preview.url || preview.title || "Tela ao vivo"}</div>
-        <BrowserFrame image={preview.image} />
-      </div>
-    );
-  }
-
-  if (preview.mode === "browser") {
-    return (
-      <div className="computer-stage browser-live">
-        <div className="computer-stage-address">{preview.url || preview.title || preview.label || "Navegador"}</div>
-        <div className="computer-browser-placeholder">
-          <Globe2 size={28} />
-          <strong>{preview.title || "Aguardando captura da tela"}</strong>
-          <span>{preview.url || preview.label || "O proximo print do navegador aparece aqui."}</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (preview.mode === "search") {
-    return (
-      <div className="computer-stage search-live">
-        <div className="computer-stage-address">
-          {preview.query ? `https://duckduckgo.com/?q=${encodeURIComponent(preview.query)}` : "https://duckduckgo.com"}
-        </div>
-        <div className="computer-search-page">
-          <div className="computer-search-logo">Web</div>
-          <div className="computer-search-box">
-            <Search size={16} />
-            <span>{preview.query || "Pesquisando na web"}</span>
-          </div>
-          <div className="computer-search-results">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
-      </div>
-    );
+const ComputerStage = memo(function ComputerStage({ preview, snapshot, busy }) {
+  if (preview.mode === "browser" || preview.mode === "search" || preview.image || preview.view || preview.blocked) {
+    return <BrowserSurface preview={preview} busy={busy} />;
   }
 
   return (
@@ -710,7 +610,7 @@ function focusSceneFromRequest(focusRequest, frameHistory, preview, snapshot) {
   const event = focusRequest.event || {};
   const activity = focusRequest.activity || {};
   const targetTime = eventTime(event);
-  const browserLike = ["screen_frame", "source_saved"].includes(event.type)
+  const browserLike = ["screen_frame", "browser_view", "screen_frame_blocked", "source_saved"].includes(event.type)
     || ["search", "source", "browser"].includes(activity.kind)
     || String(activity.tool || "").startsWith("browser_");
   const exactFrameIndex = frameHistory.findIndex((frame) => (
@@ -952,7 +852,7 @@ const ComputerSidePanel = memo(function ComputerSidePanel({
           {visibleActivity.tool ? <em>{visibleActivity.tool}</em> : null}
         </div>
 
-        <ComputerStage preview={visiblePreview} snapshot={visibleSnapshot} />
+        <ComputerStage preview={visiblePreview} snapshot={visibleSnapshot} busy={isLive && ["queued", "thinking", "executing", "running"].includes(agentStatus)} />
 
         <ComputerLiveControls
           activeFrameIndex={activeFrameIndex}

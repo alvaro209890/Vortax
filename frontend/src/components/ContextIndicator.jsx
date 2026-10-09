@@ -15,16 +15,21 @@ function contextTone(status) {
   return "ok";
 }
 
-function formatTokens(value) {
+function finiteNumber(value) {
   const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatTokens(value) {
+  const number = finiteNumber(value);
   if (number >= 1000) return `${(number / 1000).toFixed(1)}k`;
   return String(number);
 }
 
 export function ContextIndicator({ context }) {
   const status = context?.status || "empty";
-  const percent = Math.max(0, Math.min(100, Number(context?.percent || 0)));
-  const compactionCount = Number(context?.compaction_count || 0);
+  const percent = Math.max(0, Math.min(100, finiteNumber(context?.percent)));
+  const compactionCount = finiteNumber(context?.compaction_count);
   const label = contextLabel(status, compactionCount);
   const title = `${label}: ${formatTokens(context?.estimated_tokens)} / ${formatTokens(context?.token_limit)} tokens estimados`;
 

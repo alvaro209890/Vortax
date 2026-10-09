@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from agent.gates import evaluate_delivery_gates, first_blocking_gate
@@ -22,6 +24,7 @@ from services.deepseek_client import (
 )
 from services.event_bus import EventBus
 from services.exact_solver import is_exact_prompt, should_answer_directly
+from services.research_execution import RESEARCH_TOOLS, evidence_fallback, is_research_task
 from services.task_plan_store import task_plan_store
 from services.task_store import TaskStore
 from tools.tool_executor import execute_tool
@@ -57,6 +60,7 @@ def _native_system_prompt(user_id: str | None = None) -> str:
 
     prompt = (
         "Você é o Vortax, agente autônomo neste PC Linux. "
+        f"Data atual: {datetime.now(ZoneInfo('America/Sao_Paulo')).date().isoformat()} (America/Sao_Paulo). "
         "Use function calling (tools) para agir. Não invente JSON de ação no content. "
         "Quando terminar de verdade, responda em markdown no content SEM tool_calls. "
         "Pesquise proativamente (browser_google_search + extract_article) para dados atuais. "
@@ -254,20 +258,40 @@ async def run_native_agent_loop(
         )
 
     tools = openai_tools_payload()
+    research_task = is_research_task(latest_prompt)
+    if research_task:
+        tools = [tool for tool in tools if tool["function"]["name"] in RESEARCH_TOOLS]
+        messages.append({"role": "system", "content": (
+            "Pesquisa: use web_search para descobrir fontes e web_fetch para ler páginas ou APIs. "
+            "Leia 2–4 fontes relevantes em paralelo e entregue a síntese com links. "
+            "Não use shell para pesquisa. Evite repetir a mesma busca; se uma fonte falhar, tente outra. "
+            "Não confunda data da consulta com data de publicação; não invente atualidade."
+            " Resultados de busca contêm manchetes e trechos, não o artigo inteiro. "
+            "Se ler um feed RSS, resuma somente o que estiver nele e cite links e datas de cada notícia. "
+            "Cite a URL exata consultada; não atribua números a uma página inicial que não os mostrou."
+        )})
     max_iter = int(settings.MAX_ITERATIONS or 30)
     time_budget = float(getattr(settings, "AGENT_TIME_BUDGET_SECONDS", 0) or DEFAULT_TIME_BUDGET_SECONDS)
+    if research_task:
+        time_budget = min(time_budget, settings.RESEARCH_TIME_BUDGET_SECONDS * (2 if research_mode == "deep" else 1))
     started = time.monotonic()
     gate_rejections = 0
     tools_since_rejection = False
     finishing = False  # orçamento estourado: próxima rodada é sem tools e a entrega passa direto
+    research_observations: list[dict] = []
+    research_searches = 0
 
     for iteration in range(max_iter):
         state.iteration = iteration + 1
         last_round = iteration == max_iter - 1
-        if not finishing and (last_round or time.monotonic() - started > time_budget):
+        research_ready = research_task and (
+            iteration >= (12 if research_mode == "deep" else 6)
+            or (iteration >= 3 and len([s for s in database.list_sources(task_id) if s.get("source_type") != "search_index"]) >= (6 if research_mode == "deep" else 3))
+        )
+        if not finishing and (last_round or research_ready or time.monotonic() - started > time_budget):
             finishing = True
             messages.append({"role": "system", "content": FINISH_NOW_MESSAGE})
-            await bus.publish(task_id, "agent_progress", {"label": "Finalizando com o que já foi apurado"})
+            await bus.publish(task_id, "agent_progress", {"label": "Sintetizando as fontes" if research_ready else "Finalizando com o que já foi apurado"})
         if not await _wait_paused(task_id, store, bus):
             store.update_status(task_id, "stopped", result="Interrompido")
             await bus.publish(task_id, "assistant_message_done", {"content": "Tarefa interrompida."})
@@ -279,16 +303,53 @@ async def run_native_agent_loop(
             {"label": "Planejando", "step": state.iteration},
         )
 
-        turn = await request_agent_turn(
-            messages,
-            tools=None if finishing else tools,
+        turn_messages = messages
+        turn_tools = None if finishing else tools
+        if research_task and research_searches >= 2:
+            turn_tools = [tool for tool in (turn_tools or []) if tool["function"]["name"] not in {"web_search", "browser_google_search"}] or None
+        if finishing and research_task:
+            # A separate text synthesis avoids providers replaying calls from tool history.
+            turn_messages = [
+                {"role": "system", "content": (
+                    "[GATE:finish] Você é o Vortax. Responda em português com uma síntese baseada SOMENTE nas observações abaixo. "
+                    "Não execute ferramentas. Cite URLs exatas e datas. Se só há manchetes, informe essa limitação. "
+                    "Se não há evidência suficiente, explique o que não foi confirmado. Não invente dados. "
+                    f"Data atual: {datetime.now(ZoneInfo('America/Sao_Paulo')).date().isoformat()}."
+                )},
+                {"role": "user", "content": latest_prompt + "\n\nObservações reais da pesquisa:\n" + json.dumps(research_observations, ensure_ascii=False, default=str)[:24000]},
+            ]
+            turn_tools = None
+        turn_request = request_agent_turn(
+            turn_messages,
+            tools=turn_tools,
             stream=bool(getattr(settings, "DEEPSEEK_STREAMING", False)),
             bus=bus,
             task_id=task_id,
-            purpose="brain",
+            purpose="fast" if research_task else "brain",
         )
+        try:
+            turn = await asyncio.wait_for(turn_request, timeout=(
+                min(settings.RESEARCH_MODEL_TIMEOUT_SECONDS, max(1, time_budget - (time.monotonic() - started)))
+                if research_task and not finishing else settings.RESEARCH_MODEL_TIMEOUT_SECONDS if research_task else settings.DEEPSEEK_TIMEOUT_SECONDS
+            ))
+        except (asyncio.TimeoutError, DeepSeekError):
+            if not research_task:
+                raise
+            turn = {"content": evidence_fallback(database.list_sources(task_id)), "tool_calls": []}
+            await bus.publish(task_id, "assistant_message_discard", {"reason": "timeout"})
+            finishing = True
 
         tool_calls = turn.get("tool_calls") or []
+        if finishing and tool_calls:
+            # Some providers still return calls after tools=None. Never execute them after the budget.
+            if getattr(settings, "DEEPSEEK_STREAMING", False):
+                await bus.publish(task_id, "assistant_message_discard", {"reason": "budget"})
+            if research_task:
+                turn["content"] = evidence_fallback(database.list_sources(task_id))
+                tool_calls = []
+            else:
+                messages.append({"role": "system", "content": FINISH_NOW_MESSAGE})
+                continue
         content = (turn.get("content") or "").strip() if turn.get("content") else ""
         streamed = bool(getattr(settings, "DEEPSEEK_STREAMING", False)) and bool(content)
 
@@ -322,22 +383,37 @@ async def run_native_agent_loop(
 
             # execute tools (parallel if all read-only and flag on)
             parallel_ok = bool(getattr(settings, "PARALLEL_TOOL_CALLS", True)) and all(
-                tool_is_read_only(c["name"]) and c["name"] not in {"message_ask_user"} for c in tool_calls
+                tool_is_read_only(c["name"]) and c["name"] not in {"message_ask_user"}
+                and not c["name"].startswith("browser_") for c in tool_calls
             )
 
             async def _run_one(call: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+                nonlocal research_searches
                 name = call["name"]
                 args = call.get("arguments") or {}
                 special = await _handle_special_tool(name, args, task_id=task_id, store=store, bus=bus)
                 if special is not None:
                     return call, special
-                result = await execute_tool(
+                if research_task and name not in RESEARCH_TOOLS:
+                    return call, {"success": False, "error": "Use as ferramentas de pesquisa disponíveis."}
+                if research_task and research_searches >= 2 and name in {"web_search", "browser_google_search"}:
+                    return call, {"success": False, "error": "Já há resultados de duas buscas no contexto. Leia URLs retornadas com web_fetch ou sintetize os trechos; não repita buscas."}
+                if research_task and name in {"web_search", "browser_google_search"}:
+                    research_searches += 1
+                execution = execute_tool(
                     name,
                     args,
                     task_id=task_id,
                     bus=bus,
                     description=name,
                 )
+                try:
+                    result = await asyncio.wait_for(execution, timeout=min(
+                        settings.RESEARCH_TOOL_TIMEOUT_SECONDS, max(1, time_budget - (time.monotonic() - started))
+                    )) if research_task else await execution
+                except asyncio.TimeoutError:
+                    await bus.publish(task_id, "tool_result", {"name": name, "result": {"success": False, "error": "Tempo limite da ferramenta; tente outra fonte."}})
+                    return call, {"success": False, "error": "Tempo limite da ferramenta; tente outra fonte."}
                 data = result.get("data", result) if isinstance(result, dict) else {"result": result}
                 return call, data if isinstance(data, dict) else {"result": data}
 
@@ -351,6 +427,10 @@ async def run_native_agent_loop(
             files_before = len(database.list_generated_files(task_id))
 
             for call, data in pairs:
+                from tools.tool_executor import compact_tool_result
+                data = compact_tool_result(data, text_limit=6000 if research_task else 1800)
+                if research_task:
+                    research_observations.append({"tool": call["name"], "result": data})
                 progressed = bool(data.get("success", True))
                 state.note_tool(call["name"], call.get("arguments"), progressed=progressed)
                 messages.append(
@@ -429,7 +509,9 @@ async def run_native_agent_loop(
         # concluir plano
         for step in task_plan_store.list_steps(task_id):
             if step.get("status") in {"pending", "running"}:
-                task_plan_store.complete_step_by_id(step["id"], status="passed")
+                completed = task_plan_store.complete_step_by_id(step["id"], status="passed")
+                if completed:
+                    await bus.publish(task_id, "task_step_completed", {"step": completed})
         await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
         await publish_agent_activity(
             bus, task_id, kind="finalizing", title="Entrega final", detail="Resposta entregue.", status="done"
