@@ -156,6 +156,13 @@ class TimeBudgetTests(unittest.TestCase):
         self.assertEqual(sum('"ok": "web_search"' in r for r in results), 2)
         self.assertEqual(sum("não repita buscas" in r for r in results), 1)
 
+    def test_exact_urls_do_not_bypass_research_tools(self):
+        with mock.patch("services.agent_runner._answer_exact_prompt", new=mock.AsyncMock()) as exact:
+            _, calls = run_loop("Pesquise 3 notícias recentes com URLs exatas", [_turn("Síntese.")])
+        exact.assert_not_awaited()
+        self.assertEqual(calls[0]["purpose"], "fast")
+        self.assertIn("web_search", {t["function"]["name"] for t in calls[0]["tools"]})
+
     def test_exhausted_budget_forces_answer_without_tools(self):
         search = _turn("", [{"id": "c1", "name": "web_search", "arguments": {"query": "dolar"}}])
         events, calls = run_loop(

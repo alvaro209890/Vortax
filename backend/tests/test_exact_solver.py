@@ -16,6 +16,11 @@ class ExactSolverTests(unittest.TestCase):
     def test_does_not_treat_software_creation_as_math_answer(self) -> None:
         self.assertFalse(is_exact_prompt("crie uma calculadora de matematica em React"))
 
+    def test_research_with_exact_urls_or_science_terms_still_searches(self) -> None:
+        self.assertFalse(is_exact_prompt("Pesquise 3 notícias recentes de IA com URLs exatas"))
+        self.assertFalse(is_exact_prompt("Pesquise notícias recentes sobre energia e densidade"))
+        self.assertFalse(is_exact_prompt("Compare a média dos preços atuais de notebooks"))
+
     def test_solves_percentage(self) -> None:
         result = solve_exact_problem("calcule 12% de 250")
 

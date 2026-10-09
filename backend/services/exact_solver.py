@@ -124,7 +124,7 @@ def is_current_or_research_request(text: str) -> bool:
 
 def is_exact_prompt(text: str) -> bool:
     value = (text or "").strip()
-    if not value or is_code_creation_request(value):
+    if not value or is_code_creation_request(value) or is_current_or_research_request(value):
         return False
     return bool(EXACT_RE.search(value) or ARITHMETIC_SIGNAL_RE.search(value))
 

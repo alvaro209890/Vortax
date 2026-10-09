@@ -9,6 +9,7 @@ Autor: Codex. Base: `365a26f68a294a593de428cf8fcae7068d1b425e`, a versão mais r
 - O Chrome do server respondia no CDP, mas `Page.goto` expirava mesmo numa página HTTP local. `--password-store=basic` nos perfis temporários eliminou a espera pelo chaveiro do desktop: a navegação de teste passou em menos de um segundo. O perfil é descartável; as credenciais autorizadas continuam no mecanismo próprio do Vortax.
 - Caminhos temporários longos causaram também `Socket path too long` em um Chromium de diagnóstico. Agora cada Chrome usa um diretório temporário curto e exclusivo, removido ao terminar.
 - Pesquisas podiam repetir buscas, receber chamadas de ferramentas após o orçamento e gastar tempo com o modelo principal. Resultados compactados demais e XML bruto de feeds também prejudicavam a síntese.
+- O teste pela interface publicada encontrou um desvio adicional: “URLs exatas” ativava o roteador de matemática, respondendo sem pesquisa. Pedidos de informação atual/pesquisa agora têm prioridade sobre palavras isoladas como “exatas”, “energia” ou “média”.
 
 ## Comportamento atual
 
@@ -42,7 +43,7 @@ Os eventos persistem no SQLite e participam do replay. Conteúdo de leitura é r
 
 Ambiente isolado no server, a partir da mesma base de produção, com banco e workspace próprios. Nenhuma tarefa antiga do usuário foi usada como fixture.
 
-- Backend: **215 testes, OK; cinco testes externos opcionais desativados** com `VORTAX_LIVE=0`.
+- Backend: **217 testes, OK; cinco testes externos opcionais desativados** com `VORTAX_LIVE=0`.
 - Frontend: build Vite concluído e três testes de seleção de cenas/proteção/escala do ponteiro passaram.
 - Navegador real, Chrome instalado e Playwright já existente: página HTTP local, digitação, clique e rolagem; **oito capturas**, ações `move/type/click/scroll`, nenhuma URL `about:blank`. Última execução: navegação 0,87 s, digitação 0,79 s, clique 0,65 s, rolagem 0,63 s.
 - Pesquisa real pelo 9Router: três notícias com datas/fontes em **35,82 s** e cotação com fontes em **22,33 s**, ambas `done`. A pesquisa de notícias declarou corretamente a limitação de manchetes. São amostras, não um benchmark geral.
