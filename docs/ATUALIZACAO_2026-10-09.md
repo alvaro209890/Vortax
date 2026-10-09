@@ -8,7 +8,8 @@ só na rede local e no Tailscale, sem login, com o banco zerado.
 - O cliente continua sendo o `services/deepseek_client.py`, que é compatível com a API da OpenAI.
   Só mudou o `.env` da raiz (que não vai para o Git):
   - `DEEPSEEK_BASE_URL=http://127.0.0.1:20128/v1` (9Router no próprio servidor)
-  - `DEEPSEEK_MODEL`, `DEEPSEEK_MODEL_BRAIN` e `DEEPSEEK_MODEL_FAST` = `ag/gemini-3.8-flash-high`
+  - `DEEPSEEK_MODEL` e `DEEPSEEK_MODEL_BRAIN` = `ag/gemini-3.8-flash-high` (loop com ferramentas)
+  - `DEEPSEEK_MODEL_FAST` = `ag/gemini-3.8-flash-low` (resposta direta e tarefas leves)
   - `DEEPSEEK_API_KEY` = chave do 9Router
 - A chave antiga da DeepSeek não funciona mais (HTTP 401/402).
 - Os textos da interface que diziam "DeepSeek" passaram a dizer "Vortax" ou "Modelo".
@@ -25,6 +26,8 @@ só na rede local e no Tailscale, sem login, com o banco zerado.
 | O cronômetro do Computador do Vortax ficava em 0:00 | O relógio do servidor está ~30 s adiantado em relação aos clientes; início "no futuro" → elapsed negativo | `useElapsedTimer` conta a partir de quando o front viu a tarefa rodar, se o início vier no futuro |
 | O Computador do Vortax abria em conversa simples, com "Concluído · Pedido concluído · Concluído · open" | Qualquer `agent_progress` abria o dock; a linha de status repetia o estado e mostrava o estado do WebSocket | O dock só abre com trabalho de ferramenta (`lib/events.js`). A linha mostra etapa · tempo e só fala da conexão quando ela tem problema |
 | Cartões "Executando etapa / web_fetch" | As ferramentas do loop nativo não tinham rótulo | Rótulos para `web_search`, `web_fetch`, `shell_*`, `file_*`, `glob`, `grep` etc. no backend e no front |
+| O título da conversa nunca atualizava (e o descarte de delta também se perderia) | `task_title_updated` não estava no `KNOWN_EVENT_TYPES` (`services/stream_contract.py`), então virava evento `error` no stream | Os dois tipos entraram na lista. O teste `test_stream_contract_coverage.py` varre o código e falha se algum `publish()` usar um tipo fora da lista |
+| Resposta simples demorava ~8 s | A resposta direta usava o modelo principal (`flash-high`, raciocínio máximo) | O modo direto usa `pick_model("fast")` → `DEEPSEEK_MODEL_FAST`, hoje `ag/gemini-3.8-flash-low` (~2 s contra ~6 s no 9Router). Matemática/exatas continuam no modelo forte |
 | "Backend offline" no navegador embutido, e o front quebrava atrás de túnel/proxy | O front chamava `<host>:8010` direto | Por padrão ele chama a mesma origem, e o proxy do Vite (dev e preview) leva ao backend |
 
 ## Front no estilo Manus

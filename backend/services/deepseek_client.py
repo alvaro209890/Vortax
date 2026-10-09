@@ -428,7 +428,8 @@ async def request_direct_chat_response(
         )
 
     payload = {
-        "model": settings.DEEPSEEK_MODEL,
+        # conversa direta vai no modelo rápido (DEEPSEEK_MODEL_FAST); exatas mantêm o forte
+        "model": pick_model("brain" if mode == "exact" else "fast"),
         "temperature": settings.DEEPSEEK_TEMPERATURE if mode != "exact" else 0.0,
         "stream": False,
         "messages": [{"role": "system", "content": system_prompt}, *messages],

@@ -8,10 +8,13 @@ KNOWN_EVENT_TYPES = frozenset(
     {
         "assistant_message_delta",
         "assistant_message_done",
+        # texto em delta que não era a entrega (veio com tools ou o portão recusou)
+        "assistant_message_discard",
         "agent_status",
         "agent_progress",
         "agent_activity",
         "task_created",
+        "task_title_updated",
         "task_plan_created",
         "task_plan_replanned",
         "task_step_started",
