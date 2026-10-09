@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest import mock
 
 import database as database_module
-from database import Database, utc_now
+from database import Database
+from services.task_store import utc_now
 from services.event_bus import EventBus
 import services.agent_runner as agent_runner
 from services.task_plan_store import TaskPlanStore
