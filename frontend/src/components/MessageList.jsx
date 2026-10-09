@@ -18,7 +18,7 @@ import remarkGfm from "remark-gfm";
 import { staggerContainer, fadeInUp } from "../animations/variants.js";
 import { useStickToBottom } from "../hooks/useStickToBottom.js";
 import { fileDownloadUrl, getAuthToken, taskDownloadZipUrl } from "../lib/api.js";
-import { presentSoftwareMessage } from "../lib/softwareDelivery.js";
+import { attachDocumentDeliverables, presentSoftwareMessage } from "../lib/softwareDelivery.js";
 import { StatusIndicator } from "./StatusIndicator.jsx";
 import { PreparingTurn, TurnActivity } from "./TurnActivity.jsx";
 
@@ -290,6 +290,8 @@ function DocumentAttachmentCard({ document, onOpen, taskId }) {
           ) : (
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || "Documento Markdown pronto para leitura."}</ReactMarkdown>
           )
+        ) : kind === "pdf" ? (
+          <p>Documento PDF formatado · Clique para abrir no leitor ou use o botão para baixar.</p>
         ) : (
           <p>{documentLabel(document)} pronto para download.</p>
         )}
@@ -575,7 +577,7 @@ export function MessageList({
   const [selectedDocument, setSelectedDocument] = useState(null);
   const turns = activity?.turns || [];
   const timelineItems = useMemo(
-    () => buildTimelineItems(messages.map((message) => presentSoftwareMessage(message, files, events)), turns, pendingPreparation, agentBusy),
+    () => buildTimelineItems(messages.map((message) => attachDocumentDeliverables(presentSoftwareMessage(message, files, events), files, events)), turns, pendingPreparation, agentBusy),
     [agentBusy, events, files, messages, pendingPreparation, turns],
   );
   const showTypingMessage = isTyping && !timelineItems.some((item) => item.type !== "message" && (item.type === "preparing" || ["running", "paused", "waiting"].includes(item.turn?.status)));

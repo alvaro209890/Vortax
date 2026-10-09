@@ -507,9 +507,12 @@ async def run_native_agent_loop(
             continue
 
         # Entrega
-        if software_task:
-            await _finish_text_response(task_id, latest_prompt, content, store, bus)
-            return
+        for step in task_plan_store.list_steps(task_id):
+            if step.get("status") in {"pending", "running"}:
+                completed = task_plan_store.complete_step_by_id(step["id"], status="passed")
+                if completed:
+                    await bus.publish(task_id, "task_step_completed", {"step": completed})
+
         if not (getattr(settings, "DEEPSEEK_STREAMING", False) and content):
             # se não streamou, publicar de uma vez
             # (com stream, deltas já saíram; ainda assim done fecha)
@@ -519,18 +522,7 @@ async def run_native_agent_loop(
                 await bus.publish(task_id, "assistant_message_delta", {"delta": piece, "content": piece})
                 await asyncio.sleep(0)  # yield
 
-        await bus.publish(task_id, "assistant_message_done", {"content": content})
-        store.update_status(task_id, "done", result=content[:2000])
-        # concluir plano
-        for step in task_plan_store.list_steps(task_id):
-            if step.get("status") in {"pending", "running"}:
-                completed = task_plan_store.complete_step_by_id(step["id"], status="passed")
-                if completed:
-                    await bus.publish(task_id, "task_step_completed", {"step": completed})
-        await bus.publish(task_id, "agent_status", {"status": "done", "label": "Concluído"})
-        await publish_agent_activity(
-            bus, task_id, kind="finalizing", title="Entrega final", detail="Resposta entregue.", status="done"
-        )
+        await _finish_text_response(task_id, latest_prompt, content, store, bus)
         return
 
     store.update_status(task_id, "error", result="Limite de iterações")

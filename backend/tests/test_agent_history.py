@@ -252,6 +252,43 @@ class GeneratedFilePayloadTests(unittest.TestCase):
         self.assertTrue(payload["documents"][0]["primary"])
         self.assertEqual(payload["documents"][0]["kind"], "pdf")
 
+    def test_payload_attaches_pdf_from_prompt_without_code_agent_command(self) -> None:
+        task_dir = settings.WORKSPACE_PATH / self.task_id
+        task_dir.mkdir(parents=True)
+        (task_dir / "ultimas_noticias_ia.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 500)
+        (task_dir / "ultimas_noticias_ia.md").write_text("# Notícias de IA\n\nResumo detalhado.", encoding="utf-8")
+        self._sync_files(
+            [
+                {"path": "ultimas_noticias_ia.pdf", "size_bytes": 509, "extension": ".pdf", "modified_at": 1},
+                {"path": "ultimas_noticias_ia.md", "size_bytes": 40, "extension": ".md", "modified_at": 1},
+            ]
+        )
+        events = [
+            {
+                "event_id": 1,
+                "type": "user_message",
+                "payload": {"content": "Pesquise notícias de inteligência artificial e me gere um PDF"},
+            },
+            {
+                "event_id": 2,
+                "type": "tool_call",
+                "payload": {"name": "document_render", "params": {"markdown_path": "ultimas_noticias_ia.md", "pdf_path": "ultimas_noticias_ia.pdf"}},
+            },
+            {
+                "event_id": 3,
+                "type": "tool_result",
+                "payload": {"name": "document_render", "result": {"success": True, "path": "ultimas_noticias_ia.pdf"}},
+            },
+        ]
+
+        payload = _generated_file_response_payload(self.task_id, "Arquivo gerado: ultimas_noticias_ia.pdf", events)
+
+        self.assertIn("documents", payload)
+        self.assertEqual(payload["documents"][0]["path"], "ultimas_noticias_ia.pdf")
+        self.assertEqual(payload["documents"][0]["kind"], "pdf")
+        self.assertTrue(payload["documents"][0]["primary"])
+        self.assertTrue(any(d["path"] == "ultimas_noticias_ia.pdf" for d in payload["downloads"]))
+
     def test_payload_attaches_requested_office_document_cards(self) -> None:
         task_dir = settings.WORKSPACE_PATH / self.task_id
         task_dir.mkdir(parents=True)

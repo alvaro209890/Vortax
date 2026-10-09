@@ -1745,6 +1745,31 @@ small {
   flex: 0 0 auto;
 }
 
+.document-attachment-card:not(.markdown) {
+  min-height: auto;
+}
+
+.document-attachment-card.pdf .document-card-icon {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+
+.document-attachment-card.spreadsheet .document-card-icon,
+.document-attachment-card.csv .document-card-icon {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+.document-attachment-card.presentation .document-card-icon {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.document-attachment-card.word .document-card-icon {
+  background: rgba(59, 130, 246, 0.18);
+  color: #60a5fa;
+}
+
 .document-card-title {
   display: flex;
   flex-direction: column;

@@ -31,6 +31,7 @@ from services.document_artifacts import (
 from services.document_intent import (
     document_extensions_from_text,
     downloadable_document_files,
+    file_is_nonempty,
     is_markdown_document,
     is_previewable_document,
     markdown_documentation_files,
@@ -955,18 +956,27 @@ def _generated_file_response_payload(task_id: str, result: str, events: list[dic
     ]
     if not files:
         return {"content": result}
-    requested_extensions = document_extensions_from_text(command)
+    requested_extensions = document_extensions_from_text(f"{prompt} {command} {result}")
     docs = markdown_documentation_files(files)
     requested_downloads = downloadable_document_files(files, requested_extensions)
+
+    direct_doc_extensions = {".pdf", ".docx", ".xlsx", ".pptx", ".csv"}
+    for file in files:
+        ext = Path(str(file.get("path") or "")).suffix.lower()
+        if ext in direct_doc_extensions and file_is_nonempty(file):
+            _append_unique_file(requested_downloads, file)
+
     is_web_project = web_intent_from_command(command)
-    report_profile = report_artifact_profile(command)
+    report_profile = report_artifact_profile(f"{prompt} {command}")
 
     download_files: list[dict[str, Any]] = []
     for file in [*requested_downloads, *docs]:
         _append_unique_file(download_files, file)
 
     document_files: list[tuple[dict[str, Any], str]] = []
-    pdf_requested = ".pdf" in requested_extensions
+    pdf_requested = ".pdf" in requested_extensions or any(
+        Path(str(file.get("path") or "")).suffix.lower() == ".pdf" for file in requested_downloads
+    )
     if pdf_requested:
         for file in requested_downloads:
             if Path(str(file.get("path") or "")).suffix.lower() == ".pdf":
