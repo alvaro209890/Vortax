@@ -29,7 +29,7 @@ Os índices de busca são salvos como `source_type=search_index`, marcados no te
 
 O trabalho encerra também após seis rodadas no modo comum; pesquisa profunda permite doze rodadas e até 180 segundos de trabalho. A síntese final pode acrescentar até 35 segundos ao orçamento; não é promessa de duração fixa nem de sucesso em sites bloqueados.
 
-O loop publica a conclusão das etapas para atualizar o progresso ao vivo. O indicador de contexto trata números inválidos sem exibir `NaN`.
+O loop publica a conclusão das etapas para atualizar o progresso ao vivo. O indicador de contexto trata números inválidos sem exibir `NaN`; o sanitizador preserva apenas contadores numéricos de tokens conhecidos, mantendo a ocultação de tokens de autenticação e valores textuais.
 
 ## Contrato de eventos
 
@@ -43,7 +43,7 @@ Os eventos persistem no SQLite e participam do replay. Conteúdo de leitura é r
 
 Ambiente isolado no server, a partir da mesma base de produção, com banco e workspace próprios. Nenhuma tarefa antiga do usuário foi usada como fixture.
 
-- Backend: **217 testes, OK; cinco testes externos opcionais desativados** com `VORTAX_LIVE=0`.
+- Backend: **219 testes, OK; cinco testes externos opcionais desativados** com `VORTAX_LIVE=0`.
 - Frontend: build Vite concluído e três testes de seleção de cenas/proteção/escala do ponteiro passaram.
 - Navegador real, Chrome instalado e Playwright já existente: página HTTP local, digitação, clique e rolagem; **oito capturas**, ações `move/type/click/scroll`, nenhuma URL `about:blank`. Última execução: navegação 0,87 s, digitação 0,79 s, clique 0,65 s, rolagem 0,63 s.
 - Pesquisa real pelo 9Router: três notícias com datas/fontes em **35,82 s** e cotação com fontes em **22,33 s**, ambas `done`. A pesquisa de notícias declarou corretamente a limitação de manchetes. São amostras, não um benchmark geral.

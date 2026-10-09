@@ -1,4 +1,5 @@
 import re
+import math
 from typing import Any
 
 
@@ -56,7 +57,9 @@ def sanitize_payload(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            if any(secret_name in key.lower() for secret_name in _SECRET_KEY_NAMES):
+            if key in {"estimated_tokens", "token_limit", "total_tokens", "prompt_tokens", "completion_tokens"} and type(item) in {int, float} and math.isfinite(item):
+                sanitized[key] = item
+            elif any(secret_name in key.lower() for secret_name in _SECRET_KEY_NAMES):
                 sanitized[key] = "[REDACTED]"
             else:
                 sanitized[key] = sanitize_payload(item)
