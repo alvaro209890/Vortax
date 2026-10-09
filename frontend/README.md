@@ -127,6 +127,20 @@ frontend/dist
 
 Os arquivos JS/CSS gerados em `dist/assets` recebem hash no nome. Isso permite cache longo dos assets sem prender o usuário em uma versão antiga.
 
+## Testes
+
+Testes unitários de atividade e estado do frontend:
+
+```bash
+npm test
+```
+
+Testes automatizados de interface E2E (Playwright) cobrindo criação de site, responsividade mobile, interrupção e movimento reduzido:
+
+```bash
+python ../scripts/qa/test_ui_scenarios.py --url http://127.0.0.1:5174
+```
+
 ## Preview local do build
 
 ```bash

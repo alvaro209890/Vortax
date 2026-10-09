@@ -102,11 +102,22 @@ def _client_host(request_or_websocket: Request | WebSocket) -> str | None:
     return request_or_websocket.client.host if request_or_websocket.client else None
 
 
+def _extract_preview_token(request: Request) -> str | None:
+    """Extrai token de preview em cookie para sub-recursos (CSS, JS, imagens) dentro de iframes."""
+    path_parts = request.url.path.strip("/").split("/")
+    if len(path_parts) >= 4 and path_parts[0] == "api" and path_parts[1] == "files" and path_parts[2] == "preview":
+        task_id = path_parts[3]
+        return request.cookies.get(f"vx_preview_{task_id}") or request.cookies.get("vx_preview_token")
+    return None
+
+
 async def require_auth(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> AuthUser:
     token = _bearer_token(authorization) or str(request.query_params.get("token") or "").strip()
+    if not token:
+        token = _extract_preview_token(request)
     if token:
         try:
             return _verify_token(token)

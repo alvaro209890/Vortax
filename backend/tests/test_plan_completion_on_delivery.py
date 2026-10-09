@@ -8,6 +8,7 @@ import database as database_module
 from database import Database
 from services.task_store import utc_now
 from services.event_bus import EventBus
+import services.event_bus as event_bus_module
 import services.agent_runner as agent_runner
 from services.task_plan_store import TaskPlanStore
 import services.task_plan_store as task_plan_store_module
@@ -19,13 +20,19 @@ class PlanCompletionOnDeliveryTests(unittest.TestCase):
         self.original_base = database_module.settings.DATABASE_BASE_PATH
         database_module.settings.DATABASE_BASE_PATH = Path(self.tmp.name)
         self.db = Database()
-        self.original_database = database_module.database
-        self.original_plan_database = task_plan_store_module.database
-        database_module.database = self.db
-        task_plan_store_module.database = self.db
-        agent_runner.database = self.db
         self.plan_store = TaskPlanStore()
-        agent_runner.task_plan_store = self.plan_store
+        # Todos os módulos que importaram `database` por nome precisam apontar para o
+        # banco temporário (inclusive o event_bus, senão insert_event bate no banco real
+        # e falha por FOREIGN KEY). patch.object restaura tudo no tearDown.
+        self.patches = [
+            mock.patch.object(database_module, "database", self.db),
+            mock.patch.object(task_plan_store_module, "database", self.db),
+            mock.patch.object(event_bus_module, "database", self.db),
+            mock.patch.object(agent_runner, "database", self.db),
+            mock.patch.object(agent_runner, "task_plan_store", self.plan_store),
+        ]
+        for patch in self.patches:
+            patch.start()
 
         self.task_id = "test-plan-delivery-task"
         self.db.create_task(
@@ -41,8 +48,8 @@ class PlanCompletionOnDeliveryTests(unittest.TestCase):
         self.store = mock.Mock()
 
     def tearDown(self):
-        database_module.database = self.original_database
-        task_plan_store_module.database = self.original_plan_database
+        for patch in reversed(self.patches):
+            patch.stop()
         database_module.settings.DATABASE_BASE_PATH = self.original_base
         self.db.close()
         self.tmp.cleanup()

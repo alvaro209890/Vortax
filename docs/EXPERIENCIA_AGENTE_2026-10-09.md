@@ -76,21 +76,35 @@ O script não toca no `.env`, banco ou projetos de produção. Ele sobrescreve `
 
 ## 6. Conclusão e validação das pendências (concluído por Hermes-windows)
 
-1. **Conclusão de etapas do plano na entrega**: 
+1. **Conclusão de etapas do plano na entrega (`_finish_text_response`)**:
    - Resolvido o caso onde etapas anteriores ficavam `running` ou a etapa final não tinha `tool_hint == "deliver"` (fazendo a UI exibir "sem confirmação").
-   - `backend/services/task_plan_store.py`: `find_for_hint("deliver")` agora faz fallback para o último passo ativo/pendente do plano quando não houver tag explícita de entrega.
-   - `backend/services/agent_runner.py`: `_complete_supported_steps_before_delivery` agora conclui etapas em execução com evidência de entrega de resposta final.
-   - Suíte de testes criada em `backend/tests/test_plan_completion_on_delivery.py` garantindo 100% de cobertura desse comportamento.
+   - `backend/services/task_plan_store.py`: `find_for_hint("deliver")` faz fallback para o último passo ativo/pendente do plano quando não houver tag explícita de entrega.
+   - `backend/services/agent_runner.py`: `_complete_supported_steps_before_delivery` conclui etapas em execução com evidência de entrega de resposta final.
+   - `backend/tests/test_plan_completion_on_delivery.py`: corrigido isolamento de banco (mocking completo incluindo `event_bus_module.database`), garantindo 100% de cobertura desse comportamento.
 
-2. **Frontend validado**:
-   - `frontend/tests/activity.test.js`: 18/18 testes passando (`npm test`).
-   - `vite build` gerando bundle de produção sem erros (`dist/`).
-   - Rotação via anéis CSS (`.vx-status__ring`, `@keyframes vx-spin`) em 900ms com fallback para movimento reduzido (`prefers-reduced-motion`).
-   - Estilização completa do Computador do Vortax (`styles/experience.css`), temas escuro e verde `#08C65D` preservados como padrão.
+2. **Carregamento autenticado de recursos do preview (CSS/JS/imagens)**:
+   - Resolvido o carregamento de sub-recursos estáticos (`style.css`, `script.js`, imagens) dentro de iframes sem depender de bypass de IP/LAN (`ALLOW_LAN_NO_AUTH`).
+   - `backend/api/files.py`: `preview_task_index` e `preview_task_file` emitem cookie `vx_preview_{task_id}` escopado estritamente ao caminho `/api/files/preview/{task_id}/` (HttpOnly, SameSite=Lax).
+   - `backend/auth.py`: `require_auth` extrai o token do cookie quando a rota pertence ao preview da tarefa, preservando validação de token e propriedade (`ensure_task_owner`) com total isolamento.
+   - `backend/tests/test_files_api.py`: testes unitários `test_preview_index_sets_cookie_when_token_provided` e `test_require_auth_extracts_preview_cookie_for_subresources` integrados à suíte.
 
-3. **Deploy e produção privada**:
-   - Backend ativo no server (`vortax-backend.service`, porta 8010).
-   - Frontend ativo via `vite preview` no server (`vortax-frontend.service`, porta 5173).
-   - Acesso verificado da rede local privada.
+3. **Histórico de arquivos e ausência de snapshot**:
+   - `frontend/src/components/computer/FilesPane.jsx`: exibe chip explícito `Versão atual do workspace` para arquivos ao vivo e `Registro da ação` para snapshots de etapas.
+   - Ausência de snapshot histórico prévio (ex.: arquivos gerados externamente antes de edição) é informada de forma honesta ("Não há registro completo do arquivo antes desta edição."), sem inventar conteúdo histórico.
+
+4. **Correções de layout e responsividade do Computador do Vortax**:
+   - Corrigido o painel de arquivos e terminal em mobile (390px): declarada `container-type: inline-size` em `.vx-computer__body` em `styles/experience.css`, acionando as regras `@container (max-width: 560px)` que alternam para visualização empilhada de 1 coluna com rolagem horizontal interna no bloco de código.
+   - Ajustadas as abas (`.vx-tabs`) em telas menores com `flex-wrap: wrap`, permitindo que as 4 abas e o botão "Seguir o agente" caibam sem overflow ou corte de controles.
+
+5. **Testes automatizados e QA visual**:
+   - Backend: **245 testes** executados em ambiente isolado (`APP_ENV=test VORTAX_LIVE=0`), **240 aprovados**, 5 pulados (sem `DEEPSEEK_API_KEY` na máquina de teste), 0 falhas. `test_fetch_example_com` aprovado.
+   - Frontend: `npm test` **18/18** testes aprovados; `npx vite build` gerando bundle de produção sem erros.
+   - Teste de interface reproduzível adicionado em `scripts/qa/test_ui_scenarios.py`: validação com Playwright headless cobrindo criação de site (1440px desktop), responsividade mobile de API (390px), interrupção com botão Parar (parada confirmada de `.vx-status__ring`) e movimento reduzido (0 animações ativas).
+   - Tela protegida verificada: omissão imediata de capturas e overlays ao acessar páginas com campos sensíveis.
+
+6. **Deploy e produção privada**:
+   - Código publicado no branch `main` do GitHub.
+   - Produção atualizada em `/media/server/HD Backup/Vortax` no server-desktop (`sd`).
+   - Serviços `vortax-backend.service` (porta 8010) e `vortax-frontend.service` (porta 5173 via `vite preview`) reiniciados e verificados em `/health`, API e WebSocket pela rede local/Tailscale privada.
 
 Referências: Manus, interfaces de agentes da OpenAI e os padrões Task/Tool/Web Preview do AI Elements foram usados só como conceito (estados da ferramenta, entrada/saída recolhíveis, grupos com arquivos, barra de URL + recarregar + corpo isolado). A documentação online do AI Elements não estava acessível a partir desta sessão (proxy).

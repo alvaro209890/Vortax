@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
-from auth import AuthUser, ensure_task_owner, require_auth
+from auth import AuthUser, _bearer_token, ensure_task_owner, require_auth
 from config import settings
 from services.registry import task_store
 from services.project_files import sync_task_workspace_files
@@ -56,7 +56,11 @@ async def download_task_file(
 # ── Preview de projetos web gerados ────────────────────────────────────────
 
 @router.get("/preview/{task_id}/")
-async def preview_task_index(task_id: str, current_user: AuthUser = Depends(require_auth)):
+async def preview_task_index(
+    task_id: str,
+    request: Request = None,
+    current_user: AuthUser = Depends(require_auth),
+):
     """Serve o index.html padrao para preview do projeto web."""
     ensure_task_owner(task_store.get(task_id), current_user)
     base = safe_task_workspace_path(task_id)
@@ -66,13 +70,26 @@ async def preview_task_index(task_id: str, current_user: AuthUser = Depends(requ
         index_path = candidates[0] if candidates else index_path
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Nenhum index.html encontrado para preview")
-    return FileResponse(index_path)
+    response = FileResponse(index_path)
+    if request:
+        token = _bearer_token(request.headers.get("authorization")) or str(request.query_params.get("token") or "").strip()
+        if token:
+            response.set_cookie(
+                key=f"vx_preview_{task_id}",
+                value=token,
+                httponly=True,
+                samesite="lax",
+                path=f"/api/files/preview/{task_id}/",
+                secure=request.url.scheme == "https",
+            )
+    return response
 
 
 @router.get("/preview/{task_id}/{file_path:path}")
 async def preview_task_file(
     task_id: str,
     file_path: str,
+    request: Request = None,
     current_user: AuthUser = Depends(require_auth),
 ):
     """Serve arquivos estaticos da pasta de projetos para preview em iframe."""
@@ -80,7 +97,19 @@ async def preview_task_file(
     target = safe_task_workspace_path(task_id, file_path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Arquivo nao encontrado")
-    return FileResponse(target)
+    response = FileResponse(target)
+    if request:
+        token = _bearer_token(request.headers.get("authorization")) or str(request.query_params.get("token") or "").strip()
+        if token:
+            response.set_cookie(
+                key=f"vx_preview_{task_id}",
+                value=token,
+                httponly=True,
+                samesite="lax",
+                path=f"/api/files/preview/{task_id}/",
+                secure=request.url.scheme == "https",
+            )
+    return response
 
 
 @router.get("/preview-dev/{task_id}")
